@@ -89,18 +89,37 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
     profile = {**current_project, **raw_project}
     profile["name"] = profile.get("name") if profile.get("name") != "새 프로젝트" else profile.get("project_name", "새 프로젝트")
     profile["region"] = profile.get("region") or profile.get("site_region")
+    profile["baseline_start"] = profile.get("baseline_start") or profile.get("planned_start")
+    profile["target_finish"] = profile.get("target_finish") or profile.get("planned_completion")
     profile["mode"] = profile.get("input_mode") or profile.get("mode", "LIVE")
     profile["data_origin"] = profile.get("data_origin") or ("SYNTHETIC" if profile["mode"] == "REPLAY" else "USER")
+    calendars = overrides.calendars if overrides.calendars is not None else parsed.get("calendars", [])
+    profile["nonworking_dates"] = [item.get("calendar_date") for item in calendars if item.get("scope") == profile.get("site_id") and item.get("calendar_date")]
     raw_tasks = overrides.tasks if overrides.tasks is not None else parsed.get("tasks", [])
     tasks = []
     for original in raw_tasks:
         task = dict(original)
         task["baseline_start"] = task.get("baseline_start") or task.get("planned_start")
         task["baseline_finish"] = task.get("baseline_finish") or task.get("planned_finish")
+        task["dependency_type"] = str(task.get("dependency_type") or task.get("relationship") or "FS").upper()
         task["location_id"] = task.get("location_id") or task.get("location")
         task["resource_demand"] = task.get("resource_demand") or task.get("demand_teams") or 1
         task["resource_capacity"] = task.get("resource_capacity") or task.get("capacity_teams") or 1
         task["predecessor_ids"] = task.get("predecessor_ids") or []
+        if task.get("duration_workdays") is None and task.get("duration_days") is not None:
+            start = date.fromisoformat(str(task["baseline_start"])[:10])
+            finish = date.fromisoformat(str(task["baseline_finish"])[:10])
+            weekend_days = set(profile.get("weekend_days") or [5, 6])
+            blocked = {date.fromisoformat(str(value)[:10]) for value in profile.get("nonworking_dates") or []}
+            workdays = [
+                start + timedelta(days=offset) for offset in range((finish - start).days)
+                if (start + timedelta(days=offset)).weekday() not in weekend_days
+                and (start + timedelta(days=offset)) not in blocked
+            ]
+            task["duration_workdays"] = len(workdays)
+            task["finish_boundary"] = "exclusive"
+            task["finish_boundary_offset_days"] = (finish - workdays[-1]).days if workdays else 0
+            task["duration_semantics"] = "calendar_days_elapsed"
         tasks.append(task)
     raw_options = overrides.options if overrides.options is not None else parsed.get("options", [])
     options = []
@@ -112,8 +131,6 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
         option["conditions"] = option.get("conditions") or option.get("condition")
         option["approval_state"] = option.get("approval_state") or option.get("execution_status")
         options.append(option)
-    calendars = overrides.calendars if overrides.calendars is not None else parsed.get("calendars", [])
-    profile["nonworking_dates"] = [item.get("calendar_date") for item in calendars if item.get("scope") == profile.get("site_id") and item.get("calendar_date")]
     return {"project": profile, "tasks": tasks, "options": options, "calendars": calendars, "demo_events": parsed.get("events", []), "data_origin": profile["data_origin"]}
 
 

@@ -1,0 +1,107 @@
+{
+  "mode": "REPLAY",
+  "data_origin": "SYNTHETIC",
+  "model": null,
+  "paid_calls": 0,
+  "cost_status": "NOT_APPLICABLE",
+  "cases": [
+    {
+      "case": "baseline",
+      "expected_finish": "2026-10-27",
+      "actual_finish": "2026-10-27",
+      "pass": true
+    },
+    {
+      "case": "E01_classification",
+      "actual": "PATCH_PROPOSED",
+      "pass": true
+    },
+    {
+      "case": "E01:none",
+      "expected_finish": "2026-10-30",
+      "actual_finish": "2026-10-30",
+      "cost_krw": 0,
+      "budget_met": true,
+      "elapsed_ms": 1.53,
+      "pass": true
+    },
+    {
+      "case": "E01:OPT-01",
+      "expected_finish": "2026-10-30",
+      "actual_finish": "2026-10-30",
+      "cost_krw": 0,
+      "budget_met": true,
+      "elapsed_ms": 1.59,
+      "pass": true
+    },
+    {
+      "case": "E01:OPT-02",
+      "expected_finish": "2026-10-29",
+      "actual_finish": "2026-10-29",
+      "cost_krw": 2000000,
+      "budget_met": true,
+      "elapsed_ms": 1.27,
+      "pass": true
+    },
+    {
+      "case": "E01:OPT-03",
+      "expected_finish": "2026-10-28",
+      "actual_finish": "2026-10-28",
+      "cost_krw": 6000000,
+      "budget_met": false,
+      "elapsed_ms": 1.24,
+      "pass": true
+    },
+    {
+      "case": "E01:OPT-02+OPT-03",
+      "expected_finish": "2026-10-27",
+      "actual_finish": "2026-10-27",
+      "cost_krw": 8000000,
+      "budget_met": false,
+      "elapsed_ms": 1.18,
+      "pass": true
+    },
+    {
+      "case": "E01:OPT-03:6m",
+      "pass": true
+    },
+    {
+      "case": "E02_classification",
+      "actual": "PATCH_PROPOSED",
+      "pass": true
+    },
+    {
+      "case": "E02:scope",
+      "pass": true
+    },
+    {
+      "case": "E03_classification",
+      "actual": "NEEDS_INPUT",
+      "pass": true
+    },
+    {
+      "case": "E03:no_patch",
+      "pass": true
+    },
+    {
+      "case": "E04_classification",
+      "actual": "PATCH_PROPOSED",
+      "pass": true
+    },
+    {
+      "case": "E04:scope",
+      "pass": true
+    },
+    {
+      "case": "E05_classification",
+      "actual": "NO_SCHEDULE_IMPACT",
+      "pass": true
+    },
+    {
+      "case": "E05:no_patch",
+      "pass": true
+    }
+  ],
+  "passed": 16,
+  "total": 16
+}

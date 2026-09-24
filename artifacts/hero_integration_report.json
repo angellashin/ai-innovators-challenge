@@ -1,0 +1,75 @@
+{
+  "mode": "SMOKE_INTEGRATION",
+  "project": "C:\\Users\\nayeo\\Documents\\Codex\\2026-09-24\\http-localhost-3000-http-localhost-3000\\work\\repo-source\\ai-challenge-main\\data\\l1_project\\hero_battery_factory_project.xlsx",
+  "parsed_task_count": 64,
+  "task_ids_preserved": true,
+  "field_coverage": {
+    "name": 64,
+    "baseline_start": 64,
+    "baseline_finish": 64,
+    "owner": 64,
+    "location": 64
+  },
+  "dependency_types": {
+    "FS": 59,
+    "SS": 5
+  },
+  "ss_task_ids": [
+    "T004",
+    "T014",
+    "T020",
+    "T027",
+    "T058"
+  ],
+  "predecessor_integrity": true,
+  "duration_conversion": {
+    "source_semantics": "calendar_days_elapsed; planned_end - planned_start == duration_days",
+    "canonical_semantics": "duration_workdays counted on [baseline_start, baseline_finish)",
+    "source_calendar_duration_mismatches": [],
+    "converted_task_count": 64,
+    "finish_boundary_offsets_preserved": 64
+  },
+  "simulator_validation_errors": [],
+  "baseline_simulation": {
+    "finish_date": "2027-12-21",
+    "violations": [],
+    "changed_from_source_count": 0,
+    "changed_task_ids": []
+  },
+  "api_smoke": {
+    "status": "PASS",
+    "flow": [
+      "xlsx_upload",
+      "task_parsing",
+      "event_application",
+      "dependency_propagation",
+      "approval",
+      "revised_xlsx_generation"
+    ],
+    "parsed_task_count": 64,
+    "event_task_id": "T046",
+    "changed_task_count": 17,
+    "changed_task_ids": [
+      "T046",
+      "T048",
+      "T049",
+      "T050",
+      "T051",
+      "T052",
+      "T053",
+      "T054",
+      "T055",
+      "T056",
+      "T057",
+      "T059",
+      "T060",
+      "T061",
+      "T062",
+      "T063",
+      "T064"
+    ],
+    "scenario_finish_date": "2028-01-18",
+    "exported_task_count": 64,
+    "version_created": true
+  }
+}

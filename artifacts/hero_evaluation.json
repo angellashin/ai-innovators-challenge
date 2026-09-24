@@ -1,0 +1,583 @@
+{
+  "mode": "BENCHMARK",
+  "agent_pipeline": "app.events.normalize_event + app.scheduling.simulate",
+  "paid_calls": 0,
+  "eval_dir": "C:\\Users\\nayeo\\Documents\\Codex\\2026-09-24\\http-localhost-3000-http-localhost-3000\\work\\repo-source\\ai-challenge-main\\data\\evaluation",
+  "evaluation_files": [
+    {
+      "file": "dataset_statistics.json",
+      "top_level_keys": [
+        "affected_task_usable_count",
+        "country_distribution",
+        "delay_mae_usable_count",
+        "evidence_retrieval_usable_count",
+        "generated_at",
+        "grade_A_count",
+        "grade_B_count",
+        "grade_C_count",
+        "industry_distribution",
+        "l3_excluded_full_case_count",
+        "l3_metric_level_exclusion_count",
+        "response_eval_usable_count",
+        "risk_category_distribution",
+        "risk_classification_usable_count",
+        "source_tier_distribution",
+        "total_l2_cases",
+        "total_l3_cases",
+        "total_unique_sources"
+      ]
+    },
+    {
+      "file": "eval_affected_task_retrieval.json",
+      "top_level_keys": [
+        "case_count",
+        "cases",
+        "generated_at",
+        "metric",
+        "partially_usable_count",
+        "schema_version",
+        "usable_count"
+      ]
+    },
+    {
+      "file": "eval_delay_mae.json",
+      "top_level_keys": [
+        "case_count",
+        "cases",
+        "generated_at",
+        "metric",
+        "partially_usable_count",
+        "schema_version",
+        "usable_count"
+      ]
+    },
+    {
+      "file": "eval_evidence_retrieval.json",
+      "top_level_keys": [
+        "case_count",
+        "cases",
+        "generated_at",
+        "metric",
+        "partially_usable_count",
+        "schema_version",
+        "usable_count"
+      ]
+    },
+    {
+      "file": "eval_response_quality.json",
+      "top_level_keys": [
+        "case_count",
+        "cases",
+        "generated_at",
+        "metric",
+        "partially_usable_count",
+        "schema_version",
+        "usable_count"
+      ]
+    },
+    {
+      "file": "eval_risk_classification.json",
+      "top_level_keys": [
+        "case_count",
+        "cases",
+        "generated_at",
+        "metric",
+        "partially_usable_count",
+        "schema_version",
+        "usable_count"
+      ]
+    },
+    {
+      "file": "excluded_cases.json",
+      "top_level_keys": [
+        "excluded_cases",
+        "excluded_count",
+        "generated_at",
+        "notes",
+        "schema_version"
+      ]
+    },
+    {
+      "file": "source_manifest.json",
+      "top_level_keys": [
+        "generated_at",
+        "schema_version",
+        "source_count",
+        "source_tier_legend",
+        "sources"
+      ]
+    }
+  ],
+  "eligibility": {
+    "mapping_total": 12,
+    "main_benchmark_case_count": 6,
+    "included_case_ids": [
+      "V2-001",
+      "V2-002",
+      "V3-001",
+      "V3-005",
+      "V3-006",
+      "V3-007"
+    ],
+    "excluded_low_or_empty_count": 6,
+    "excluded_case_ids": [
+      "V2-003",
+      "V2-004",
+      "V2-005",
+      "V3-002",
+      "V3-003",
+      "V3-004"
+    ],
+    "rule": "mapping_confidence in {high, medium} and direct_task_ids non-empty"
+  },
+  "ground_truth_leakage_audit": {
+    "pass": true,
+    "violations": [],
+    "agent_input_fields": [
+      "project_context",
+      "risk.cause.value"
+    ],
+    "withheld_fields": [
+      "direct_task_ids",
+      "downstream_task_ids",
+      "risk.category",
+      "schedule_impact",
+      "response",
+      "mapping.risk_category"
+    ]
+  },
+  "metrics": {
+    "affected_task_retrieval": {
+      "status": "IMPLEMENTED",
+      "ranking_metrics": "NOT_AVAILABLE: service output has no explicit task ranking",
+      "aggregate": {
+        "case_count": 6,
+        "micro": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "macro": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        }
+      },
+      "cases": [
+        {
+          "case_id": "V2-001",
+          "classification_status": "NEEDS_INPUT",
+          "predicted_task_ids": [],
+          "expected_task_ids": [
+            "T046",
+            "T047"
+          ],
+          "scores": {
+            "true_positive": 0,
+            "predicted_count": 0,
+            "expected_count": 2,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          }
+        },
+        {
+          "case_id": "V2-002",
+          "classification_status": "NEEDS_REVIEW",
+          "predicted_task_ids": [],
+          "expected_task_ids": [
+            "T023"
+          ],
+          "scores": {
+            "true_positive": 0,
+            "predicted_count": 0,
+            "expected_count": 1,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          }
+        },
+        {
+          "case_id": "V3-001",
+          "classification_status": "PATCH_PROPOSED",
+          "predicted_task_ids": [
+            "T040",
+            "T041",
+            "T045"
+          ],
+          "expected_task_ids": [
+            "T046",
+            "T047"
+          ],
+          "scores": {
+            "true_positive": 0,
+            "predicted_count": 3,
+            "expected_count": 2,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          }
+        },
+        {
+          "case_id": "V3-005",
+          "classification_status": "NEEDS_REVIEW",
+          "predicted_task_ids": [],
+          "expected_task_ids": [
+            "T021"
+          ],
+          "scores": {
+            "true_positive": 0,
+            "predicted_count": 0,
+            "expected_count": 1,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          }
+        },
+        {
+          "case_id": "V3-006",
+          "classification_status": "NEEDS_REVIEW",
+          "predicted_task_ids": [],
+          "expected_task_ids": [
+            "T059"
+          ],
+          "scores": {
+            "true_positive": 0,
+            "predicted_count": 0,
+            "expected_count": 1,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          }
+        },
+        {
+          "case_id": "V3-007",
+          "classification_status": "NEEDS_REVIEW",
+          "predicted_task_ids": [],
+          "expected_task_ids": [
+            "T023",
+            "T024"
+          ],
+          "scores": {
+            "true_positive": 0,
+            "predicted_count": 0,
+            "expected_count": 2,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          }
+        }
+      ]
+    },
+    "schedule_propagation": {
+      "status": "IMPLEMENTED",
+      "interpretation": "oracle-seeded dependency propagation; not delay prediction",
+      "aggregate": {
+        "case_count": 6,
+        "micro": {
+          "precision": 0.310606,
+          "recall": 1.0,
+          "f1": 0.473988
+        },
+        "macro": {
+          "precision": 0.481025,
+          "recall": 1.0,
+          "f1": 0.5711
+        }
+      },
+      "cases": [
+        {
+          "case_id": "V2-001",
+          "seed": "hidden ground-truth direct_task_ids with controlled +7 calendar-day finish shift",
+          "changed_downstream_task_ids": [
+            "T048",
+            "T049",
+            "T050",
+            "T051",
+            "T052",
+            "T053",
+            "T054",
+            "T055",
+            "T056",
+            "T057",
+            "T059",
+            "T060",
+            "T061",
+            "T062",
+            "T063",
+            "T064"
+          ],
+          "expected_downstream_task_ids": [
+            "T048",
+            "T049",
+            "T050",
+            "T051",
+            "T052",
+            "T053",
+            "T054",
+            "T055",
+            "T056",
+            "T057",
+            "T059"
+          ],
+          "project_finish_shift_days": 7,
+          "scores": {
+            "true_positive": 11,
+            "predicted_count": 16,
+            "expected_count": 11,
+            "precision": 0.6875,
+            "recall": 1.0,
+            "f1": 0.814815
+          }
+        },
+        {
+          "case_id": "V2-002",
+          "seed": "hidden ground-truth direct_task_ids with controlled +7 calendar-day finish shift",
+          "changed_downstream_task_ids": [
+            "T024",
+            "T025",
+            "T026",
+            "T027",
+            "T028",
+            "T029",
+            "T030",
+            "T031",
+            "T032",
+            "T033",
+            "T034",
+            "T035",
+            "T045",
+            "T046",
+            "T047",
+            "T048",
+            "T049",
+            "T050",
+            "T051",
+            "T052",
+            "T053",
+            "T054",
+            "T055",
+            "T056",
+            "T057",
+            "T058",
+            "T059",
+            "T060",
+            "T061",
+            "T062",
+            "T063",
+            "T064"
+          ],
+          "expected_downstream_task_ids": [
+            "T024",
+            "T025",
+            "T026"
+          ],
+          "project_finish_shift_days": 7,
+          "scores": {
+            "true_positive": 3,
+            "predicted_count": 32,
+            "expected_count": 3,
+            "precision": 0.09375,
+            "recall": 1.0,
+            "f1": 0.171429
+          }
+        },
+        {
+          "case_id": "V3-001",
+          "seed": "hidden ground-truth direct_task_ids with controlled +7 calendar-day finish shift",
+          "changed_downstream_task_ids": [
+            "T048",
+            "T049",
+            "T050",
+            "T051",
+            "T052",
+            "T053",
+            "T054",
+            "T055",
+            "T056",
+            "T057",
+            "T059",
+            "T060",
+            "T061",
+            "T062",
+            "T063",
+            "T064"
+          ],
+          "expected_downstream_task_ids": [
+            "T048",
+            "T049",
+            "T050",
+            "T051",
+            "T052",
+            "T053",
+            "T054",
+            "T055",
+            "T056",
+            "T057",
+            "T059",
+            "T064"
+          ],
+          "project_finish_shift_days": 7,
+          "scores": {
+            "true_positive": 12,
+            "predicted_count": 16,
+            "expected_count": 12,
+            "precision": 0.75,
+            "recall": 1.0,
+            "f1": 0.857143
+          }
+        },
+        {
+          "case_id": "V3-005",
+          "seed": "hidden ground-truth direct_task_ids with controlled +7 calendar-day finish shift",
+          "changed_downstream_task_ids": [
+            "T022",
+            "T023",
+            "T024",
+            "T025",
+            "T026",
+            "T027",
+            "T028",
+            "T029",
+            "T030",
+            "T031",
+            "T032",
+            "T033",
+            "T034",
+            "T035",
+            "T045",
+            "T046",
+            "T047",
+            "T048",
+            "T049",
+            "T050",
+            "T051",
+            "T052",
+            "T053",
+            "T054",
+            "T055",
+            "T056",
+            "T057",
+            "T058",
+            "T059",
+            "T060",
+            "T061",
+            "T062",
+            "T063",
+            "T064"
+          ],
+          "expected_downstream_task_ids": [
+            "T022",
+            "T023",
+            "T024"
+          ],
+          "project_finish_shift_days": 7,
+          "scores": {
+            "true_positive": 3,
+            "predicted_count": 34,
+            "expected_count": 3,
+            "precision": 0.088235,
+            "recall": 1.0,
+            "f1": 0.162162
+          }
+        },
+        {
+          "case_id": "V3-006",
+          "seed": "hidden ground-truth direct_task_ids with controlled +7 calendar-day finish shift",
+          "changed_downstream_task_ids": [
+            "T061",
+            "T062",
+            "T063",
+            "T064"
+          ],
+          "expected_downstream_task_ids": [
+            "T061",
+            "T062",
+            "T063",
+            "T064"
+          ],
+          "project_finish_shift_days": 7,
+          "scores": {
+            "true_positive": 4,
+            "predicted_count": 4,
+            "expected_count": 4,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0
+          }
+        },
+        {
+          "case_id": "V3-007",
+          "seed": "hidden ground-truth direct_task_ids with controlled +7 calendar-day finish shift",
+          "changed_downstream_task_ids": [
+            "T025",
+            "T026",
+            "T028",
+            "T029",
+            "T030",
+            "T031",
+            "T032",
+            "T033",
+            "T034",
+            "T035",
+            "T045",
+            "T046",
+            "T047",
+            "T048",
+            "T049",
+            "T050",
+            "T051",
+            "T052",
+            "T053",
+            "T054",
+            "T055",
+            "T056",
+            "T057",
+            "T058",
+            "T059",
+            "T060",
+            "T061",
+            "T062",
+            "T063",
+            "T064"
+          ],
+          "expected_downstream_task_ids": [
+            "T025",
+            "T026",
+            "T028",
+            "T029",
+            "T032",
+            "T034",
+            "T046",
+            "T047"
+          ],
+          "project_finish_shift_days": 7,
+          "scores": {
+            "true_positive": 8,
+            "predicted_count": 30,
+            "expected_count": 8,
+            "precision": 0.266667,
+            "recall": 1.0,
+            "f1": 0.421053
+          }
+        }
+      ]
+    },
+    "delay_estimation": {
+      "status": "NOT_IMPLEMENTED",
+      "reason": "current event pipeline does not estimate delay magnitude from the leak-free L3 narrative"
+    },
+    "risk_classification": {
+      "status": "NOT_IMPLEMENTED",
+      "reason": "classification_status is schedule interpretation state, not a risk_category prediction"
+    },
+    "evidence_retrieval": {
+      "status": "NOT_IMPLEMENTED",
+      "reason": "current service does not return ranked L2/source-corpus retrieval results"
+    },
+    "response_quality": {
+      "status": "NOT_IMPLEMENTED",
+      "reason": "deterministic pipeline returns no mitigation recommendation suitable for a rubric; no LLM judge configured"
+    }
+  }
+}

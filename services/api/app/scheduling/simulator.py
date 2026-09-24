@@ -42,8 +42,8 @@ def validate_tasks(tasks: list[dict[str, Any]]) -> list[str]:
         if demand > capacity:
             errors.append(f"{task_id} resource_demand exceeds resource_capacity")
 
-        if str(task.get("dependency_type") or "FS").upper() != "FS":
-            errors.append(f"{task_id} dependency_type must be FS")
+        if str(task.get("dependency_type") or "FS").upper() not in {"FS", "SS"}:
+            errors.append(f"{task_id} dependency_type must be FS or SS")
 
         for field in ("baseline_start", "baseline_finish"):
             if task.get(field) is None:
@@ -71,7 +71,7 @@ def simulate(
     options: Optional[list[dict[str, Any]]] = None,
     budget_krw: Optional[int] = None,
 ) -> dict[str, Any]:
-    """Simulate a deterministic day-level schedule with FS links and capacities."""
+    """Simulate a deterministic day-level schedule with FS/SS links and capacities."""
     validation_errors = validate_tasks(tasks)
     if validation_errors:
         return {
@@ -184,13 +184,21 @@ def _schedule_task(
     baseline_start = _parse_date(task["baseline_start"])
     earliest = baseline_start if not may_start_before_baseline else _project_start(project, baseline_start)
 
-    predecessor_finishes = [
-        _parse_date(scheduled[predecessor_id]["planned_finish"])
-        for predecessor_id in _predecessor_ids(task)
-        if predecessor_id in scheduled
-    ]
-    if predecessor_finishes:
-        earliest = max(earliest, _next_day(max(predecessor_finishes)))
+    relationship = str(task.get("dependency_type") or "FS").upper()
+    predecessor_constraints: list[date] = []
+    for predecessor_id in _predecessor_ids(task):
+        if predecessor_id not in scheduled:
+            continue
+        predecessor = scheduled[predecessor_id]
+        if relationship == "SS":
+            predecessor_constraints.append(_parse_date(predecessor["planned_start"]))
+        else:
+            predecessor_finish = _parse_date(predecessor["planned_finish"])
+            predecessor_constraints.append(
+                predecessor_finish if predecessor.get("finish_boundary") == "exclusive" else _next_day(predecessor_finish)
+            )
+    if predecessor_constraints:
+        earliest = max(earliest, max(predecessor_constraints))
 
     if task.get("not_before"):
         earliest = max(earliest, _parse_date(task["not_before"]))
@@ -207,7 +215,11 @@ def _schedule_task(
 
     current = earliest
     while True:
-        start = _next_allowed_workday(project, task, current, blocked_dates, scoped_blocked_dates, resource_unavailable)
+        start = (
+            current
+            if task.get("finish_boundary") == "exclusive"
+            else _next_allowed_workday(project, task, current, blocked_dates, scoped_blocked_dates, resource_unavailable)
+        )
         workdays = _collect_workdays_nonpreemptive(
             project,
             task,
@@ -218,7 +230,11 @@ def _schedule_task(
             resource_unavailable,
         )
         if workdays and _resource_capacity_available(task, workdays, occupancy):
-            finish = workdays[-1]
+            finish = (
+                workdays[-1] + timedelta(days=_int_value(task.get("finish_boundary_offset_days"), default=1))
+                if task.get("finish_boundary") == "exclusive"
+                else workdays[-1]
+            )
             _reserve(task, workdays, occupancy)
             return _scheduled_task(task, start, finish)
         current = _next_day(start)
@@ -307,7 +323,8 @@ def _workdays_between(
 ) -> list[date]:
     days: list[date] = []
     current = start
-    while current <= finish:
+    finish_inclusive = finish - timedelta(days=1) if task.get("finish_boundary") == "exclusive" else finish
+    while current <= finish_inclusive:
         if _is_workday(project, task, current, blocked_dates, scoped_blocked_dates, resource_unavailable):
             days.append(current)
         current += timedelta(days=1)
@@ -408,6 +425,8 @@ def _resource_capacity_available(
     workdays: list[date],
     occupancy: dict[tuple[str, str], dict[date, int]],
 ) -> bool:
+    if not task.get("resource_group"):
+        return True
     key = _resource_key(task)
     demand = _int_value(task.get("resource_demand"), default=1)
     capacity = _int_value(task.get("resource_capacity"), default=1)
@@ -419,6 +438,8 @@ def _reserve(
     workdays: list[date],
     occupancy: dict[tuple[str, str], dict[date, int]],
 ) -> None:
+    if not task.get("resource_group"):
+        return
     key = _resource_key(task)
     demand = _int_value(task.get("resource_demand"), default=1)
     for day in workdays:

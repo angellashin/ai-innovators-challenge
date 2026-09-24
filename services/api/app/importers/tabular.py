@@ -63,15 +63,16 @@ HEADER_ALIASES = {
     "phase": {"단계", "phase"},
     "name": {"작업명", "taskname", "task_name", "name", "작업"},
     "planned_start": {"계획시작", "start", "plannedstart", "planned_start", "시작일"},
-    "planned_finish": {"계획종료", "finish", "plannedfinish", "planned_finish", "종료일", "완료일"},
+    "planned_finish": {"계획종료", "finish", "plannedfinish", "planned_finish", "plannedend", "planned_end", "종료일", "완료일"},
+    "duration_days": {"durationdays", "duration_days"},
     "duration_workdays": {"작업일수", "기간작업일", "duration", "duration_workdays", "기간"},
-    "owner": {"담당조직", "owner", "담당", "조직"},
-    "location": {"위치", "location", "site"},
+    "owner": {"담당조직", "owner", "ownercompany", "owner_company", "담당", "조직"},
+    "location": {"위치", "location", "region", "site"},
     "status": {"상태", "status"},
     "progress": {"진척률", "progress", "percent", "완료율"},
     "notes": {"비고", "메모", "notes", "note"},
     "predecessor_ids": {"필수선행id", "선행id", "predecessors", "predecessor_ids", "pred"},
-    "relationship": {"관계", "relationship"},
+    "dependency_type": {"관계", "relationship", "dependencytype", "dependency_type"},
     "basis": {"근거구분", "basis"},
     "resource_group": {"자원그룹", "resource_group", "resource"},
     "demand_teams": {"수요팀", "demand_teams", "demand"},
@@ -446,7 +447,7 @@ def _apply_task_constraints(result: dict[str, Any]) -> None:
             continue
         for key in (
             "predecessor_ids",
-            "relationship",
+            "dependency_type",
             "basis",
             "duration_workdays",
             "resource_group",
@@ -476,9 +477,9 @@ def _canonical_header(value: Any) -> str | None:
     normalised = _normalise_text(value)
     if not normalised:
         return None
-    if normalised == "키":
+    if normalised in {"키", "key", "field"}:
         return "key"
-    if normalised == "값":
+    if normalised in {"값", "value"}:
         return "value"
     for canonical, aliases in HEADER_ALIASES.items():
         if normalised in {_normalise_text(alias) for alias in aliases}:
@@ -497,7 +498,7 @@ def _coerce_by_key(key: str, value: Any) -> Any:
         return _coerce_date(value)
     if key == "received_at":
         return _coerce_datetime(value)
-    if key in {"duration_workdays", "demand_teams", "capacity_teams", "extra_cost_krw"}:
+    if key in {"duration_days", "duration_workdays", "demand_teams", "capacity_teams", "extra_cost_krw"}:
         return _coerce_int(value)
     if key == "progress":
         return _coerce_float(value)
