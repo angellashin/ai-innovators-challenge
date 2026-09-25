@@ -86,7 +86,8 @@ def decision_deadline(project: dict[str, Any], scenario: dict[str, Any], option_
 
 def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str, Any], overrides: "ConfirmInput") -> dict[str, Any]:
     """Bridge workbook labels to the Task and Option fields used by tools."""
-    from .hero_demo import hero_fixture, hero_outdoor_task_ids, status_at
+    from .hero_demo import hero_fixture, status_at
+    from .watch_suggestions import outdoor_candidate
 
     hero = hero_fixture(parsed) if overrides.tasks is None else None
     raw_project = {**parsed.get("project", {}), **(overrides.project or {})}
@@ -105,7 +106,6 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
     calendars = overrides.calendars if overrides.calendars is not None else parsed.get("calendars", [])
     profile["nonworking_dates"] = [item.get("calendar_date") for item in calendars if item.get("scope") == profile.get("site_id") and item.get("calendar_date")]
     raw_tasks = overrides.tasks if overrides.tasks is not None else parsed.get("tasks", [])
-    hero_outdoor = hero_outdoor_task_ids() if hero else set()
     tasks = []
     for original in raw_tasks:
         task = dict(original)
@@ -116,7 +116,7 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
         if hero:
             task["status"] = status_at(task, hero["as_of_date"])
             task["status_as_of"] = hero["as_of_date"]
-            task["outdoor"] = str(task["task_id"]) in hero_outdoor
+            task["outdoor"] = outdoor_candidate(task)
             task["outdoor_data_origin"] = "SYNTHETIC"
         task["dependency_type"] = str(task.get("dependency_type") or task.get("relationship") or "FS").upper()
         task["location_id"] = task.get("location_id") or task.get("location")
@@ -153,26 +153,8 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
 
 
 def suggest_watch_plan(project: dict[str, Any], tasks: list[dict[str, Any]]) -> dict[str, Any]:
-    site = None
-    if project.get("latitude") is not None and project.get("longitude") is not None:
-        site = {key: project.get(key) for key in ("latitude", "longitude", "timezone")}
-        site["label"] = project.get("region") or "프로젝트 현장"
-    return {
-        "enabled": False,
-        "template_id": "equipment_installation_v1",
-        "weather_site": site if any(task.get("outdoor") for task in tasks) else None,
-        "weather_poll_hours": 6,
-        "notice_poll_hours": 12,
-        "source_allowlist": ["https://environment.ec.europa.eu/news_en"],
-        "public_search_terms": ["industrial emissions", "equipment import"],
-        "weather_limits": {},
-        "seasonal_statistics_enabled": True,
-        "weather_task_ids": [str(task["task_id"]) for task in tasks if task.get("outdoor")],
-        "holiday_calendars": [],
-        "holiday_poll_hours": 24,
-        "source_rules": [],
-        "approval_required_for": ["schedule_commit", "extra_cost", "external_send"],
-    }
+    from .watch_suggestions import suggest_watch_plan as derive
+    return derive(project, tasks)
 
 
 class ProjectInput(BaseModel):
@@ -219,8 +201,9 @@ class WatchPlanInput(BaseModel):
     seasonal_statistics_enabled: bool = True
     weather_task_ids: list[str] = Field(default_factory=list)
     source_rules: list[SourceRule] = Field(default_factory=list, max_length=20)
-    holiday_calendars: list[HolidayCalendar] = Field(default_factory=list, max_length=10)
+    holiday_calendars: list[HolidayCalendar] = Field(default_factory=list, max_length=100)
     holiday_poll_hours: int = Field(default=24, ge=1, le=168)
+    proposal_items: list[dict[str, Any]] = Field(default_factory=list, max_length=500)
 
 
 class EventInput(BaseModel):
@@ -700,6 +683,9 @@ def confirm_import(project_id: str, import_id: str, value: ConfirmInput) -> dict
     db.put_json("projects", project_id, profile)
     suggestion = suggest_watch_plan(profile, tasks)
     db.put_json("watch_plans", project_id, suggestion)
+    if suggestion["proposal_items"] and all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
+        db.create_run(project_id, "watch_plan_enrich", None, version_id,
+                      f"watch-plan-enrich:{version_id}", {})
     return {"version_id": version_id, "version_hash": digest(snapshot), "task_count": len(tasks), "watch_plan_suggestion": suggestion}
 
 
@@ -708,6 +694,29 @@ def save_watch_plan(project_id: str, value: WatchPlanInput) -> dict[str, Any]:
     db = store()
     project_or_404(db, project_id)
     data = value.model_dump(mode="json")
+    original = db.get_json("watch_plans", project_id)
+    proposed = {item["id"]: item for item in (original or {}).get("data", {}).get("proposal_items", [])}
+    supplied = {str(item.get("id")): item for item in data["proposal_items"]}
+    if proposed and set(supplied) != set(proposed):
+        raise HTTPException(422, "감시 제안 항목이 누락되거나 추가되었습니다")
+    for item_id, item in supplied.items():
+        if item.get("decision") not in {"proposed", "accepted", "modified", "excluded"}:
+            raise HTTPException(422, "감시 항목의 선택 상태를 확인하세요")
+        if proposed and (item.get("kind") != proposed[item_id].get("kind") or item.get("task_ids") != proposed[item_id].get("task_ids")):
+            raise HTTPException(422, "감시 제안의 작업 연결은 설정 편집에서 수정하세요")
+    if data["enabled"] and any(item.get("decision") == "proposed" for item in supplied.values()):
+        raise HTTPException(422, "감시 제안 항목을 각각 수락·수정·제외한 뒤 활성화하세요")
+    excluded = {item_id for item_id, item in supplied.items() if item.get("decision") == "excluded"}
+    data["holiday_calendars"] = [config for config in data["holiday_calendars"]
+                                 if f"holiday:{config['country_code']}:{config['year']}" not in excluded]
+    if "weather:site" in excluded:
+        data["weather_site"] = None
+        data["weather_task_ids"] = []
+    else:
+        data["weather_task_ids"] = [task_id for task_id in data["weather_task_ids"] if f"outdoor:{task_id}" not in excluded]
+    if "source:eu-environment" in excluded:
+        data["source_rules"] = [rule for rule in data["source_rules"] if rule["url"] != "https://environment.ec.europa.eu/news_en"]
+        data["source_allowlist"] = [url for url in data["source_allowlist"] if url != "https://environment.ec.europa.eu/news_en"]
     approved_hosts = {host.strip().lower() for host in os.environ.get("REPLAN_ALLOWED_SOURCE_HOSTS", "environment.ec.europa.eu").split(",") if host.strip()}
     for url in data["source_allowlist"]:
         parsed_url = urlparse(url)

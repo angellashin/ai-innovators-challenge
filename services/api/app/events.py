@@ -272,11 +272,12 @@ def infer_event_patch(value: dict[str, Any], project: dict[str, Any], tasks: lis
     missing = []
     if dates or has_change_language:
         if not related:
-            missing.append("영향 작업")
+            missing.append("기준 일정에서 영향받는 작업 ID를 지정해 주세요.")
         if not dates:
-            missing.append("변경된 날짜")
+            target = ", ".join(related) if related else "해당 작업"
+            missing.append(f"{target}의 변경된 시작일 또는 완료일을 날짜로 알려주세요.")
         if not any(word in lowered for word in ("도착", "납품", "출하", "제작", "설치", "시운전", "fat", "시험", "인력", "resource")):
-            missing.append("변경 단계")
+            missing.append("변경이 제작·시험·운송·설치 중 어느 단계에 해당하는지 알려주세요.")
     return {
         "patch": {},
         "related_task_ids": related,

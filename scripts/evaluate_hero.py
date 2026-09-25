@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "services" / "api"))
 
 from app.events import normalize_event  # noqa: E402
@@ -27,6 +28,9 @@ from app.main import ConfirmInput, app, normalize_import_snapshot  # noqa: E402
 from app.scheduling import simulate, validate_tasks  # noqa: E402
 from app.storage import Store  # noqa: E402
 from app.worker import run_once  # noqa: E402
+from app.risk_signals import mentioned_risk_types, search_risk_signals  # noqa: E402
+from app.task_retrieval import retrieve_related_tasks  # noqa: E402
+from scripts.evaluation_mocks import MockEvaluationGateway  # noqa: E402
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -262,11 +266,22 @@ def evaluate(
     public_inputs = {item["case_id"]: _public_event_input(cases_by_id[item["case_id"]]) for item in eligible}
 
     direct_rows = []
+    agent_rows = []
+    l2_exclusion_audit = []
+    mock_gateway = MockEvaluationGateway()
     for mapping in eligible:
         case_id = mapping["case_id"]
         event = normalize_event({"content": public_inputs[case_id], "mode": "REPLAY"}, project, tasks)
         predicted = set(event.get("related_task_ids") or [])
         expected = set(mapping["direct_task_ids"])
+        original_risk_id = str(cases_by_id[case_id].get("source_risk_id") or "")
+        risk_types = mentioned_risk_types(public_inputs[case_id])
+        analogous = search_risk_signals(risk_type=risk_types[0] if risk_types else "",
+                                         exclude_source_risk_id=original_risk_id, limit=5)["results"]
+        exposed = [item["risk_id"] for item in analogous]
+        l2_exclusion_audit.append({"case_id": case_id, "excluded_source_risk_id": original_risk_id,
+                                   "returned_risk_ids": exposed, "pass": original_risk_id not in exposed})
+        agent_predicted = predicted or set(retrieve_related_tasks(public_inputs[case_id], tasks, mock_gateway, analogous)["task_ids"])
         direct_rows.append({
             "case_id": case_id,
             "classification_status": event.get("classification_status"),
@@ -274,6 +289,8 @@ def evaluate(
             "expected_task_ids": sorted(expected),
             "scores": _scores(predicted, expected),
         })
+        agent_rows.append({"case_id": case_id, "predicted_task_ids": sorted(agent_predicted),
+                           "expected_task_ids": sorted(expected), "scores": _scores(agent_predicted, expected)})
 
     propagation_rows = []
     for mapping in eligible:
@@ -304,7 +321,7 @@ def evaluate(
 
     evaluation = {
         "mode": "BENCHMARK",
-        "agent_pipeline": "app.events.normalize_event + app.scheduling.simulate",
+        "agent_pipeline": "app.events.normalize_event + quote-validated mocked task retrieval + app.scheduling.simulate",
         "paid_calls": 0,
         "eval_dir": str(eval_dir),
         "evaluation_files": evaluation_manifests,
@@ -323,6 +340,12 @@ def evaluate(
                 "ranking_metrics": "NOT_AVAILABLE: service output has no explicit task ranking",
                 "aggregate": _aggregate(direct_rows),
                 "cases": direct_rows,
+                "rules_only": _aggregate(direct_rows),
+                "agent_included_mock": _aggregate(agent_rows),
+                "agent_cases_mock": agent_rows,
+                "mock_note": "Offline semantic fixture checks the agent interface, not actual LLM performance.",
+                "l2_exclusion_audit": {"pass": all(row["pass"] for row in l2_exclusion_audit),
+                                       "cases": l2_exclusion_audit},
             },
             "schedule_propagation": {
                 "status": "IMPLEMENTED",
@@ -339,8 +362,8 @@ def evaluate(
                 "reason": "classification_status is schedule interpretation state, not a risk_category prediction",
             },
             "evidence_retrieval": {
-                "status": "NOT_IMPLEMENTED",
-                "reason": "current service does not return ranked L2/source-corpus retrieval results",
+                "status": "NOT_EVALUATED",
+                "reason": "L2 search is available; this benchmark has no independently labeled relevance set for retrieval scoring",
             },
             "response_quality": {
                 "status": "NOT_IMPLEMENTED",
@@ -373,6 +396,7 @@ def main() -> int:
         and integration["baseline_simulation"]["changed_from_source_count"] == 0
         and integration["api_smoke"]["status"] == "PASS"
         and evaluation["ground_truth_leakage_audit"]["pass"]
+        and evaluation["metrics"]["affected_task_retrieval"]["l2_exclusion_audit"]["pass"]
     )
     return 0 if passed else 1
 

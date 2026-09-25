@@ -36,6 +36,7 @@ def _scenario_record(run: dict[str, Any], event: dict[str, Any], version: dict[s
         "event_id": event["id"],
         "event_patch_hash": digest(event.get("patch", {})),
         "evidence": event.get("evidence"),
+        "risk_signal_evidence": event.get("risk_signal_evidence", []),
         "included_events": event.get("included_events", []),
         "applied_patch": result.get("combined_patch", event.get("patch", {})),
         "provisional": bool(event.get("review_status") != "CONFIRMED"),
@@ -57,7 +58,7 @@ def _record_usage(db: Store, run_id: str, output: dict[str, Any]) -> None:
         conn.execute(
             "UPDATE usage_ledger SET model=?, input_tokens=?, output_tokens=? WHERE run_id=?",
             (
-                usage.get("model") or os.environ.get("LLM_MODEL"), usage.get("prompt_tokens"),
+                output.get("model") or usage.get("model") or os.environ.get("LLM_MODEL"), usage.get("prompt_tokens"),
                 usage.get("completion_tokens"), run_id,
             ),
         )
@@ -193,12 +194,48 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
                 db.put_json("events", event_row["id"], event, project_id=run["project_id"],
                             fingerprint=event_row["fingerprint"], created_at=event_row["created_at"])
 
+    if event.get("channel") == "supplier_message":
+        from .risk_signals import evidence_for_supplier
+        if not event.get("patch") and event.get("classification_status") != "NO_SCHEDULE_IMPACT":
+            if all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
+                paid_state = _reserve_paid_attempt(db, run["id"])
+                if paid_state == "reserved":
+                    from .adapters.llm import OpenAICompatibleLLM
+                    from .supplier_interpreter import interpret_supplier_message
+                    interpreted = interpret_supplier_message(event, project, tasks, OpenAICompatibleLLM())
+                    _record_usage(db, run["id"], interpreted)
+                    event["interpretation"] = interpreted
+                    if interpreted.get("patch"):
+                        completed = {str(task["task_id"]) for task in tasks if task.get("status") == "completed"}
+                        affected = {str(task_id) for values in interpreted["patch"].values() for task_id in values}
+                        if affected & completed:
+                            event["missing_fields"] = ["완료된 작업의 과거 변경 통보입니다. 현재 기준 일정에 적용할 새 대상 작업을 확인해 주세요."]
+                            event["interpretation"]["status"] = "past_task_rejected"
+                        else:
+                            event["patch"] = interpreted["patch"]
+                            event["related_task_ids"] = interpreted["related_task_ids"]
+                            event["extracted_facts"] = interpreted["facts"]
+                            event["classification_status"] = "PATCH_PROPOSED"
+                            event.pop("missing_fields", None)
+                    elif interpreted.get("no_schedule_impact"):
+                        event["classification_status"] = "NO_SCHEDULE_IMPACT"
+                        event.pop("missing_fields", None)
+                    else:
+                        event["missing_fields"] = interpreted.get("questions") or event.get("missing_fields") or []
+                else:
+                    event["interpretation"] = {"status": paid_state}
+        event["risk_signal_evidence"] = evidence_for_supplier(
+            event.get("content", ""), tasks, event.get("related_task_ids") or [],
+            event.get("published_at") or event.get("received_at") or "")
+        db.put_json("events", event_row["id"], event, project_id=run["project_id"],
+                    fingerprint=event_row["fingerprint"], created_at=event_row["created_at"])
+
     budget = run["data"].get("budget_krw")
     if event.get("classification_status") == "NO_SCHEDULE_IMPACT":
         return {"status": "NO_IMPACT", "summary": "일정에 영향을 주는 변경이 아닙니다.", "scenario_ids": [], "agent_status": "not_needed"}
     if not event.get("patch"):
         action_id = digest({"run_id": run["id"], "kind": "needs_input"})[:32]
-        missing = event.get("missing_fields") or ["적용 대상", "일정 영향"]
+        missing = event.get("missing_fields") or ["영향받는 작업 ID와 변경 날짜를 확인해 주세요."]
         action = {
             "owner": "프로젝트 운영팀", "state": "OPEN", "request": ", ".join(missing) + " 확인",
             "due_at": None, "event_id": event["id"], "mode": event.get("mode"),
@@ -206,7 +243,7 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         db.put_json("actions", action_id, action, project_id=run["project_id"], event_id=event["id"], scenario_id=None)
         return {"status": "NEEDS_INPUT", "summary": "근거를 확인했습니다. 영향 작업과 효력일·중단 기간을 확인하면 계산할 수 있습니다.",
                 "action_ids": [action_id], "scenario_ids": [], "candidates": event.get("candidates", []),
-                "evidence": event.get("evidence"), "missing_fields": missing,
+                "evidence": event.get("evidence"), "risk_signal_evidence": event.get("risk_signal_evidence", []), "missing_fields": missing,
                 "agent_status": event.get("interpretation", {}).get("status", "rules_only")}
 
     if event.get("evidence"):
@@ -324,6 +361,8 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
                     return {"status": "invalid_scenario"}
                 return {"status": "draft_only", "scenario_id": scenario_id, "required_confirmations": match.get("required_confirmations", []), "budget_met": match.get("budget_met"), "target_met": match.get("target_met")}
 
+            from .risk_signals import search_risk_signals
+
             agent_output = run_agent(
                 {"project": project, "version_id": version["id"], "scenario_results": [{k: v for k, v in item.items() if k != "schedule"} for item in scenario_results]},
                 event,
@@ -332,6 +371,7 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
                     "list_response_options": list_response_options,
                     "simulate_schedule": simulate_schedule,
                     "search_public_sources": search_public_sources,
+                    "search_risk_signals": search_risk_signals,
                     "fetch_allowed_source": fetch_allowed_source,
                     "fetch_weather": fetch_weather,
                     "prepare_change_package": prepare_change_package,
@@ -614,6 +654,29 @@ def enqueue_due_scans(db: Store, now: datetime | None = None) -> int:
     return queued
 
 
+def _run_watch_plan_enrichment(db: Store, run: dict[str, Any]) -> dict[str, Any]:
+    if not all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) or os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() != "true":
+        return {"status": "rules_only", "summary": "LLM 보강이 꺼져 있어 규칙 제안을 유지합니다."}
+    version = db.get_json("versions", run["version_id"], run["project_id"])
+    watch = db.get_json("watch_plans", run["project_id"])
+    if not version or not watch:
+        return {"status": "stale", "summary": "기준 일정 또는 감시 계획을 찾을 수 없습니다."}
+    if db.current_version(run["project_id"])["id"] != version["id"]:
+        return {"status": "stale", "summary": "새 기준 일정이 등록되어 보강을 건너뜁니다."}
+    paid_state = _reserve_paid_attempt(db, run["id"])
+    if paid_state != "reserved":
+        return {"status": paid_state, "summary": "유료 호출 한도로 규칙 제안을 유지합니다."}
+    from .adapters.llm import OpenAICompatibleLLM
+    from .watch_suggestions import enrich_watch_plan
+    plan = dict(watch["data"])
+    plan["proposal_items"] = [dict(item) for item in plan.get("proposal_items", [])]
+    output = enrich_watch_plan(plan, version["data"]["tasks"], OpenAICompatibleLLM())
+    _record_usage(db, run["id"], output)
+    if output["status"] == "enriched":
+        db.put_json("watch_plans", run["project_id"], plan)
+    return output
+
+
 def run_once(db: Store | None = None) -> bool:
     db = db or Store()
     run = db.claim_next_run()
@@ -626,6 +689,8 @@ def run_once(db: Store | None = None) -> bool:
             result = _run_scan(db, run)
         elif run["kind"] == "document_ingest":
             result = _run_document_ingest(db, run)
+        elif run["kind"] == "watch_plan_enrich":
+            result = _run_watch_plan_enrichment(db, run)
         else:
             raise ValueError("unsupported run kind")
         db.update_run(run["id"], "succeeded", result)

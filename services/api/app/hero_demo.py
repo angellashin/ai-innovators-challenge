@@ -10,7 +10,6 @@ from typing import Any
 
 HERO_PROJECT_ID = "HERO-BAT-HU-001"
 _FIXTURE = Path(__file__).resolve().parents[3] / "data" / "hero_demo" / "supplier_messages.json"
-_OUTDOOR = _FIXTURE.with_name("outdoor_tasks.json")
 HERO_WORKBOOK = _FIXTURE.parents[1] / "l1_project" / "hero_battery_factory_project.xlsx"
 
 
@@ -33,7 +32,3 @@ def status_at(task: dict[str, Any], as_of: str) -> str:
     if start <= point:
         return "in_progress"
     return "planned"
-
-
-def hero_outdoor_task_ids() -> set[str]:
-    return set(json.loads(_OUTDOOR.read_text(encoding="utf-8"))["outdoor_task_ids"])

@@ -90,6 +90,17 @@ API 문서는 `http://localhost:8000/docs`에 있습니다. 분석/수집은 큐
 
 `scripts/evaluate_replay.py`는 인터넷/LLM 호출 없이 제공 엑셀의 baseline과 E01~E05 경계를 재현합니다. 실제 대회 API는 `API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`을 서버에만 설정하세요. `python scripts/smoke_llm.py`는 모델 목록 조회만 하며, `--roundtrip`을 명시해야 생성 및 도구 호출을 테스트합니다. 분석 중 유료 호출을 허용하려면 `REPLAN_PAID_CALLS_ENABLED=true`를 별도로 지정합니다. 기본 일일 유료 실행 상한은 20건(`REPLAN_MAX_PAID_RUNS_PER_DAY`)이고 비용 단가가 검증되지 않은 호출은 0원이 아닌 `UNKNOWN`으로 기록합니다.
 
+협력사 메시지는 규칙으로 먼저 해석하고, 규칙이 실패했을 때만 설정된 LLM에 작업 ID·원문 날짜·정확한 인용을 요구합니다. 검증된 해석도 사람 확인 전에는 잠정 patch입니다. 규제·인허가·인력·물류 사유는 `search_risk_signals`가 찾은 L2 실제 사례의 URL·발행일을 참고 근거로 제시하며 사례의 지연 일수는 계산에 사용하지 않습니다. 감시 계획은 업로드한 Excel의 국가·기간·공정·위험 태그·협력사에서 제안하고 각 항목을 수락·수정·제외한 후 활성화합니다. 야외 작업 분류와 기상 임계값은 모두 현장 확인 대상입니다.
+
+```sh
+python scripts/evaluate_agent.py --mode mock --output artifacts/agent_evaluation.json
+python scripts/evaluate_hero.py --project data/l1_project/hero_battery_factory_project.xlsx --ground-truth data/l3_ground_truth/ground_truth.json --mapping data/l1_project/l3_to_wbs_mapping.json --eval-dir data/evaluation --output artifacts/hero_evaluation.json
+# .env에 LLM_BASE_URL, LLM_MODEL, API_KEY, REPLAN_PAID_CALLS_ENABLED=true를 설정한 뒤에만 실행
+python scripts/evaluate_agent_real.py --output artifacts/agent_evaluation_real.json
+```
+
+모의 평가는 원본 9건·표현 변형 7건·L3 적격 사례 6건을 검사하며 실제 유료 호출은 0건입니다. 현재 실제 모델 평가의 예상 호출 수는 최대 **14건**(규칙 실패 통보 8건과 L3 사례 6건, 실제 호출 수는 결과 JSON의 `llm_call_count` 참고)이며 게이트웨이의 JSON 형식 재시도 시 HTTP 요청이 늘 수 있습니다. 실제 평가는 `REPLAN_MAX_PAID_RUNS_PER_DAY` 한도를 호출 전에 적용합니다. 결과에는 모델명·UTC 실행 시각·호출 수가 저장됩니다. 정답 파일은 채점 코드만 읽으며 에이전트에는 원문·작업 목록·동일 사건을 제외한 L2 참고 사례만 전달합니다. 서비스 이미지는 L2 자료와 데모 입력만 포함하고 `data/l3_ground_truth`, L3 매핑, hero 정답 파일을 포함하지 않습니다. 모의 점수는 인터페이스 검증용이며 실제 모델 품질의 추정치가 아닙니다.
+
 ## 범위와 주의
 
 - 데모용 단일 공유 토큰과 SQLite 파일은 프로젝트 운영팀 공용 계정 하나를 모델링합니다. 협력사는 계정을 만들지 않습니다. 인터넷 공개 배포에는 안전한 팀 계정 인증, 자격 증명 관리, 백업, 영속 볼륨, HTTPS 프록시와 운영 감시가 추가로 필요합니다.

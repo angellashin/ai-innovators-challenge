@@ -23,6 +23,8 @@ jobs:
       - run: PYTHONDONTWRITEBYTECODE=1 python -m pytest -q
       - run: python scripts/evaluate_replay.py
       - run: python scripts/evaluate_external.py
+      - run: python scripts/evaluate_hero.py --project data/l1_project/hero_battery_factory_project.xlsx --ground-truth data/l3_ground_truth/ground_truth.json --mapping data/l1_project/l3_to_wbs_mapping.json --eval-dir data/evaluation --output artifacts/hero_evaluation.json
+      - run: python scripts/evaluate_agent.py --mode mock --output artifacts/agent_evaluation.json
 
   web:
     name: Web typecheck and build
