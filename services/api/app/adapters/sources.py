@@ -16,6 +16,8 @@ from xml.etree import ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse, urlunparse
+from email.utils import parsedate_to_datetime
+import math
 
 import httpx
 
@@ -36,6 +38,8 @@ def fetch_weather(site: dict[str, Any], days: int = 7, *, transport: httpx.BaseT
     try:
         latitude = _required_float(site, "latitude", "lat")
         longitude = _required_float(site, "longitude", "lon", "lng")
+        if not math.isfinite(latitude) or not math.isfinite(longitude) or not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+            raise ValueError("invalid coordinates")
         forecast_days = max(1, min(int(days), 16))
         params = {
             "latitude": latitude,
@@ -65,6 +69,8 @@ def fetch_weather(site: dict[str, Any], days: int = 7, *, transport: httpx.BaseT
             "source_id": source_id,
             "fetched_at": fetched_at,
             "provider": "open_meteo",
+            "url": str(response.url),
+            "site": site,
             "forecast": {
                 "validity": {
                     "start": data[0]["date"] if data else None,
@@ -243,6 +249,23 @@ def _extract_feed(text: str) -> dict[str, Any]:
             continue
         item = {"title": value(node, ("title",)), "summary": value(node, ("description", "summary", "content")), "published_at": value(node, ("pubdate", "published", "updated"))}
         if item["title"] or item["summary"]:
+            item["summary"] = _extract_visible_text(item["summary"], "text/html")
+            raw_date = item["published_at"]
+            try:
+                item["published_at"] = parsedate_to_datetime(raw_date).isoformat()
+            except (ValueError, TypeError):
+                try:
+                    item["published_at"] = datetime.fromisoformat(raw_date.replace("Z", "+00:00")).isoformat()
+                except ValueError:
+                    item["published_at"] = ""
+            item["id"] = value(node, ("guid", "id"))
+            item["url"] = value(node, ("link",))
+            if not item["url"]:
+                link = next((child for child in node if child.tag.rsplit("}", 1)[-1] == "link" and child.get("rel", "alternate") == "alternate"), None)
+                if link is not None:
+                    item["url"] = link.get("href", "")
+            if urlparse(item["url"]).scheme not in {"http", "https"}:
+                item["url"] = ""
             items.append(item)
         if len(items) >= 20:
             break
@@ -288,3 +311,24 @@ def _utcnow() -> str:
 
 def _error(status: str, source_id: str, fetched_at: str, message: str, **extra: Any) -> dict[str, Any]:
     return {"status": status, "source_id": source_id, "fetched_at": fetched_at, "error": message, **extra}
+
+
+def fetch_holidays(country_code: str, year: int, *, transport: httpx.BaseTransport | None = None) -> dict[str, Any]:
+    """Nager.Date public calendar data; applicability to working days needs review."""
+    fetched_at = _utcnow()
+    source_id = f"nager:{country_code}:{year}"
+    if not re.fullmatch(r"[A-Z]{2}", country_code) or not 2000 <= year <= 2100:
+        return _error("error", source_id, fetched_at, "invalid country/year")
+    url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country_code}"
+    try:
+        with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS, transport=transport, headers={"User-Agent": USER_AGENT}) as client:
+            response = client.get(url)
+            response.raise_for_status()
+        rows = response.json()
+        if not isinstance(rows, list) or any(not isinstance(row, dict) or not row.get("date") for row in rows):
+            raise ValueError("invalid holiday response")
+        return {"status": "ok", "source_id": source_id, "provider": "nager_date",
+                "url": url, "fetched_at": fetched_at, "holidays": rows,
+                "body_hash": _hash_text(response.text)}
+    except (httpx.HTTPError, ValueError) as exc:
+        return _error("error", source_id, fetched_at, str(exc), url=url)

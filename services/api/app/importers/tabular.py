@@ -59,6 +59,12 @@ BUILTIN_DATE_FORMATS = {
 }
 
 HEADER_ALIASES = {
+    "supplier_id": {"supplier_id", "공급사id", "공급사"},
+    "equipment_id": {"equipment_id", "설비id", "설비번호"},
+    "country_code": {"country_code", "국가코드"},
+    "risk_tags": {"risk_tags", "위험태그"},
+    "planned_cost": {"planned_cost", "계획비용"},
+    "currency": {"currency", "통화"},
     "task_id": {"작업id", "작업ID", "taskid", "task_id", "id", "작업번호"},
     "phase": {"단계", "phase"},
     "name": {"작업명", "taskname", "task_name", "name", "작업"},
