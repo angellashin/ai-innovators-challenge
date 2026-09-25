@@ -18,7 +18,7 @@ from .storage import Store, digest, identifier, utcnow
 
 
 def _scenario_record(run: dict[str, Any], event: dict[str, Any], version: dict[str, Any], label: str, option_ids: list[str], result: dict[str, Any]) -> dict[str, Any]:
-    required = []
+    required = list(event.get("verification_required") or [])
     if option_ids:
         options_by_id = {item.get("option_id"): item for item in version["data"].get("options", [])}
         for option_id in option_ids:
@@ -34,7 +34,7 @@ def _scenario_record(run: dict[str, Any], event: dict[str, Any], version: dict[s
         "evidence": event.get("evidence"),
         "included_events": event.get("included_events", []),
         "applied_patch": event.get("patch", {}),
-        "provisional": bool(event.get("evidence") and event.get("review_status") != "CONFIRMED"),
+        "provisional": bool(event.get("review_status") != "CONFIRMED"),
         "version_id": version["id"],
         "input_version_hash": version["content_hash"],
         "label": label,

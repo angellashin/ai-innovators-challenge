@@ -118,6 +118,14 @@ def _matching_tasks(tasks: list[dict[str, Any]], direct_ids: list[str], terms: t
 
 def _dates_for_range(content: str, dates: list[str]) -> list[str]:
     """Handle Korean ranges such as 10월 8~9일 before falling back to dates."""
+    iso_range = re.search(r"(20\d{2}-\d{2}-\d{2})\s*(?:부터|[~–-])\s*(20\d{2}-\d{2}-\d{2})", content)
+    if iso_range:
+        first, last = (date.fromisoformat(value) for value in iso_range.groups())
+        span = (last - first).days
+        if 0 <= span <= 90:
+            from datetime import timedelta
+
+            return [(first + timedelta(days=offset)).isoformat() for offset in range(span + 1)]
     match = re.search(r"(\d{1,2})\s*월\s*(\d{1,2})\s*[~\-]\s*(\d{1,2})\s*일?", content)
     if match:
         year = date.fromisoformat(dates[-1]).year if dates else datetime.now().year
@@ -221,14 +229,18 @@ def infer_event_patch(value: dict[str, Any], project: dict[str, Any], tasks: lis
                 patch["not_before"] = {task_id: fat_start for task_id in task_ids}
                 related.extend(task_ids)
                 facts.append({"kind": "not_before", "task_ids": task_ids, "value": fat_start, "confidence": "suggested"})
-        if arrival_tasks and "estimated_finish" not in patch:
+        has_delivery_change = any(word in lowered for word in ("arrival", "delivery", "shipping", "shipment", "customs", "반입", "도착", "납품", "출하", "운송", "통관"))
+        if arrival_tasks and has_delivery_change and "estimated_finish" not in patch:
             finish = dates[-2] if has_test_start and len(dates) >= 2 else dates[-1]
             task_ids = [_task_id(task) for task in arrival_tasks if _task_id(task)]
             patch["estimated_finish"] = {task_id: finish for task_id in task_ids}
             related.extend(task_ids)
             facts.append({"kind": "estimated_finish", "task_ids": task_ids, "value": finish, "confidence": "suggested"})
+        if direct_ids and "estimated_finish" not in patch and "완료일" in content and not has_test_start:
+            patch["estimated_finish"] = {task_id: dates[-1] for task_id in direct_ids}
+            facts.append({"kind": "estimated_finish", "task_ids": direct_ids, "value": dates[-1], "confidence": "suggested"})
 
-    resource_terms = ("resource", "engineer", "team", "인력", "팀", "투입", "가용", "불가능", "unavailable")
+    resource_terms = ("resource", "engineer", "team", "인력", "기사", "팀", "투입", "가용", "불가능", "unavailable")
     if any(term in lowered for term in resource_terms) and ("불가능" in content or "unavailable" in lowered or "가용" in content):
         range_dates = _dates_for_range(content, dates)
         resource_groups = []
@@ -243,6 +255,9 @@ def infer_event_patch(value: dict[str, Any], project: dict[str, Any], tasks: lis
             affected = [_task_id(task) for task in tasks if str(task.get("resource_group") or "") in resource_groups]
             related.extend(affected)
             facts.append({"kind": "resource_unavailable", "resource_groups": resource_groups, "dates": range_dates, "confidence": "suggested"})
+        elif range_dates and direct_ids:
+            patch["blocked_dates"] = {task_id: range_dates for task_id in direct_ids}
+            facts.append({"kind": "blocked_dates", "task_ids": direct_ids, "dates": range_dates, "confidence": "suggested"})
 
     task_order = {_task_id(task): index for index, task in enumerate(tasks)}
     related = sorted(dict.fromkeys(item for item in related if item), key=lambda item: task_order.get(item, len(task_order)))
@@ -294,6 +309,8 @@ def normalize_event(value: dict[str, Any], project: dict[str, Any], tasks: list[
     event["related_task_ids"] = list(dict.fromkeys([*event["related_task_ids"], *inferred["related_task_ids"]]))
     event["extracted_facts"] = inferred["facts"]
     event["classification_status"] = inferred["classification_status"]
+    if event.get("channel") == "supplier_message" and any(word in content for word in ("규정", "규제")) and "적용 여부" in content:
+        event["verification_required"] = ["협력사가 언급한 규정의 실제 적용 여부 확인"]
     if inferred.get("missing_fields"):
         event["missing_fields"] = inferred["missing_fields"]
     event.setdefault("review_status", "PENDING")

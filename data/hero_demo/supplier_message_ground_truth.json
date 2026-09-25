@@ -1,0 +1,94 @@
+{
+  "label": "검토자가 작성한 합성 정답",
+  "project_id": "HERO-BAT-HU-001",
+  "as_of_date": "2025-08-20",
+  "source_fixture": "data/hero_demo/supplier_messages.json",
+  "comparison_basis": "각 통보를 hero 기준 일정에 독립적으로 적용한 결과. 실제 업체 이력이나 L2/L3 기사 속 지연 일수를 사용하지 않음.",
+  "cases": [
+    {
+      "case_id": "H01",
+      "event_id": "H01",
+      "direct_task_ids": ["T036"],
+      "expected_patch": {"estimated_finish": {"T036": "2026-01-15"}},
+      "changed_task_ids": ["T036", "T038", "T040", "T042", "T044"],
+      "expected_outcome": "IMPACT",
+      "newly_overlapping_external_constraints": []
+    },
+    {
+      "case_id": "H02",
+      "event_id": "H02",
+      "direct_task_ids": ["T037"],
+      "expected_patch": {"estimated_finish": {"T037": "2026-01-08"}},
+      "changed_task_ids": ["T037", "T039", "T041", "T043"],
+      "expected_outcome": "IMPACT",
+      "requires_confirmation": ["협력사가 언급한 헝가리/EU 규정의 실제 적용 여부"],
+      "newly_overlapping_external_constraints": []
+    },
+    {
+      "case_id": "H03",
+      "event_id": "H03",
+      "direct_task_ids": ["T038"],
+      "expected_patch": {"not_before": {"T038": "2026-02-02"}},
+      "changed_task_ids": ["T038", "T040", "T042", "T044"],
+      "expected_outcome": "IMPACT",
+      "newly_overlapping_external_constraints": []
+    },
+    {
+      "case_id": "H04",
+      "event_id": "H04",
+      "direct_task_ids": ["T045"],
+      "expected_patch": {"estimated_finish": {"T045": "2026-12-28"}},
+      "changed_task_ids": ["T045", "T046", "T047", "T048", "T049", "T050", "T051", "T052", "T053", "T054", "T055", "T056", "T057", "T059", "T060", "T061", "T062", "T063", "T064"],
+      "expected_outcome": "IMPACT",
+      "newly_overlapping_external_constraints": [
+        {
+          "task_id": "T045",
+          "baseline_window": ["2026-12-02", "2026-12-05"],
+          "changed_window": ["2026-12-02", "2026-12-28"],
+          "dates": ["2026-12-25", "2026-12-26"],
+          "kind": "HU_PUBLIC_HOLIDAY_CANDIDATE",
+          "source": "data/external/hu-2026-holidays.json",
+          "review_note": "12월 25일·26일은 공개 집계 달력의 공휴일 후보이다. 현장 적용 여부와 실제 휴무는 다음 작업에서 재점검한다."
+        }
+      ]
+    },
+    {
+      "case_id": "H05",
+      "event_id": "H05",
+      "direct_task_ids": ["T047"],
+      "expected_patch": {"blocked_dates": {"T047": ["2026-12-07", "2026-12-08", "2026-12-09", "2026-12-10", "2026-12-11"]}},
+      "changed_task_ids": ["T047"],
+      "expected_outcome": "IMPACT",
+      "newly_overlapping_external_constraints": []
+    },
+    {
+      "case_id": "H06",
+      "event_id": "H06",
+      "direct_task_ids": ["T053"],
+      "expected_patch": {},
+      "changed_task_ids": [],
+      "expected_outcome": "NEEDS_INPUT",
+      "requires_confirmation": ["T053 변경 완료일"],
+      "newly_overlapping_external_constraints": []
+    },
+    {
+      "case_id": "H07",
+      "event_id": "H07",
+      "direct_task_ids": ["T054"],
+      "expected_patch": {},
+      "changed_task_ids": [],
+      "expected_outcome": "NO_IMPACT",
+      "newly_overlapping_external_constraints": []
+    },
+    {
+      "case_id": "H01-repeat",
+      "event_id": "H01",
+      "duplicate_of": "H01",
+      "direct_task_ids": ["T036"],
+      "expected_patch": {"estimated_finish": {"T036": "2026-01-15"}},
+      "changed_task_ids": [],
+      "expected_outcome": "DUPLICATE",
+      "newly_overlapping_external_constraints": []
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "project_id": "HERO-BAT-HU-001",
+  "as_of_date": "2025-08-20",
+  "data_origin": "SYNTHETIC",
+  "events": [
+    {
+      "event_id": "H01",
+      "published_at": "2025-08-21T09:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor A / 가상 메일",
+      "content": "[가상 메시지] T036 셀 설비 제작 완료일이 2026-01-01에서 2026-01-15로 변경됩니다. 후속 시험과 운송 일정의 재확인이 필요합니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "H02",
+      "published_at": "2025-08-21T10:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor B / 가상 메일",
+      "content": "[가상 메시지] T037 모듈 설비 제작 완료일을 2025-12-22에서 2026-01-08로 변경합니다. 헝가리/EU 환경·배터리 규정 요건을 이유로 설계 재검토가 필요하다고 판단했으나 해당 규정의 실제 적용 여부는 아직 확인되지 않았습니다. 통보한 완료일만 일정 계산에 사용해 주세요.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "H03",
+      "published_at": "2025-08-22T09:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor A / 가상 메일",
+      "content": "[가상 메시지] T038 셀 설비 FAT 시작 가능일이 2026-01-01에서 2026-02-02로 변경됩니다. 시험 인력의 확정 일정은 별도로 회신하겠습니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "H04",
+      "published_at": "2025-08-22T10:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Logistics Partner / 가상 메일",
+      "content": "[가상 메시지] T045 헝가리 현장 설비 반입 완료일이 2026-12-05에서 2026-12-28로 변경됩니다. 운송·통관 연결 일정이 밀려 설치팀 투입일을 다시 협의해야 합니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "H05",
+      "published_at": "2025-08-23T09:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor B / 가상 메일",
+      "content": "[가상 메시지] T047 모듈 라인 설치 기사는 2026-12-07부터 2026-12-11까지 현장 투입이 불가능합니다. 이 기간의 작업은 진행할 수 없으며 대체 인력은 미확정입니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "H06",
+      "published_at": "2025-08-23T10:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor A / 가상 메일",
+      "content": "[가상 메시지] T053 셀 라인 시운전이 지연될 가능성이 있습니다. 변경 완료일은 아직 정해지지 않아 확정 후 다시 통보하겠습니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "H07",
+      "published_at": "2025-08-24T09:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor B / 가상 메일",
+      "content": "[가상 메시지] T054 시운전 담당자 연락처만 변경됐습니다. 작업 날짜와 투입 자원은 변경되지 않았습니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "H01",
+      "published_at": "2025-08-21T09:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor A / 가상 메일",
+      "content": "[가상 메시지] T036 셀 설비 제작 완료일이 2026-01-01에서 2026-01-15로 변경됩니다. 후속 시험과 운송 일정의 재확인이 필요합니다.",
+      "mode": "SYNTHETIC"
+    }
+  ]
+}
