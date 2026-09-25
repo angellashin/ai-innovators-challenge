@@ -39,7 +39,7 @@
 
 ## Information architecture
 
-- Primary navigation: Overview / Changes / Schedule / Scenarios / Actions / History.
+- Primary navigation: Overview / Changes / Schedule / Scenarios / Actions / History. This sidebar is the single navigation model; do not duplicate it with a second horizontal stepper. Each destination presents one focused work surface, while Overview only summarizes the current decision queue and links to the relevant surface.
 - Workspace ownership: one 프로젝트 운영팀 account owns projects, baselines, decisions, and commits. External organizations are project data, not navigation tenants or invited users.
 - First-use flow: Upload → Map → Review → Monitor → Overview.
 - Repeated flow: detect change → show impact and evidence → compare scenarios → confirm assumptions → approve → create actions and Excel output.

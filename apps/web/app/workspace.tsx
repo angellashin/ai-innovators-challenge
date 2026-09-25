@@ -110,6 +110,17 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const [notice, setNotice] = useState("프로젝트를 생성하거나 불러오세요.");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  const [activeSection, setActiveSection] = useState("overview");
+
+  useEffect(() => {
+    const syncSection = () => {
+      const next = window.location.hash.replace("#", "");
+      setActiveSection(["overview", "changes", "schedule", "scenarios", "actions", "history"].includes(next) ? next : "overview");
+    };
+    syncSection();
+    window.addEventListener("hashchange", syncSection);
+    return () => window.removeEventListener("hashchange", syncSection);
+  }, []);
 
   useEffect(() => {
     setProjectId(initialProjectId || sessionStorage.getItem("replan.projectId") || "");
@@ -536,11 +547,80 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const openActions = project.actions?.filter((item) => String(item.data?.state || "OPEN") === "OPEN").length || 0;
   const eventCount = project.events?.length || 0;
   const runCount = project.runs?.length || 0;
-  const currentStep = !project.version ? 1 : project.version.status === "committed" ? 6 : selectedScenarioId ? 5 : run?.scenarios?.length ? 4 : eventCount ? 3 : 2;
   const projectName = text((project.project || {}).name, "프로젝트 없음");
 
+  const eventRows = (project.events || []).map((event) => {
+    const data = event.data || event;
+    const eventId = text(event.id || data.id, "");
+    return (
+      <article key={eventId} className="focus-event-card">
+        <div className="focus-event-topline"><span className="status-chip">{data.review_status === "CONFIRMED" ? "해석 확인됨" : "확인 필요"}</span><small>{text(data.source_label, "외부 입력")} · {text(data.mode, "수동")}</small></div>
+        <h3>{text(data.title, "변경 메시지")}</h3>
+        <p>{text(data.content || data.title)}</p>
+        <small>{text(data.data_origin, "원문 기반")} {data.evidence ? "· 근거 첨부됨" : ""}</small>
+        {Array.isArray(data.verification_required) && data.verification_required.length > 0 && <small>추가 확인: {(data.verification_required as string[]).join(" · ")}</small>}
+        {data.evidence ? <EvidenceReview event={data} tasks={tasks} disabled={busy} onReview={(payload) => reviewExternalEvent(eventId, payload)} onAnalyze={() => analyzeEvent(eventId)} /> : data.review_status !== "CONFIRMED" ? <button className="text-button" onClick={() => reviewEvent(eventId)} disabled={busy}>변경 해석 확인</button> : null}
+      </article>
+    );
+  });
+
+  const overviewView = (
+    <section className="workspace-view overview-view" id="overview" aria-labelledby="overview-title">
+      <div className="view-heading"><div><p className="eyebrow">DECISION OVERVIEW</p><h2 id="overview-title">지금 확인할 것</h2><p>프로젝트의 현재 상태와 다음 판단만 먼저 보여줍니다.</p></div><span className="view-context">{project.version ? "기준 일정 연결됨" : "기준 일정 연결 필요"}</span></div>
+      <div className="overview-metrics">
+        <article className="focus-card focus-card-primary"><span>다음 판단</span><strong>{!project.version ? "기준 일정 연결" : pendingReviews ? `${pendingReviews}건 근거 확인` : eventCount ? "변경 영향 검토" : "외부 변화 감시 설정"}</strong><p>{!project.version ? "Excel 기준 일정을 연결해야 변경 영향을 계산할 수 있습니다." : pendingReviews ? "변경 해석과 적용 조건을 확인한 뒤 대응안을 비교하세요." : eventCount ? "변경 이벤트의 근거와 영향을 검토하세요." : "현장·공휴일·공식 출처를 연결하면 새 변화를 확인할 수 있습니다."}</p><a className="focus-link" href={!project.version ? "#schedule" : eventCount ? "#changes" : "#actions"}>{!project.version ? "기준 일정 연결" : eventCount ? "변경 검토하기" : "운영 입력 보기"} <span aria-hidden="true">↗</span></a></article>
+        <article className="focus-card"><span>최근 변경</span><strong>{eventCount || "—"}</strong><p>{eventCount ? "저장된 변경 이벤트" : "아직 저장된 변경이 없습니다."}</p><a className="focus-link" href="#changes">변경 보기 <span aria-hidden="true">↗</span></a></article>
+        <article className="focus-card"><span>열린 실행 항목</span><strong>{openActions || "—"}</strong><p>{openActions ? "확인 또는 실행이 필요한 항목" : "승인된 실행 항목이 없습니다."}</p><a className="focus-link" href="#actions">실행 항목 보기 <span aria-hidden="true">↗</span></a></article>
+      </div>
+      <div className="overview-lanes">
+        <article className="focus-card"><div className="lane-label"><span className="lane-dot mint" />프로젝트 상태</div><h3>{project.version ? "기준 일정과 작업 조건이 연결되어 있습니다." : "아직 기준 일정이 없습니다."}</h3><p>{project.version ? `${tasks.length}개 작업 · ${eventCount}건 변경 · ${runCount}회 분석` : "일정 파일을 연결하면 변경을 기록하고 대응안을 비교할 수 있습니다."}</p><a className="quiet-link" href="#schedule">일정 화면 열기 →</a></article>
+        <article className="focus-card"><div className="lane-label"><span className="lane-dot coral" />운영 큐</div><h3>{pendingReviews ? "확인하지 않은 근거가 있습니다." : "대기 중인 근거가 없습니다."}</h3><p>{pendingReviews ? "사실과 적용 범위를 확인해야 승인할 수 있습니다." : "새 변경이 들어오면 이곳에서 검토를 시작합니다."}</p><a className="quiet-link" href="#changes">변경 화면 열기 →</a></article>
+      </div>
+    </section>
+  );
+
+  const scheduleView = (
+    <section className="workspace-view" id="schedule" aria-labelledby="schedule-title">
+      <div className="view-heading"><div><p className="eyebrow">SCHEDULE</p><h2 id="schedule-title">기준 일정</h2><p>변경을 비교할 기준 버전을 연결하고 현재 작업 흐름을 확인합니다.</p></div><button className="secondary" onClick={downloadExport} disabled={!project.version}>Excel 다운로드</button></div>
+      {!project.version ? <div className="setup-card"><div><span className="setup-index">01</span><h3>기준 Excel을 연결하세요.</h3><p>작업·선후행·자원 조건이 포함된 파일을 올리면 이 프로젝트의 기준 일정이 됩니다.</p></div><div className="setup-actions"><button className="secondary" onClick={loadHeroBaseline} disabled={busy || !projectId}>데모 기준 일정 사용</button><label className="file-input-label">Excel 선택<input type="file" accept=".xlsx,.csv" onChange={(event: ChangeEvent<HTMLInputElement>) => setSelectedFile(event.target.files?.[0] || null)} /></label><button onClick={uploadImport} disabled={busy || !selectedFile || !projectId}>업로드·미리보기</button></div></div> : null}
+      {preview && <div className="import-preview"><div><b>{preview.import_kind === "change" ? "수정 Excel" : "Baseline Excel"}</b><span>{preview.tasks?.length || 0} tasks · {preview.options?.length || 0} options · {preview.events?.length || 0} events</span></div><button onClick={confirmImport} disabled={busy}>확인 후 저장</button></div>}
+      {project.version ? <div className="schedule-board"><div className="board-meta"><div><span className="eyebrow">CURRENT BASELINE</span><h3>{shortId(project.version.id)} · {tasks.length}개 작업</h3><p>기준일 {text(project.project?.status_as_of, "미설정")} · 완료 {tasks.filter((task) => task.status === "completed").length} · 진행 중 {tasks.filter((task) => task.status === "in_progress").length} · 예정 {tasks.filter((task) => task.status === "planned").length}</p></div><span className="view-context">{text(project.version.status, "ready")}</span></div><Gantt tasks={tasks} scenarioSchedule={scenarioSchedule} /></div> : null}
+      <div className="secondary-panel"><div className="panel-heading"><div><p className="eyebrow">SUPPLEMENTARY EVIDENCE</p><h3>보조 근거 연결</h3><p>메일, PDF, TXT, MD 파일은 변경 해석의 보조 근거로만 사용합니다.</p></div></div><div className="inline-form"><input type="file" accept=".pdf,.txt,.md,.eml" onChange={(event: ChangeEvent<HTMLInputElement>) => setDocumentFile(event.target.files?.[0] || null)} /><button className="secondary" onClick={uploadDocument} disabled={busy || !documentFile || !projectId}>근거 업로드</button></div>{documentStatus && <div className="inline-status"><b>{text(documentStatus.filename)} · {text(documentStatus.status)}</b>{Boolean(documentStatus.event_id) && <span>이벤트 {shortId(documentStatus.event_id)}</span>}{documentStatus.status === "FAILED" && <button className="text-button" onClick={retryDocument} disabled={busy}>다시 처리</button>}</div>}</div>
+    </section>
+  );
+
+  const changesView = (
+    <section className="workspace-view" id="changes" aria-labelledby="changes-title">
+      <div className="view-heading"><div><p className="eyebrow">CHANGES</p><h2 id="changes-title">변경과 근거</h2><p>외부에서 들어온 사실을 기록하고, 적용 범위가 맞는지 확인합니다.</p></div><span className="view-context">{eventCount}건 기록됨</span></div>
+      <div className="changes-layout"><div className="change-intake-stack"><article className="focus-card"><div className="panel-heading"><div><h3>변경 입력</h3><p>샘플 통보를 불러오거나 실제 메시지를 붙여 넣으세요.</p></div></div><label>합성 통보<select value={selectedDemoIndex} onChange={(event) => setSelectedDemoIndex(Number(event.target.value))}><option value={-1}>선택하지 않음</option>{(project.demo_events || []).map((item, index) => <option key={`${text(item.event_id)}-${index}`} value={index}>{text(item.event_id)} · {text(item.source_label)}</option>)}</select></label><div className="button-row"><button onClick={createEventFromDemo} disabled={selectedDemoIndex < 0 || !project.demo_events?.length || busy}>샘플 통보 불러오기</button><button className="secondary" onClick={analyzeLatestEvent} disabled={!project.events?.length || busy}>영향 분석 시작</button></div><label>변경 메시지<textarea aria-label="협력사 변경 통보" value={manualMessage} onChange={(event) => setManualMessage(event.target.value)} rows={5} placeholder="예: 장비 출하가 10월 18일로 변경되었습니다." /></label><button className="secondary" onClick={createManualEvent} disabled={!project.version || busy}>변경 메시지 등록</button></article><article className="focus-card"><div className="panel-heading"><div><h3>외부 변화 감시</h3><p>공식 출처와 현장 조건을 연결해 다음 변화를 확인합니다.</p></div></div><ExternalWatch plan={project.watch_plan || {}} tasks={tasks} disabled={!project.version || busy} onSave={saveExternalWatch} onScan={runScan} /></article></div><div className="focus-card event-focus-panel"><div className="panel-heading"><div><h3>변경 타임라인</h3><p>확인된 사실과 아직 적용 범위를 확인해야 하는 항목을 구분합니다.</p></div></div>{eventCount ? <div className="focus-event-list">{eventRows}</div> : <div className="empty focus-empty">아직 변경 이벤트가 없습니다. 왼쪽에서 통보를 등록하세요.</div>}</div></div>
+    </section>
+  );
+
+  const scenariosView = (
+    <section className="workspace-view" id="scenarios" aria-labelledby="scenarios-title">
+      <div className="view-heading"><div><p className="eyebrow">SCENARIOS</p><h2 id="scenarios-title">대응안 비교</h2><p>일정, 비용, 제약 조건을 같은 기준으로 비교하고 승인 가능한 안을 고릅니다.</p></div><span className="view-context">{run?.run ? text(run.run.status) : "분석 대기"}</span></div>
+      <div className="scenario-toolbar"><button onClick={() => fetchRun()} disabled={!project.runs?.length || busy}>분석 결과 보기</button><label>대응안 비용 한도(선택)<input className="budget" type="number" min="0" step="100000" value={budget} onChange={(event) => setBudget(event.target.value === "" ? "" : Number(event.target.value))} /></label><button className="secondary" onClick={replan} disabled={!run?.run || budget === "" || busy}>비용 한도 반영</button></div>
+      {run?.run && <div className="analysis-receipt"><span className="eyebrow">ANALYSIS RESULT</span><h3>{text(run.run.data?.summary, run.run.status === "failed" ? "분석 실패: 입력을 확인하세요." : "분석 결과를 불러오는 중입니다.")}</h3><p>{text(run.run.status)} · 이벤트 {shortId(run.run.event_id)}</p>{selectedScenario && <strong>기준 완료 {text(selectedScenario.data?.baseline_finish)} → 예상 완료 {text(selectedScenario.data?.finish_date)} · 완료일 변화 {text(selectedScenario.data?.finish_shift_days)}일</strong>}</div>}
+      <div className="scenario-layout"><div className="focus-card"><div className="panel-heading"><div><h3>비교할 대응안</h3><p>조건부 표시는 추가 확인 후 승인할 수 있다는 뜻입니다.</p></div></div><ScenarioList scenarios={run?.scenarios || []} selected={selectedScenarioId} onSelect={setSelectedScenarioId} /></div>{selectedScenario ? <div className="focus-card approval-focus"><div className="panel-heading"><div><h3>{text(selectedScenario.data?.label)}</h3><p>{scenarioScore(selectedScenario.data || {})} · 완료 예정 {text(selectedScenario.data?.finish_date)} · 추가 비용 {costLabel(selectedScenario.data || {})}</p></div></div><p>확인이 필요한 조건 {((selectedScenario.data?.required_confirmations as unknown[]) || []).length}건</p>{(project.actions || []).filter((item) => item.scenario_id === selectedScenarioId).map((action) => <div key={text(action.id)} className="condition-review"><p>{text(action.data?.request)} · {text(action.data?.state)}</p><label>회신·확인 근거<input value={conditionNotes[text(action.id)] || ""} onChange={(event) => setConditionNotes({ ...conditionNotes, [text(action.id)]: event.target.value })} /></label><button className="secondary" disabled={busy || !conditionNotes[text(action.id)]?.trim()} onClick={() => acceptCondition(text(action.id))}>확인 기록</button></div>)}<div className="button-row wrap"><button onClick={prepareScenario} disabled={busy}>확인 요청 만들기</button><button className="secondary" onClick={approveScenario} disabled={busy}>승인</button><button onClick={commitScenario} disabled={busy}>일정 확정</button></div></div> : <div className="focus-card scenario-empty"><h3>대응안을 선택하세요.</h3><p>분석을 실행하면 일정과 비용을 비교할 수 있는 후보가 표시됩니다.</p></div>}</div>
+    </section>
+  );
+
+  const actionsView = (
+    <section className="workspace-view" id="actions" aria-labelledby="actions-title">
+      <div className="view-heading"><div><p className="eyebrow">ACTIONS</p><h2 id="actions-title">실행 항목</h2><p>승인된 대응안에 필요한 확인, 현장 준비, 외부 입력을 관리합니다.</p></div><span className="view-context">{openActions}건 열림</span></div>
+      <div className="actions-layout"><div className="focus-card"><div className="panel-heading"><div><h3>현재 실행 항목</h3><p>승인 전 확인 요청과 승인 후 실행 항목을 함께 봅니다.</p></div><button className="secondary" onClick={createSitePrep} disabled={!projectId || busy}>현장 준비 템플릿 적용</button></div>{project.actions?.length ? <div className="action-list">{project.actions.map((action) => <article key={text(action.id)} className="action-item"><span className={`action-state ${String(action.data?.state || "OPEN").toLowerCase()}`}>{text(action.data?.state, "OPEN")}</span><div><b>{text(action.data?.request, "확인 요청")}</b><small>{text(action.data?.assignee, "프로젝트 운영팀")} · 시나리오 {shortId(action.scenario_id || action.data?.scenario_id)}</small></div></article>)}</div> : <div className="empty focus-empty">아직 생성된 실행 항목이 없습니다. 대응안을 승인하면 확인 요청이 여기에 표시됩니다.</div>}</div><div className="focus-card operations-card"><div className="panel-heading"><div><h3>운영 입력</h3><p>반복해서 쓰는 외부 출처와 알림 채널을 연결합니다.</p></div></div><form className="compact-form" onSubmit={savePublicFeed}><b>공개 피드 · {project.public_feeds?.length || 0}개</b><input aria-label="피드 이름" value={feedForm.label} onChange={(event) => setFeedForm({ ...feedForm, label: event.target.value })} placeholder="피드 이름" /><input aria-label="피드 URL" type="url" value={feedForm.url} onChange={(event) => setFeedForm({ ...feedForm, url: event.target.value })} placeholder="https://공식-출처" /><button className="secondary" type="submit" disabled={!projectId || busy}>피드 등록</button></form><form className="compact-form" onSubmit={saveSupplierCalendar}><b>공급사 캘린더 · {project.supplier_calendars?.length || 0}개</b><input aria-label="공급사 ID" value={supplierForm.supplier_id} onChange={(event) => setSupplierForm({ ...supplierForm, supplier_id: event.target.value })} placeholder="공급사 ID" required /><input aria-label="공급사 캘린더 이름" value={supplierForm.label} onChange={(event) => setSupplierForm({ ...supplierForm, label: event.target.value })} placeholder="캘린더 이름" required /><input aria-label="공급사 휴무일" value={supplierForm.unavailable_dates} onChange={(event) => setSupplierForm({ ...supplierForm, unavailable_dates: event.target.value })} placeholder="휴무일: 2026-10-03" /><button className="secondary" type="submit" disabled={!projectId || busy}>일정 저장</button></form><form className="compact-form" onSubmit={saveMailAccount}><b>메일 연결 메타데이터 · {text(project.mail_account?.status, "미설정")}</b><div className="p1-inline-fields"><select aria-label="메일 제공자" value={mailForm.provider} onChange={(event) => setMailForm({ ...mailForm, provider: event.target.value })}><option value="imap">IMAP</option><option value="gmail">Gmail</option><option value="outlook">Outlook</option></select><input aria-label="메일 호스트" value={mailForm.host} onChange={(event) => setMailForm({ ...mailForm, host: event.target.value })} placeholder="imap.example.com" required /></div><input aria-label="메일 사용자" value={mailForm.username} onChange={(event) => setMailForm({ ...mailForm, username: event.target.value })} placeholder="담당자 이메일" required /><button className="secondary" type="submit" disabled={!projectId || busy}>연결 정보 저장</button></form><form className="compact-form" onSubmit={saveNotificationChannel}><b>알림 채널 · 외부 발송은 초안</b><div className="p1-inline-fields"><select aria-label="알림 채널 유형" value={channelForm.channel} onChange={(event) => setChannelForm({ ...channelForm, channel: event.target.value })}><option value="in_app">인앱</option><option value="email">이메일 초안</option><option value="slack">Slack 초안</option></select><input aria-label="알림 대상" value={channelForm.target} onChange={(event) => setChannelForm({ ...channelForm, target: event.target.value })} placeholder="대상 또는 채널" /></div><button className="secondary" type="submit" disabled={!projectId || busy}>채널 저장</button></form><div className="compact-notifications"><b>알림 기록 · {project.notifications?.length || 0}건</b>{project.notifications?.slice(0, 4).map((notification) => { const data = notification.data || notification; const notificationId = text(notification.id || data.id, ""); return <div className="p1-notification" key={notificationId}><div><b>{text(data.title, "알림")}</b><small>{text(data.message, text(data.body))}</small></div>{data.status === "UNREAD" && <button className="text-button" onClick={() => markNotification(notificationId)} disabled={busy}>확인</button>}</div>; })}</div></div></div>
+    </section>
+  );
+
+  const historyView = (
+    <section className="workspace-view" id="history" aria-labelledby="history-title">
+      <div className="view-heading"><div><p className="eyebrow">HISTORY</p><h2 id="history-title">기록</h2><p>기준 버전, 분석 실행, 출처 수집 결과를 시간순으로 확인합니다.</p></div><span className="view-context">{runCount}회 분석</span></div>
+      <div className="history-layout"><div className="focus-card"><div className="panel-heading"><div><h3>분석 실행</h3><p>실행을 선택하면 저장된 결과를 다시 불러옵니다.</p></div></div><div className="history-list">{project.runs?.length ? project.runs.map((item) => <button key={text(item.id)} className="history-row" onClick={() => fetchRun(text(item.id))}><span>{text(item.kind, "analysis")}</span><b>{text(item.status)}</b><small>{shortId(item.id)}</small></button>) : <div className="empty focus-empty">아직 분석 실행 기록이 없습니다.</div>}</div></div><div className="focus-card"><div className="panel-heading"><div><h3>외부 출처 수집</h3><p>마지막 수집 상태를 사실 그대로 표시합니다.</p></div></div><div className="history-list">{project.source_snapshots?.length ? project.source_snapshots.slice(0, 8).map((source) => <div className="history-row static" key={text(source.id)}><span>{text(source.source_id, "출처")}</span><b>{source.status === "ok" ? "수집 성공" : "수집 실패"}</b><small>{text(source.fetched_at, "시각 미상")}</small></div>) : <div className="empty focus-empty">수집된 외부 출처 기록이 없습니다.</div>}</div></div></div>
+    </section>
+  );
+
   return (
-    <main className="human-workspace">
+    <main className="human-workspace" data-section={activeSection}>
       <header className="brand-bar human-nav" aria-label="REPLAN workspace">
         <a className="brand-lockup" href="/" aria-label="REPLAN 홈">
           <Image src="/brand/replan-wordmark.png" alt="REPLAN" width={1500} height={350} priority />
@@ -553,7 +633,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
         </div>
         <div className="human-nav-meta"><span className="nav-live-dot" /> <span>TEAM WORKSPACE</span><span className="nav-meta-divider" /> <span>{shortId(projectId, "NEW")}</span></div>
       </header>
-      <section className="hero human-hero" id="overview">
+      <section className="hero human-hero" id="project-header">
         <div className="hero-copy">
           <p className="eyebrow">PROJECT OVERVIEW</p>
           <div className="project-title-row"><h1>{projectName}</h1></div>
@@ -564,7 +644,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           <span className="status-kicker">WORKSPACE STATUS</span>
           <strong>{error ? "연결 확인 필요" : project.version ? "기준 일정 연결됨" : "기준 일정 대기"}</strong>
           <small>{notice}</small>
-          <a href={currentStep < 3 ? "#onboarding" : currentStep < 5 ? "#changes" : "#scenarios"} className="hero-action">{currentStep < 3 ? "기준 일정 연결" : currentStep < 5 ? "변경 영향 확인" : "승인 큐 열기"}<span aria-hidden="true">↗</span></a>
+          <a href={!project.version ? "#schedule" : eventCount ? "#changes" : "#actions"} className="hero-action">{!project.version ? "기준 일정 연결" : eventCount ? "변경 영향 확인" : "운영 입력 보기"}<span aria-hidden="true">↗</span></a>
           <div className="hero-scene" aria-hidden="true">
             <Image
               className="workspace-illustration workspace-status-illustration"
@@ -578,20 +658,6 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
         </div>
       </section>
 
-      <nav className="workspace-stepper" aria-label="프로젝트 진행 단계">
-        {[
-          ["01", "Brief", "프로젝트 맥락"],
-          ["02", "Import", "기준 일정"],
-          ["03", "Detect", "변경 감지"],
-          ["04", "Compare", "대응안 비교"],
-          ["05", "Approve", "조건 승인"],
-          ["06", "Execute", "일정 반영·실행 추적"],
-        ].map(([number, label, description], index) => {
-          const step = index + 1;
-          return <a className={`step-item ${step === currentStep ? "current" : ""} ${step < currentStep ? "complete" : ""}`} href={step <= 2 ? "#onboarding" : step <= 4 ? "#changes" : "#scenarios"} key={number}><span className="step-number">{step < currentStep ? "✓" : number}</span><span><b>{label}</b><small>{description}</small></span></a>;
-        })}
-      </nav>
-
       {error && (
         <aside className="error">
           <b>{error.status ? `HTTP ${error.status}` : "UI"}</b>
@@ -599,15 +665,22 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
         </aside>
       )}
 
-      <section className="workspace-summary human-summary" aria-label="프로젝트 요약">
+      {activeSection === "overview" && overviewView}
+      {activeSection === "changes" && changesView}
+      {activeSection === "schedule" && scheduleView}
+      {activeSection === "scenarios" && scenariosView}
+      {activeSection === "actions" && actionsView}
+      {activeSection === "history" && historyView}
+
+      <section className="workspace-summary human-summary legacy-summary" aria-label="프로젝트 요약">
         <article className="summary-card summary-card-primary"><span>DECISION QUEUE</span><strong>{pendingReviews ? `${pendingReviews}건 근거 확인 필요` : "근거 확인 대기 없음"}</strong><small>{!project.version ? "기준 Excel을 업로드하세요." : pendingReviews ? "근거와 적용 조건을 확인하세요." : "분석 결과와 감시 상태를 확인하세요."}</small></article>
         <article className="summary-card"><span>최근 변경</span><strong>{eventCount || "—"}</strong><small>{eventCount ? "저장된 이벤트" : "아직 변경 없음"}</small></article>
         <article className="summary-card"><span>근거 확인 대기</span><strong>{pendingReviews || "—"}</strong><small>{pendingReviews ? "적용 여부 확인 필요" : "미확인 근거 없음"}</small></article>
         <article className="summary-card"><span>실행 항목</span><strong>{openActions || "—"}</strong><small>{openActions ? "열린 업무" : `${runCount || 0}개 분석 실행`}</small></article>
       </section>
 
-      <section className="workspace human-grid">
-        <aside className="panel sidebar context-rail" id="onboarding">
+      <section className="workspace human-grid legacy-workspace">
+        <aside className="panel sidebar context-rail" id="legacy-onboarding">
           <div className="rail-heading"><div><p className="eyebrow">CONTEXT RAIL</p><h2>프로젝트 맥락</h2></div><span className="rail-index">01</span></div>
           <p className="rail-intro">기준 Excel과 프로젝트 운영 입력을 관리합니다.</p>
           <small className="muted">프로젝트 운영팀 공용 계정이 기준 일정과 프로젝트 결정을 관리합니다.</small>
@@ -653,7 +726,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           )}
         </aside>
 
-        <section className="panel main-panel decision-canvas" id="schedule">
+        <section className="panel main-panel decision-canvas" id="legacy-schedule">
           <div className="canvas-intro"><div><p className="eyebrow">SCHEDULE / 02</p><h2>일정 변경</h2><p>기준 일정과 변경 이벤트를 확인합니다.</p></div><span className="canvas-state"><i />{!project.version ? "BASELINE REQUIRED" : eventCount ? "CHANGE DETECTED" : "BASELINE READY"}</span></div>
           <div className="workspace-scene-panel" aria-hidden="true">
             <div className="scene-panel-copy"><span className="scene-kicker">CURRENT STATE</span><strong>{eventCount ? "변경 이벤트가 있습니다" : "기준 일정이 없습니다"}</strong><span>{eventCount ? "이벤트 타임라인에서 영향 범위를 확인하세요." : "작업·선후행·자원 조건이 포함된 Excel을 업로드하세요."}</span></div>
@@ -668,7 +741,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
             </div>
           </div>
           <div className="section-head">
-            <div id="changes">
+            <div id="legacy-changes">
               <p className="eyebrow">PROJECT PULSE</p>
               <h2>기준 일정과 변경 영향</h2>
               <p>기준 버전 {shortId(project.version?.id)} · hash {shortId(project.version?.content_hash)}</p>
@@ -717,7 +790,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
                 })}
               </div>
             </div>
-            <div id="history">
+            <div id="legacy-history">
               <h3>Run 상태</h3>
               <div className="event-list">
                 {(project.runs || []).map((item) => (
@@ -748,7 +821,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
               {text(source.data?.url, text(source.source_id))} · {source.status === "ok" ? "수집 성공" : "수집 실패 · 위험 여부 확인 불가"} · {text(source.fetched_at)}
             </small>
           ))}
-          <div className="p1-card" id="scenarios">
+          <div className="p1-card" id="legacy-scenarios">
             <b>실행 준비</b>
             <span>미확인 알림 {project.notifications?.filter((item) => item.data?.status === "UNREAD").length || 0}건</span>
             <span>공급사 캘린더 {project.supplier_calendars?.length || 0}건 · 현장 준비 {project.site_prep_items?.length || 0}건</span>
@@ -865,7 +938,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
             </div>
           )}
 
-          <h3 id="actions">Action items</h3>
+          <h3 id="legacy-actions">Action items</h3>
           <div className="event-list">
             {(project.actions || []).map((action) => (
               <article key={text(action.id)} className="action-row">
