@@ -1,0 +1,179 @@
+{
+  "status": "ok",
+  "source_id": "nager:HU:2025",
+  "provider": "nager_date",
+  "url": "https://date.nager.at/api/v3/PublicHolidays/2025/HU",
+  "fetched_at": "2026-09-25T13:31:31.192440+00:00",
+  "holidays": [
+    {
+      "date": "2025-01-01",
+      "localName": "Újév",
+      "name": "New Year's Day",
+      "countryCode": "HU",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2025-03-15",
+      "localName": "Nemzeti ünnep",
+      "name": "1848 Revolution Memorial Day",
+      "countryCode": "HU",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2025-04-18",
+      "localName": "Nagypéntek",
+      "name": "Good Friday",
+      "countryCode": "HU",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2025-04-20",
+      "localName": "Húsvétvasárnap",
+      "name": "Easter Sunday",
+      "countryCode": "HU",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2025-04-21",
+      "localName": "Húsvéthétfő",
+      "name": "Easter Monday",
+      "countryCode": "HU",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2025-05-01",
+      "localName": "A munka ünnepe",
+      "name": "Labour day",
+      "countryCode": "HU",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2025-06-08",
+      "localName": "Pünkösdvasárnap",
+      "name": "Pentecost",
+      "countryCode": "HU",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2025-06-09",
+      "localName": "Pünkösdhétfő",
+      "name": "Whit Monday",
+      "countryCode": "HU",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2025-08-20",
+      "localName": "Az államalapítás ünnepe",
+      "name": "State Foundation Day",
+      "countryCode": "HU",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2025-10-23",
+      "localName": "Nemzeti ünnep",
+      "name": "1956 Revolution Memorial Day",
+      "countryCode": "HU",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2025-11-01",
+      "localName": "Mindenszentek",
+      "name": "All Saints Day",
+      "countryCode": "HU",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2025-12-25",
+      "localName": "Karácsony",
+      "name": "Christmas Day",
+      "countryCode": "HU",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2025-12-26",
+      "localName": "Karácsony másnapja",
+      "name": "St. Stephen's Day",
+      "countryCode": "HU",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    }
+  ],
+  "body_hash": "877eb68542636b11b9bc38eaf720550eb18539147cee366c57a58d3e53d7cdbf"
+}

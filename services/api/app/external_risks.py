@@ -13,8 +13,8 @@ def active(task: dict[str, Any]) -> bool:
 
 
 def overlaps(task: dict[str, Any], day: str) -> bool:
-    start = str(task.get("baseline_start") or task.get("planned_start") or "")[:10]
-    finish = str(task.get("baseline_finish") or task.get("planned_finish") or "")[:10]
+    start = str(task.get("planned_start") or task.get("baseline_start") or "")[:10]
+    finish = str(task.get("planned_finish") or task.get("baseline_finish") or "")[:10]
     return bool(start and finish and start <= day and (
         day < finish if task.get("finish_boundary") == "exclusive" else day <= finish
     ))
@@ -70,10 +70,17 @@ def weather_patch(tasks: list[dict[str, Any]], plan: dict[str, Any], source: dic
     limits = plan.get("weather_limits") or {}
     scope = set(plan.get("weather_task_ids") or [])
     units = source.get("forecast", {}).get("units", {})
+    validity = source.get("forecast", {}).get("validity") or {}
+    if not validity and source.get("fetched_at"):
+        from datetime import timedelta
+        issued = date.fromisoformat(str(source["fetched_at"])[:10])
+        validity = {"start": issued.isoformat(), "end": (issued + timedelta(days=15)).isoformat()}
     blocked: dict[str, list[str]] = {}
     facts = []
     for day in source.get("forecast", {}).get("data", []):
         day_date = day.get("date", "")
+        if (validity.get("start") and day_date < validity["start"]) or (validity.get("end") and day_date > validity["end"]):
+            continue
         exceeded = []
         for limit, field, unit in (
             ("max_wind_speed_kmh", "wind_speed_10m_max", "km/h"),
@@ -108,7 +115,12 @@ def holiday_patch(tasks: list[dict[str, Any]], config: dict[str, Any], source: d
         day = str(holiday["date"])
         for task in tasks:
             task_id = str(task["task_id"])
-            if task_id in scope and active(task) and overlaps(task, day):
+            country = str(task.get("country_code") or task.get("country") or task.get("location") or "").strip().casefold()
+            country_names = {"HU": {"hu", "hungary", "헝가리"},
+                             "DE": {"de", "germany", "독일"},
+                             "KR": {"kr", "south korea", "republic of korea", "한국", "대한민국"}}
+            country_matches = country in country_names.get(config["country_code"], {config["country_code"].casefold()})
+            if task_id in scope and country_matches and active(task) and overlaps(task, day):
                 blocked.setdefault(task_id, []).append(day)
                 facts.append({"kind": "public_holiday", "task_ids": [task_id], "value": day,
                               "name": holiday.get("localName") or holiday.get("name")})
@@ -116,7 +128,7 @@ def holiday_patch(tasks: list[dict[str, Any]], config: dict[str, Any], source: d
 
 
 def validate_patch(patch: dict[str, Any], tasks: list[dict[str, Any]]) -> None:
-    allowed = {"blocked_dates", "not_before", "estimated_finish", "resource_unavailable"}
+    allowed = {"blocked_dates", "calendar_nonworking_dates", "not_before", "estimated_finish", "resource_unavailable"}
     if set(patch) - allowed:
         raise ValueError("지원하지 않는 일정 변경 항목")
     task_ids = {str(task["task_id"]) for task in tasks if active(task)}
@@ -127,7 +139,7 @@ def validate_patch(patch: dict[str, Any], tasks: list[dict[str, Any]]) -> None:
         for key, value in mapping.items():
             if key not in (groups if kind == "resource_unavailable" else task_ids):
                 raise ValueError("존재하지 않거나 완료된 작업·자원")
-            values = value if kind in {"blocked_dates", "resource_unavailable"} else [value]
+            values = value if kind in {"blocked_dates", "calendar_nonworking_dates", "resource_unavailable"} else [value]
             if not isinstance(values, list) or not values or len(values) > 366:
                 raise ValueError("변경 날짜 목록을 확인하세요")
             for raw in values:
@@ -175,7 +187,7 @@ def combine_patches(patches: list[dict]) -> dict:
         for kind, mapping in patch.items():
             target = result.setdefault(kind, {})
             for key, value in mapping.items():
-                if kind in {"blocked_dates", "resource_unavailable"}:
+                if kind in {"blocked_dates", "calendar_nonworking_dates", "resource_unavailable"}:
                     target[key] = sorted(set(target.get(key, [])) | set(value))
                 elif key not in target:
                     target[key] = value

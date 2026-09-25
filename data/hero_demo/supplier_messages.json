@@ -66,6 +66,15 @@
       "source_label": "Equipment Vendor A / 가상 메일",
       "content": "[가상 메시지] T036 셀 설비 제작 완료일이 2026-01-01에서 2026-01-15로 변경됩니다. 후속 시험과 운송 일정의 재확인이 필요합니다.",
       "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "H08",
+      "published_at": "2025-08-25T09:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Logistics Partner / 가상 정정 메일",
+      "content": "[가상 메시지] H04의 T045 완료일 2026-12-28 변경 통보를 철회합니다. T045 현장 설비 반입 완료일은 원래 일정인 2026-12-05로 정정합니다.",
+      "mode": "SYNTHETIC",
+      "corrects_event_id": "H04"
     }
   ]
 }

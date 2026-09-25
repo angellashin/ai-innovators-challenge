@@ -298,6 +298,10 @@ def _apply_typed_patch(
     for task_id, values in (patch.get("blocked_dates") or {}).items():
         scoped_blocked_dates.append({"task_id": str(task_id), "dates": [_parse_date(value).isoformat() for value in values]})
 
+    for task_id, values in (patch.get("calendar_nonworking_dates") or {}).items():
+        if task_id in task_map:
+            task_map[task_id]["calendar_nonworking_dates"] = sorted(set(task_map[task_id].get("calendar_nonworking_dates") or []) | set(values))
+
     for resource_group, values in (patch.get("resource_unavailable") or {}).items():
         resource_unavailable.append(
             {"resource_group": str(resource_group), "dates": [_parse_date(value).isoformat() for value in values]}
@@ -354,7 +358,9 @@ def _collect_workdays_nonpreemptive(
     days: list[date] = []
     current = start
     while len(days) < duration:
-        if _is_calendar_workday(project, current, blocked_dates):
+        if (_is_calendar_workday(project, current, blocked_dates)
+                and current.isoformat() not in task.get("calendar_nonworking_dates", [])
+                and current.isoformat() not in task.get("approved_calendar_nonworking_dates", [])):
             days.append(current)
         current += timedelta(days=1)
     finish = days[-1]
@@ -379,6 +385,8 @@ def _is_workday(
     scoped_blocked_dates: list[dict[str, Any]],
     resource_unavailable: list[dict[str, Any]],
 ) -> bool:
+    if current.isoformat() in task.get("calendar_nonworking_dates", []) or current.isoformat() in task.get("approved_calendar_nonworking_dates", []):
+        return False
     supplier = str(task.get("supplier_id") or task.get("supplier") or task.get("owner") or "")
     for calendar in project.get("supplier_calendars", []):
         if supplier == str(calendar.get("supplier_id")) and current.isoformat() in calendar.get("unavailable_dates", []):

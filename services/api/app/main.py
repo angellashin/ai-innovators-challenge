@@ -86,7 +86,7 @@ def decision_deadline(project: dict[str, Any], scenario: dict[str, Any], option_
 
 def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str, Any], overrides: "ConfirmInput") -> dict[str, Any]:
     """Bridge workbook labels to the Task and Option fields used by tools."""
-    from .hero_demo import hero_fixture, status_at
+    from .hero_demo import hero_fixture, hero_outdoor_task_ids, status_at
 
     hero = hero_fixture(parsed) if overrides.tasks is None else None
     raw_project = {**parsed.get("project", {}), **(overrides.project or {})}
@@ -101,9 +101,11 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
         profile["mode"] = "REPLAY"
         profile["data_origin"] = "SYNTHETIC"
         profile["status_as_of"] = hero["as_of_date"]
+        profile["hero_fixture_id"] = hero["project_id"]
     calendars = overrides.calendars if overrides.calendars is not None else parsed.get("calendars", [])
     profile["nonworking_dates"] = [item.get("calendar_date") for item in calendars if item.get("scope") == profile.get("site_id") and item.get("calendar_date")]
     raw_tasks = overrides.tasks if overrides.tasks is not None else parsed.get("tasks", [])
+    hero_outdoor = hero_outdoor_task_ids() if hero else set()
     tasks = []
     for original in raw_tasks:
         task = dict(original)
@@ -114,6 +116,8 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
         if hero:
             task["status"] = status_at(task, hero["as_of_date"])
             task["status_as_of"] = hero["as_of_date"]
+            task["outdoor"] = str(task["task_id"]) in hero_outdoor
+            task["outdoor_data_origin"] = "SYNTHETIC"
         task["dependency_type"] = str(task.get("dependency_type") or task.get("relationship") or "FS").upper()
         task["location_id"] = task.get("location_id") or task.get("location")
         task["resource_demand"] = task.get("resource_demand") or task.get("demand_teams") or 1
@@ -162,6 +166,7 @@ def suggest_watch_plan(project: dict[str, Any], tasks: list[dict[str, Any]]) -> 
         "source_allowlist": ["https://environment.ec.europa.eu/news_en"],
         "public_search_terms": ["industrial emissions", "equipment import"],
         "weather_limits": {},
+        "seasonal_statistics_enabled": True,
         "weather_task_ids": [str(task["task_id"]) for task in tasks if task.get("outdoor")],
         "holiday_calendars": [],
         "holiday_poll_hours": 24,
@@ -211,6 +216,7 @@ class WatchPlanInput(BaseModel):
     source_allowlist: list[str] = Field(default_factory=list)
     public_search_terms: list[str] = Field(default_factory=list)
     weather_limits: dict[str, float] = Field(default_factory=dict)
+    seasonal_statistics_enabled: bool = True
     weather_task_ids: list[str] = Field(default_factory=list)
     source_rules: list[SourceRule] = Field(default_factory=list, max_length=20)
     holiday_calendars: list[HolidayCalendar] = Field(default_factory=list, max_length=10)
@@ -219,6 +225,7 @@ class WatchPlanInput(BaseModel):
 
 class EventInput(BaseModel):
     event_id: str | None = None
+    corrects_event_id: str | None = None
     channel: str = "supplier_message"
     source_label: str = "프로젝트 운영팀 입력"
     content: str = Field(min_length=1, max_length=10000)
@@ -780,6 +787,15 @@ def create_event(project_id: str, value: EventInput) -> dict[str, Any]:
     event_id = identifier()
     event["id"] = event_id
     db.put_json("events", event_id, event, project_id=project_id, fingerprint=fingerprint)
+    if event.get("corrects_event_id") and event.get("channel") == "supplier_message":
+        for previous in db.list_json("events", project_id, 1000):
+            old = previous["data"]
+            if (previous["id"] != event_id and old.get("event_id") == event["corrects_event_id"]
+                    and old.get("channel") == "supplier_message" and old.get("review_status") != "SUPERSEDED"):
+                old["review_status"] = "SUPERSEDED"
+                old["superseded_by"] = event_id
+                db.put_json("events", previous["id"], old, project_id=project_id,
+                            fingerprint=previous.get("fingerprint"), created_at=previous.get("created_at"))
     notify_project(db, project_id, "event_received", "새 변경 이벤트", f"{event.get('source_label', '입력')} 이벤트가 등록되었습니다.", data={"event_id": event_id})
     return {"event_id": event_id, "event": event, "duplicate": False}
 
@@ -931,6 +947,15 @@ def validate_external_approval(db: Store, scenario: dict[str, Any]) -> None:
             raise HTTPException(409, "협력사 통보의 해석을 먼저 확인하세요")
         if data.get("event_patch_hash") != digest(event["data"].get("patch", {})):
             raise HTTPException(409, "통보 해석이 수정되었습니다. 다시 분석하세요")
+        if data.get("project_context_hash") != db.project_context_snapshot(scenario["project_id"])["content_hash"]:
+            raise HTTPException(409, "감시 계획 또는 운영 조건이 바뀌었습니다. 다시 분석하세요")
+        sources = {}
+        for row in db.list_json("source_snapshots", scenario["project_id"], 1000):
+            if row["status"] == "ok":
+                sources.setdefault(row["source_id"], row["body_hash"])
+        for source_id, source_hash in (data.get("external_source_hashes") or {}).items():
+            if source_id in sources and sources[source_id] != source_hash:
+                raise HTTPException(409, "외부 출처가 갱신되었습니다. 다시 분석하세요")
     if not event or not event["data"].get("evidence"):
         return
     included = data.get("included_events") or [{"event_id": event["id"], "patch_hash": data.get("event_patch_hash")}]
@@ -1029,10 +1054,15 @@ def commit_scenario(scenario_id: str) -> dict[str, Any]:
             if update:
                 task["baseline_start"] = update["planned_start"]
                 task["baseline_finish"] = update["planned_finish"]
+                task["planned_start"] = update["planned_start"]
+                task["planned_finish"] = update["planned_finish"]
                 applied = result.get("applied_patch", {})
                 blocked = applied.get("blocked_dates", {}).get(str(task["task_id"]), [])
                 if blocked:
                     task["approved_blocked_dates"] = sorted(set(task.get("approved_blocked_dates", [])) | set(blocked))
+                calendar_days = applied.get("calendar_nonworking_dates", {}).get(str(task["task_id"]), [])
+                if calendar_days:
+                    task["approved_calendar_nonworking_dates"] = sorted(set(task.get("approved_calendar_nonworking_dates", [])) | set(calendar_days))
                 if str(task["task_id"]) in applied.get("not_before", {}):
                     task["not_before"] = applied["not_before"][str(task["task_id"])]
             new_tasks.append(task)
