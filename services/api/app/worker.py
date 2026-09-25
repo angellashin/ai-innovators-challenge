@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import time
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from itertools import combinations
 from typing import Any
 from urllib.parse import urlparse
@@ -30,6 +30,11 @@ def _scenario_record(run: dict[str, Any], event: dict[str, Any], version: dict[s
         **result,
         "project_id": run["project_id"],
         "event_id": event["id"],
+        "event_patch_hash": digest(event.get("patch", {})),
+        "evidence": event.get("evidence"),
+        "included_events": event.get("included_events", []),
+        "applied_patch": event.get("patch", {}),
+        "provisional": bool(event.get("evidence") and event.get("review_status") != "CONFIRMED"),
         "version_id": version["id"],
         "input_version_hash": version["content_hash"],
         "label": label,
@@ -123,6 +128,26 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         project = dict(current_profile["data"] if current_profile else snapshot["project"])
     tasks = snapshot["tasks"]
     options = snapshot.get("options", [])
+    if event.get("review_status") in {"REJECTED", "SUPERSEDED"}:
+        return {"status": "SUPERSEDED", "summary": "보류되었거나 최신 근거로 대체된 변경입니다.", "scenario_ids": []}
+    if event.get("version_id") and event["version_id"] != version["id"]:
+        return {"status": "STALE", "summary": "기준 일정이 바뀌었습니다. 외부 소스를 다시 확인하세요.", "scenario_ids": []}
+    if not event.get("patch") and event.get("channel") == "registered_public_source":
+        # Interpret source evidence before the early NEEDS_INPUT return.
+        if all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
+            paid_state = _reserve_paid_attempt(db, run["id"])
+            if paid_state == "reserved":
+                from .external_risks import interpret_notice
+                from .adapters.llm import OpenAICompatibleLLM
+                result = interpret_notice(event, tasks, OpenAICompatibleLLM())
+                _record_usage(db, run["id"], result)
+                event["interpretation"] = result
+                if result.get("candidates"):
+                    event["candidates"] = result["candidates"]
+                    event["related_task_ids"] = [item["task_id"] for item in result["candidates"]]
+                db.put_json("events", event_row["id"], event, project_id=run["project_id"],
+                            fingerprint=event_row["fingerprint"], created_at=event_row["created_at"])
+
     budget = run["data"].get("budget_krw")
     if event.get("classification_status") == "NO_SCHEDULE_IMPACT":
         return {"status": "NO_IMPACT", "summary": "일정에 영향을 주는 변경이 아닙니다.", "scenario_ids": [], "agent_status": "not_needed"}
@@ -134,7 +159,27 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
             "due_at": None, "event_id": event["id"], "mode": event.get("mode"),
         }
         db.put_json("actions", action_id, action, project_id=run["project_id"], event_id=event["id"], scenario_id=None)
-        return {"status": "NEEDS_INPUT", "summary": "적용 여부나 기간이 확인되지 않아 일정은 변경하지 않았습니다.", "action_ids": [action_id], "scenario_ids": [], "agent_status": "not_needed"}
+        return {"status": "NEEDS_INPUT", "summary": "근거를 확인했습니다. 영향 작업과 효력일·중단 기간을 확인하면 계산할 수 있습니다.",
+                "action_ids": [action_id], "scenario_ids": [], "candidates": event.get("candidates", []),
+                "evidence": event.get("evidence"), "missing_fields": missing,
+                "agent_status": event.get("interpretation", {}).get("status", "rules_only")}
+
+    if event.get("evidence"):
+        from .external_risks import combine_patches
+        inputs = [row for row in db.list_json("events", run["project_id"], 1000)
+                  if row["data"].get("evidence") and row["data"].get("patch")
+                  and row["data"].get("version_id") == version["id"]
+                  and row["data"].get("review_status") not in {"SUPERSEDED", "REJECTED"}]
+        try:
+            patch = combine_patches([row["data"]["patch"] for row in inputs])
+        except ValueError:
+            return {"status": "NEEDS_INPUT", "summary": "같은 작업의 완료일 근거가 서로 다릅니다. 변경을 확인하거나 보류한 뒤 다시 분석하세요.", "scenario_ids": []}
+        event = {**event, "patch": patch,
+                 "related_task_ids": sorted({task_id for row in inputs for task_id in row["data"].get("related_task_ids", [])}),
+                 "review_status": "CONFIRMED" if all(row["data"].get("review_status") == "CONFIRMED" for row in inputs) else "PENDING",
+                 "included_events": [{"event_id": row["id"], "patch_hash": digest(row["data"]["patch"]),
+                                      "title": row["data"].get("title"), "evidence": row["data"].get("evidence")}
+                                     for row in inputs]}
 
     unavailable = set(run["data"].get("unavailable_option_ids") or [])
     candidates = _candidate_options(options, unavailable)
@@ -144,6 +189,20 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     for label, selected in candidates:
         chosen = [item for item in options if item.get("option_id") in selected]
         result = simulate(project, tasks, event=event, options=chosen, budget_krw=budget)
+        baseline_finish = max(str(task["baseline_finish"])[:10] for task in tasks)
+        by_id = {str(task["task_id"]): task for task in tasks}
+        changed_tasks = [
+            {"task_id": item["task_id"], "name": by_id[str(item["task_id"])].get("name"),
+             "before_start": by_id[str(item["task_id"])]["baseline_start"],
+             "before_finish": by_id[str(item["task_id"])]["baseline_finish"],
+             "after_start": item["planned_start"], "after_finish": item["planned_finish"],
+             "direct": str(item["task_id"]) in event.get("related_task_ids", [])}
+            for item in result.get("schedule", [])
+            if (str(item["planned_start"]), str(item["planned_finish"])) !=
+               (str(by_id[str(item["task_id"])]["baseline_start"]), str(by_id[str(item["task_id"])]["baseline_finish"]))
+        ]
+        result.update({"baseline_finish": baseline_finish, "changed_tasks": changed_tasks,
+                       "finish_shift_days": (date.fromisoformat(result["finish_date"]) - date.fromisoformat(baseline_finish)).days if result.get("finish_date") else None})
         record = _scenario_record(run, event, version, label, selected, result)
         scenario_id = digest({"run_id": run["id"], "option_ids": selected})[:32]
         db.put_json("scenarios", scenario_id, record, project_id=run["project_id"], run_id=run["id"], version_id=version["id"])
@@ -308,70 +367,108 @@ def _store_source_snapshot(db: Store, project_id: str, result: dict[str, Any]) -
     return snapshot_id, changed
 
 
+def _save_external_event(db: Store, project_id: str, version: dict, identity: str, event: dict | None) -> list[str]:
+    """Deduplicate by content and replace obsolete proposals, never mutate a baseline."""
+    source_key = digest({"identity": identity, "version": version["id"]})
+    observation_hash = digest({key: value for key, value in (event or {}).items()
+                               if key not in {"evidence", "fetched_at"}})
+    history = [row for row in db.list_json("events", project_id, 1000) if row["data"].get("source_key") == source_key]
+    for old in history:
+        if old["data"].get("review_status") != "SUPERSEDED" and old["data"].get("observation_hash") == observation_hash:
+            return []
+    fingerprint = digest({"source_key": source_key, "observation_hash": observation_hash,
+                          "previous": sorted(row["id"] for row in history)})
+    for old in history:
+        data = old["data"]
+        if data.get("review_status") != "SUPERSEDED":
+            data = {**data, "review_status": "SUPERSEDED", "superseded_at": utcnow()}
+            db.put_json("events", old["id"], data, project_id=project_id,
+                        fingerprint=old["fingerprint"], created_at=old["created_at"])
+    if event is None:
+        return []
+    event_id = identifier()
+    event = {**event, "id": event_id, "event_id": event_id, "source_key": source_key,
+             "version_id": version["id"], "observation_hash": observation_hash, "mode": "LIVE", "data_origin": "PUBLIC",
+             "review_status": "PENDING"}
+    db.put_json("events", event_id, event, project_id=project_id, fingerprint=fingerprint)
+    db.create_run(project_id, "analysis", event_id, version["id"], f"external:{event_id}",
+                  {"project_context_snapshot": db.project_context_snapshot(project_id)})
+    from .main import notify_project
+    notify_project(db, project_id, "external_change", "외부 변화 검토", event["title"],
+                   data={"event_id": event_id})
+    return [event_id]
+
+
 def _record_weather_risks(db: Store, project_id: str, plan: dict[str, Any], forecast: dict[str, Any], snapshot_id: str) -> list[str]:
-    """Create reviewable task-specific events only for user-defined weather limits."""
-    limits = plan.get("weather_limits") or {}
-    if forecast.get("status") != "ok" or not limits:
+    from .external_risks import evidence, weather_patch
+    if forecast.get("status") != "ok" or not plan.get("weather_limits"):
         return []
     version = db.current_version(project_id)
-    project = db.get_json("projects", project_id)
-    if not version or not project:
+    if not version:
         return []
-    units = forecast.get("forecast", {}).get("units", {})
-    thresholds = (
-        ("max_wind_speed_kmh", "wind_speed_10m_max", "km/h"),
-        ("max_precipitation_mm", "precipitation_sum", "mm"),
-    )
+    patch, facts = weather_patch(version["data"]["tasks"], plan, forecast)
+    event = None
+    if patch:
+        event = {
+            "title": "현장 기상 예보: 작업 중단 기준 초과",
+            "content": "등록한 야외 작업·기간·기상 기준에 해당하는 날짜를 조건부로 제외해 계산합니다. 예보는 실제 중단 확정이 아닙니다.",
+            "source_label": "Open-Meteo 기상 예보", "channel": "weather_forecast",
+            "patch": patch, "classification_status": "PATCH_PROPOSED",
+            "related_task_ids": list(patch["blocked_dates"]), "extracted_facts": facts,
+            "evidence": {**evidence(forecast, snapshot_id, "FORECAST"),
+                         "validity": forecast.get("forecast", {}).get("validity"), "limits": plan["weather_limits"]},
+        }
+    return _save_external_event(db, project_id, version, f"weather:{forecast.get('source_id')}", event)
+
+
+def _record_holiday_risks(db: Store, project_id: str, config: dict, source: dict, snapshot_id: str) -> list[str]:
+    from .external_risks import evidence, holiday_patch
+    if source.get("status") != "ok":
+        return []
+    version = db.current_version(project_id)
+    if not version:
+        return []
+    patch, facts = holiday_patch(version["data"]["tasks"], config, source)
+    event = None
+    if patch:
+        event = {
+            "title": f"{config['country_code']} 공휴일과 작업 일정 중첩",
+            "content": "공개 휴일 달력과 지정한 작업의 날짜가 겹칩니다. 해당 현장·공급사가 실제로 쉬는 날인지 확인하세요.",
+            "source_label": "Nager.Date 공개 휴일 달력", "channel": "public_holiday",
+            "patch": patch, "classification_status": "PATCH_PROPOSED",
+            "related_task_ids": list(patch["blocked_dates"]), "extracted_facts": facts,
+            "evidence": {**evidence(source, snapshot_id, "CALENDAR"), "scope": config},
+        }
+    identity = f"holiday:{config['country_code']}:{config['year']}:{config.get('subdivision')}"
+    return _save_external_event(db, project_id, version, identity, event)
+
+
+def _record_public_risks(db: Store, project_id: str, plan: dict, result: dict, snapshot_id: str, url: str) -> list[str]:
+    from .external_risks import evidence, match_notice
+    version = db.current_version(project_id)
+    if not version:
+        return []
+    rows = result.get("feed_items") or [result]
     created = []
-    for day in forecast.get("forecast", {}).get("data", []):
-        day_date = day.get("date")
-        if not day_date:
-            continue
-        exceeded = []
-        for limit_key, reading_key, unit in thresholds:
-            if limit_key in limits and units.get(reading_key) == unit and day.get(reading_key) is not None:
-                if float(day[reading_key]) > float(limits[limit_key]):
-                    exceeded.append(f"{reading_key} {day[reading_key]} {unit} > {limits[limit_key]} {unit}")
-        if not exceeded:
-            continue
-        affected = [
-            str(task["task_id"]) for task in version["data"]["tasks"]
-            if task.get("outdoor") and str(task.get("baseline_start") or "")[:10] <= day_date <= str(task.get("baseline_finish") or "")[:10]
-        ]
-        if not affected:
-            continue
-        fingerprint = digest({"source": forecast.get("source_id"), "date": day_date, "tasks": affected, "limits": limits})
-        with db.connection() as conn:
-            existing = conn.execute("SELECT id FROM events WHERE project_id=? AND fingerprint=?", (project_id, fingerprint)).fetchone()
-        if existing:
-            continue
-        event_id = identifier()
-        event = normalize_event(
-            {
-                "id": event_id, "content": f"{day_date} 야외 작업 기상 한도 초과: {', '.join(exceeded)}",
-                "source_label": forecast.get("source_id"), "channel": "weather_forecast",
-                "mode": "LIVE", "data_origin": "PUBLIC", "fetched_at": forecast.get("fetched_at"),
-                "snapshot_id": snapshot_id, "related_task_ids": affected,
-                "patch": {"blocked_dates": {task_id: [day_date] for task_id in affected}},
-            },
-            project["data"], version["data"]["tasks"],
-        )
-        db.put_json("events", event_id, event, project_id=project_id, fingerprint=fingerprint)
-        db.create_run(
-            project_id,
-            "analysis",
-            event_id,
-            version["id"],
-            f"weather:{event_id}",
-            {"project_context_snapshot": db.project_context_snapshot(project_id)},
-        )
-        created.append(event_id)
+    for row in rows:
+        source = {**row, "content": row.get("content") or row.get("summary") or row.get("title", ""),
+                  "url": row.get("url") or url, "feed_url": url,
+                  "source_id": result.get("source_id"), "fetched_at": result.get("fetched_at")}
+        source["body_hash"] = digest({"title": source.get("title"), "content": source["content"]})
+        identity = row.get("id") or row.get("url") or row.get("title") or url
+        event = {
+            "title": source.get("title") or "등록 출처의 새 공지",
+            "content": source["content"], "source_label": source["url"],
+            "channel": "registered_public_source",
+            "evidence": evidence(source, snapshot_id, "PUBLIC_NOTICE"),
+            **match_notice(source, version["data"]["tasks"], plan.get("source_rules", [])),
+        }
+        created.extend(_save_external_event(db, project_id, version, f"notice:{url}:{identity}", event))
     return created
 
 
 def _run_scan(db: Store, run: dict[str, Any]) -> dict[str, Any]:
-    from .adapters.sources import fetch_registered_source, fetch_weather
-
+    from .adapters.sources import fetch_registered_source, fetch_weather, fetch_holidays
     watch = db.get_json("watch_plans", run["project_id"])
     if not watch or not watch["data"].get("enabled"):
         return {"status": "disabled", "sources": []}
@@ -379,50 +476,42 @@ def _run_scan(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     scope = run["data"].get("scope", "all")
     source_results = []
     new_event_ids = []
+
+    def record(result: dict) -> str:
+        snapshot_id, changed = _store_source_snapshot(db, run["project_id"], result)
+        source_results.append({"snapshot_id": snapshot_id, "source_id": result.get("source_id"),
+                               "status": result.get("status"), "error": result.get("error"), "changed": changed})
+        return snapshot_id
+
     site = plan.get("weather_site")
     if site and scope in {"all", "weather"}:
         try:
             result = fetch_weather(site)
         except Exception as exc:
             result = {"status": "failed", "source_id": "open-meteo", "fetched_at": utcnow(), "error": type(exc).__name__}
-        snapshot_id, changed = _store_source_snapshot(db, run["project_id"], result)
+        snapshot_id = record(result)
         new_event_ids.extend(_record_weather_risks(db, run["project_id"], plan, result, snapshot_id))
-        source_results.append({"snapshot_id": snapshot_id, "source_id": result.get("source_id"), "status": result.get("status"), "changed": changed})
+    if scope in {"all", "holidays"}:
+        for config in plan.get("holiday_calendars", []):
+            result = fetch_holidays(config["country_code"], config["year"])
+            snapshot_id = record(result)
+            new_event_ids.extend(_record_holiday_risks(db, run["project_id"], config, result, snapshot_id))
     allowed_urls = plan.get("source_allowlist") or []
     allowed_hosts = [urlparse(url).hostname for url in allowed_urls]
-    for url in allowed_urls[:3] if scope in {"all", "notices"} else []:
+    for url in allowed_urls if scope in {"all", "notices"} else []:
         try:
             result = fetch_registered_source(url, [host for host in allowed_hosts if host])
         except Exception as exc:
             result = {"status": "failed", "source_id": url, "fetched_at": utcnow(), "error": type(exc).__name__}
-        snapshot_id, changed = _store_source_snapshot(db, run["project_id"], result)
-        source_results.append({"snapshot_id": snapshot_id, "source_id": result.get("source_id"), "status": result.get("status"), "changed": changed})
-        if changed:
-            version = db.current_version(run["project_id"])
-            project = db.get_json("projects", run["project_id"])
-            if version and project:
-                event = normalize_event(
-                    {"content": result.get("summary") or result.get("content") or result.get("title") or "새 공지", "source_label": result.get("source_id"), "channel": "registered_public_source", "mode": "LIVE", "data_origin": "PUBLIC", "published_at": result.get("published_at"), "fetched_at": result.get("fetched_at"), "snapshot_id": snapshot_id},
-                    project["data"], version["data"]["tasks"],
-                )
-                fingerprint = digest({"source": result.get("source_id"), "body_hash": result.get("body_hash")})
-                with db.connection() as conn:
-                    exists = conn.execute("SELECT id FROM events WHERE project_id=? AND fingerprint=?", (run["project_id"], fingerprint)).fetchone()
-                if not exists:
-                    event_id = identifier()
-                    event["id"] = event_id
-                    db.put_json("events", event_id, event, project_id=run["project_id"], fingerprint=fingerprint)
-                    db.create_run(
-                        run["project_id"],
-                        "analysis",
-                        event_id,
-                        version["id"],
-                        f"source:{event_id}",
-                        {"project_context_snapshot": db.project_context_snapshot(run["project_id"])},
-                    )
-                    new_event_ids.append(event_id)
-    return {"status": "succeeded", "scope": scope, "sources": source_results, "new_or_changed_count": sum(bool(item["changed"]) for item in source_results), "new_event_ids": new_event_ids}
-
+        snapshot_id = record(result)
+        if result.get("status") == "ok":
+            new_event_ids.extend(_record_public_risks(db, run["project_id"], plan, result, snapshot_id, url))
+    failures = sum(item["status"] != "ok" for item in source_results)
+    return {"status": "partial_failure" if failures else "succeeded", "scope": scope,
+            "sources": source_results, "failed_source_count": failures,
+            "new_or_changed_count": sum(bool(item["changed"]) for item in source_results),
+            "new_event_ids": new_event_ids,
+            "summary": "수집 실패 출처가 있습니다. 위험 없음으로 판단하지 않습니다." if failures else "등록 출처 확인 완료"}
 
 def enqueue_due_scans(db: Store, now: datetime | None = None) -> int:
     """Queue each enabled source only when its own approved polling interval is due."""
@@ -437,6 +526,7 @@ def enqueue_due_scans(db: Store, now: datetime | None = None) -> int:
         for scope, configured, field in (
             ("weather", bool(plan.get("weather_site")), "weather_poll_hours"),
             ("notices", bool(plan.get("source_allowlist")), "notice_poll_hours"),
+            ("holidays", bool(plan.get("holiday_calendars")), "holiday_poll_hours"),
         ):
             if not configured:
                 continue
@@ -476,6 +566,10 @@ def run_once(db: Store | None = None) -> bool:
         else:
             raise ValueError("unsupported run kind")
         db.update_run(run["id"], "succeeded", result)
+        if run["kind"] == "analysis":
+            from .main import notify_project
+            notify_project(db, run["project_id"], "analysis_ready", "영향 분석 결과",
+                           result.get("summary", "분석을 완료했습니다."), data={"run_id": run["id"], "event_id": run["event_id"]})
     except Exception as exc:
         db.update_run(run["id"], "failed", {"status": "failed", "error": type(exc).__name__, "detail": str(exc)[:500]})
     return True

@@ -22,6 +22,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: PYTHONDONTWRITEBYTECODE=1 python -m pytest -q
       - run: python scripts/evaluate_replay.py
+      - run: python scripts/evaluate_external.py
 
   web:
     name: Web typecheck and build

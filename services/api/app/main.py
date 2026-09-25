@@ -6,6 +6,7 @@ import io
 import hashlib
 import json
 import os
+import math
 from datetime import date, timedelta
 from typing import Any
 from urllib.parse import urlparse
@@ -136,12 +137,9 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
 
 def suggest_watch_plan(project: dict[str, Any], tasks: list[dict[str, Any]]) -> dict[str, Any]:
     site = None
-    if project.get("site_id") == "SITE-H1":
-        site = {
-            "id": "BUDAPEST-DEMO", "label": "부다페스트 공개 데모 좌표",
-            "latitude": 47.4979, "longitude": 19.0402,
-            "timezone": "Europe/Budapest", "is_exact_project_site": False,
-        }
+    if project.get("latitude") is not None and project.get("longitude") is not None:
+        site = {key: project.get(key) for key in ("latitude", "longitude", "timezone")}
+        site["label"] = project.get("region") or "프로젝트 현장"
     return {
         "enabled": False,
         "template_id": "equipment_installation_v1",
@@ -151,6 +149,10 @@ def suggest_watch_plan(project: dict[str, Any], tasks: list[dict[str, Any]]) -> 
         "source_allowlist": ["https://environment.ec.europa.eu/news_en"],
         "public_search_terms": ["industrial emissions", "equipment import"],
         "weather_limits": {},
+        "weather_task_ids": [str(task["task_id"]) for task in tasks if task.get("outdoor")],
+        "holiday_calendars": [],
+        "holiday_poll_hours": 24,
+        "source_rules": [],
         "approval_required_for": ["schedule_commit", "extra_cost", "external_send"],
     }
 
@@ -174,6 +176,20 @@ class ConfirmInput(BaseModel):
     calendars: list[dict[str, Any]] | None = None
 
 
+class SourceRule(BaseModel):
+    url: str
+    keywords: list[str] = Field(default_factory=list, max_length=20)
+    task_ids: list[str] = Field(default_factory=list)
+    country_code: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
+
+
+class HolidayCalendar(BaseModel):
+    country_code: str = Field(pattern=r"^[A-Z]{2}$")
+    year: int = Field(ge=2000, le=2100)
+    subdivision: str | None = None
+    task_ids: list[str] = Field(min_length=1)
+
+
 class WatchPlanInput(BaseModel):
     enabled: bool = False
     weather_site: dict[str, Any] | None = None
@@ -182,6 +198,10 @@ class WatchPlanInput(BaseModel):
     source_allowlist: list[str] = Field(default_factory=list)
     public_search_terms: list[str] = Field(default_factory=list)
     weather_limits: dict[str, float] = Field(default_factory=dict)
+    weather_task_ids: list[str] = Field(default_factory=list)
+    source_rules: list[SourceRule] = Field(default_factory=list, max_length=20)
+    holiday_calendars: list[HolidayCalendar] = Field(default_factory=list, max_length=10)
+    holiday_poll_hours: int = Field(default=24, ge=1, le=168)
 
 
 class EventInput(BaseModel):
@@ -201,6 +221,7 @@ class EventReviewInput(BaseModel):
     confirmed: bool = True
     patch: dict[str, Any] | None = None
     related_task_ids: list[str] | None = None
+    review_note: str | None = Field(default=None, max_length=2000)
 
 
 class AnalysisInput(BaseModel):
@@ -435,10 +456,12 @@ def save_supplier_calendar(project_id: str, value: SupplierCalendarInput) -> dic
     db = store()
     project = project_or_404(db, project_id)
     calendar = value.model_dump(mode="json")
-    calendar_id = f"supplier-{value.supplier_id}"
+    calendar_id = f"supplier-{digest([project_id, value.supplier_id])[:24]}"
     db.put_json("supplier_calendars", calendar_id, calendar, project_id=project_id)
     profile = dict(project["data"])
-    unavailable = set(profile.get("supplier_unavailable_dates", [])) | set(calendar["unavailable_dates"])
+    calendars = [row["data"] for row in db.list_json("supplier_calendars", project_id)]
+    profile["supplier_calendars"] = calendars
+    unavailable = {day for row in calendars for day in row.get("unavailable_dates", [])}
     profile["supplier_unavailable_dates"] = sorted(unavailable)
     db.put_json("projects", project_id, profile, created_at=project["created_at"])
     return {"calendar_id": calendar_id, "calendar": calendar, "supplier_unavailable_dates": profile["supplier_unavailable_dates"]}
@@ -656,9 +679,32 @@ def save_watch_plan(project_id: str, value: WatchPlanInput) -> dict[str, Any]:
         if parsed_url.scheme != "https" or parsed_url.hostname not in approved_hosts or parsed_url.username or parsed_url.password:
             raise HTTPException(422, "registered source host is not server-approved")
     if set(data["weather_limits"]) - {"max_wind_speed_kmh", "max_precipitation_mm"} or any(
-        value < 0 for value in data["weather_limits"].values()
+        not math.isfinite(value) or value < 0 for value in data["weather_limits"].values()
     ):
         raise HTTPException(422, "invalid weather limits")
+    version = db.current_version(project_id)
+    task_ids = {str(task["task_id"]) for task in (version or {}).get("data", {}).get("tasks", [])}
+    selected = set(data["weather_task_ids"])
+    for config in [*data["source_rules"], *data["holiday_calendars"]]:
+        selected.update(config["task_ids"])
+    if not selected.issubset(task_ids):
+        raise HTTPException(422, "감시 대상에 존재하지 않는 작업이 있습니다")
+    if any(rule["url"] not in data["source_allowlist"] for rule in data["source_rules"]):
+        raise HTTPException(422, "감시 규칙 출처를 먼저 등록하세요")
+    if len(data["source_allowlist"]) > 20:
+        raise HTTPException(422, "등록 출처는 최대 20개입니다")
+    site = data["weather_site"]
+    if site:
+        try:
+            lat, lon = float(site["latitude"]), float(site["longitude"])
+            if not math.isfinite(lat) or not math.isfinite(lon) or not -90 <= lat <= 90 or not -180 <= lon <= 180:
+                raise ValueError()
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(422, "현장 위도·경도를 확인하세요")
+    if data["enabled"] and not (site or data["source_allowlist"] or data["holiday_calendars"]):
+        raise HTTPException(422, "감시할 외부 출처를 하나 이상 지정하세요")
+    if data["enabled"] and site and (not data["weather_limits"] or not data["weather_task_ids"]):
+        raise HTTPException(422, "기상 감시 작업과 작업 중단 기준을 지정하세요")
     db.put_json("watch_plans", project_id, data)
     return {"project_id": project_id, "watch_plan": data}
 
@@ -710,6 +756,22 @@ def review_event(project_id: str, event_id: str, value: EventReviewInput) -> dic
     if not record:
         raise HTTPException(404, "event not found")
     event = dict(record["data"])
+    if event.get("review_status") == "SUPERSEDED":
+        raise HTTPException(409, "source has changed; review the latest evidence")
+    version = db.current_version(project_id)
+    if event.get("version_id") and (not version or event["version_id"] != version["id"]):
+        raise HTTPException(409, "schedule changed; scan again")
+    proposed = value.patch if value.patch is not None else event.get("patch", {})
+    from .external_risks import validate_patch
+    try:
+        validate_patch(proposed, version["data"]["tasks"] if version else [])
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(422, str(exc))
+    if value.confirmed and event.get("evidence") and not proposed:
+        raise HTTPException(422, "영향 작업과 적용 날짜를 입력하거나 보류하세요")
+    if value.patch is not None and event.get("evidence") and not value.review_note:
+        raise HTTPException(422, "근거의 어느 부분을 적용했는지 확인 메모가 필요합니다")
+    event["review_note"] = value.review_note
     if value.patch is not None:
         event["patch"] = value.patch
         event["classification_status"] = "PATCH_CONFIRMED" if value.confirmed else "PATCH_REJECTED"
@@ -740,12 +802,16 @@ def create_analysis(project_id: str, value: AnalysisInput, idempotency_key: str 
     if not event:
         raise HTTPException(404, "event not found")
     event_data = event["data"]
-    if event_data.get("patch") and event_data.get("review_status") != "CONFIRMED":
+    if event_data.get("patch") and event_data.get("review_status") != "CONFIRMED" and not event_data.get("evidence"):
         raise HTTPException(409, "review the proposed change before analysis")
     version = db.get_json("versions", value.version_id, project_id) if value.version_id else db.current_version(project_id)
     if not version:
         raise HTTPException(409, "schedule version not found")
-    key = idempotency_key or digest({"event_id": value.event_id, "version_id": version["id"], "budget": value.budget_krw})
+    if event_data.get("review_status") in {"REJECTED", "SUPERSEDED"}:
+        raise HTTPException(409, "event rejected or superseded")
+    if event_data.get("version_id") and event_data["version_id"] != version["id"]:
+        raise HTTPException(409, "source interpretation belongs to an older schedule; scan again")
+    key = idempotency_key or digest({"event_id": value.event_id, "event_hash": digest(event_data), "version_id": version["id"], "budget": value.budget_krw})
     run = db.create_run(
         project_id,
         "analysis",
@@ -818,10 +884,37 @@ def prepare_scenario(scenario_id: str) -> dict[str, Any]:
     return {"actions": actions, "duplicate": False}
 
 
+def validate_external_approval(db: Store, scenario: dict[str, Any]) -> None:
+    data = scenario["data"]
+    event = db.get_json("events", str(data.get("event_id") or ""), scenario["project_id"])
+    if not event or not event["data"].get("evidence"):
+        return
+    included = data.get("included_events") or [{"event_id": event["id"], "patch_hash": data.get("event_patch_hash")}]
+    active_ids = {row["id"] for row in db.list_json("events", scenario["project_id"], 1000)
+                  if row["data"].get("evidence") and row["data"].get("patch")
+                  and row["data"].get("version_id") == scenario["version_id"]
+                  and row["data"].get("review_status") not in {"REJECTED", "SUPERSEDED"}}
+    if active_ids != {item["event_id"] for item in included}:
+        raise HTTPException(409, "외부 변화가 추가·철회되었습니다. 다시 분석하세요")
+    for item in included:
+        row = db.get_json("events", item["event_id"], scenario["project_id"])
+        current = row["data"] if row else {}
+        if current.get("review_status") != "CONFIRMED":
+            raise HTTPException(409, "계산에 포함된 모든 외부 근거의 적용 여부를 먼저 확인하세요")
+        if item["patch_hash"] != digest(current.get("patch", {})):
+            raise HTTPException(409, "변경 해석이 수정되었습니다. 다시 분석하세요")
+        if current.get("version_id") != scenario["version_id"]:
+            raise HTTPException(409, "외부 근거의 기준 일정이 바뀌었습니다")
+    context = db.project_context_snapshot(scenario["project_id"])
+    if data.get("project_context_hash") != context["content_hash"]:
+        raise HTTPException(409, "달력 또는 운영 조건이 바뀌었습니다. 다시 분석하세요")
+
+
 @app.post("/api/scenarios/{scenario_id}/approve", dependencies=[Depends(authorize)])
 def approve_scenario(scenario_id: str, value: ApprovalInput) -> dict[str, Any]:
     db = store()
     scenario = scenario_or_404(db, scenario_id)
+    validate_external_approval(db, scenario)
     current = db.current_version(scenario["project_id"])
     if not current or current["id"] != scenario["version_id"]:
         raise HTTPException(409, "schedule changed; replan required")
@@ -852,6 +945,7 @@ def approve_scenario(scenario_id: str, value: ApprovalInput) -> dict[str, Any]:
 def commit_scenario(scenario_id: str) -> dict[str, Any]:
     db = store()
     scenario = scenario_or_404(db, scenario_id)
+    validate_external_approval(db, scenario)
     result = scenario["data"]
     with db.transaction() as conn:
         existing = conn.execute(
@@ -891,6 +985,12 @@ def commit_scenario(scenario_id: str) -> dict[str, Any]:
             if update:
                 task["baseline_start"] = update["planned_start"]
                 task["baseline_finish"] = update["planned_finish"]
+                applied = result.get("applied_patch", {})
+                blocked = applied.get("blocked_dates", {}).get(str(task["task_id"]), [])
+                if blocked:
+                    task["approved_blocked_dates"] = sorted(set(task.get("approved_blocked_dates", [])) | set(blocked))
+                if str(task["task_id"]) in applied.get("not_before", {}):
+                    task["not_before"] = applied["not_before"][str(task["task_id"])]
             new_tasks.append(task)
         snapshot = {**snapshot, "tasks": new_tasks, "scenario_id": scenario_id}
         version_id = identifier()
@@ -911,7 +1011,7 @@ def update_action(action_id: str, value: ActionUpdate) -> dict[str, Any]:
     project_or_404(db, action["project_id"])
     if value.state not in {"OPEN", "ACCEPTED", "REJECTED", "DONE"}:
         raise HTTPException(422, "invalid action state")
-    data = {**action["data"], "state": value.state, "note": value.note}
+    data = {**action["data"], "state": value.state, "note": value.note, "reviewed_at": utcnow()}
     db.put_json("actions", action_id, data, project_id=action["project_id"], event_id=action["event_id"], scenario_id=action["scenario_id"], created_at=action["created_at"])
     return {"action_id": action_id, "action": data}
 
@@ -954,6 +1054,18 @@ def export_schedule(project_id: str, version_id: str | None = None) -> Streaming
             safe_excel_text(task.get("owner")), safe_excel_text(task.get("status")),
             "승인된 대응안" if parent and difference else "",
         ])
+    scenario_id = snapshot.get("scenario_id")
+    if scenario_id:
+        scenario = db.get_json("scenarios", scenario_id, project_id)
+        if scenario:
+            trace = wb.create_sheet("변경 근거")
+            trace.append(["이벤트", "제목", "근거 URL", "근거 종류", "발행 시각", "수집 시각", "원문 해시"])
+            for item in scenario["data"].get("included_events", []):
+                proof = item.get("evidence") or {}
+                trace.append([safe_excel_text(value) for value in [
+                    item["event_id"], item.get("title"), proof.get("source_url"), proof.get("kind"),
+                    proof.get("published_at"), proof.get("fetched_at"), proof.get("content_hash"),
+                ]])
     payload = io.BytesIO()
     wb.save(payload)
     payload.seek(0)

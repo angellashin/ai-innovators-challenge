@@ -26,7 +26,8 @@
 - The demo is deliberately narrower than generic project-risk management: one equipment package moving through delivery, site readiness, installation, testing/commissioning, and handover.
 - The core unit is a change-response decision, not a four-party collaboration network. External suppliers, battery companies, EPCs, and construction partners remain evidence sources or confirmation targets while the internal team owns the decision.
 - A believable change does not add the same delay to every task. Arrival, site readiness, qualified people, approvals, and reserved supplier capacity are separate conditions that must be linked before the schedule is recalculated.
-- The response loop is `message → extracted facts → human confirmation → impact analysis → conditional options → request confirmation → supplier/team reply → recalculation → approval → new schedule/export`.
+- The primary response loop is `external source scan → evidence and applicability candidates → provisional impact analysis → confirm missing applicability/dates → conditional options → execution-condition evidence → approval → new schedule/export → continued monitoring`.
+- Supplier messages remain an optional supplementary input. Forecasts, public calendars, notices, synthetic examples and confirmed execution facts have distinct labels. Provisional calculation is permitted before applicability confirmation; approval is not.
 - AI may interpret a message, suggest affected tasks, and ask for missing facts. The deterministic scheduler remains responsible for dates, dependencies, capacity, and calculated costs. Unknown quoted cost is shown as unknown, never as zero.
 
 ## Personas and jobs
@@ -42,7 +43,7 @@
 - Workspace ownership: one 프로젝트 운영팀 account owns projects, baselines, decisions, and commits. External organizations are project data, not navigation tenants or invited users.
 - First-use flow: Upload → Map → Review → Monitor → Overview.
 - Repeated flow: detect change → show impact and evidence → compare scenarios → confirm assumptions → approve → create actions and Excel output.
-- First demo flow: create the project with only its name, connect a baseline schedule, review a supplier change, then compare the current availability, extended booking, alternative qualified resource, and target renegotiation as conditional responses.
+- First demo flow: create a project, connect a baseline, bind external sources to tasks, inspect a dated external change and its evidence, compare available catalog responses, confirm conditions, approve and export.
 - Overview hierarchy: decision needed today, new changes, largest impacts, active actions, then overall project status. Lead with actionable language rather than abstract health scores.
 
 ## Design principles

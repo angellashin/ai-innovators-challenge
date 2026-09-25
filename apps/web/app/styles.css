@@ -2393,6 +2393,16 @@ main {
 .project-shell .human-workspace .step-item.current b { color: var(--replan-mint-ink); }
 .project-shell .human-workspace .step-item:not(:last-child)::after { background: #cad4d0; }
 .project-shell .human-workspace .human-grid { gap: 16px; }
+/* Long configuration forms must not stick over the analysis or the next grid row. */
+.project-shell .human-workspace .context-rail,
+.project-shell .human-workspace .notes-rail { position: static; min-width: 0; }
+@media (max-width: 1380px) {
+  .project-shell .human-workspace .human-grid { grid-template-columns: 268px minmax(0, 1fr); }
+  .project-shell .human-workspace .notes-rail { grid-column: 1 / -1; }
+}
+@media (max-width: 860px) {
+  .project-shell .human-workspace .human-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .project-shell .human-workspace .panel,
 .project-shell .human-workspace .workspace > .panel {
   border-color: var(--replan-line);
@@ -2467,3 +2477,16 @@ main {
 .project-mode-options b { color: var(--replan-ink); }
 .project-mode-options small { color: var(--replan-muted); }
 .project-create-actions > a { color: var(--replan-muted); }
+
+/* External evidence configuration follows the workspace's existing panel system. */
+.external-watch fieldset { min-width: 0; border: 1px solid #dce3df; border-radius: 10px; padding: 12px; margin: 12px 0; }
+.external-watch legend { font-weight: 700; font-size: 13px; }
+.external-watch label, .evidence-review label, .condition-review label { display: grid; gap: 6px; margin: 9px 0; font-size: 13px; }
+.external-watch select, .evidence-review select { width: 100%; max-width: 100%; padding: 7px; }
+.external-watch select[multiple], .evidence-review select[multiple] { min-height: 110px; }
+.external-watch summary, .evidence-review summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
+.external-config { border-bottom: 1px solid #dce3df; padding-bottom: 12px; margin-bottom: 12px; }
+.external-source-state { display: block; overflow-wrap: anywhere; margin: 8px 0; }
+.evidence-review, .impact-result, .condition-review { border: 1px solid #dce3df; border-radius: 10px; padding: 12px; margin-top: 12px; background: #f4f8f5; overflow-wrap: anywhere; }
+.evidence-review > a, .evidence-review > small { display: block; margin-top: 6px; }
+.impact-result ul { padding-left: 20px; max-height: 300px; overflow: auto; }

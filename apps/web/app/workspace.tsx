@@ -2,6 +2,7 @@
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import { ExternalWatch, EvidenceReview } from "./external-watch";
 
 type Dict = Record<string, unknown>;
 
@@ -59,7 +60,7 @@ function money(value: unknown) {
 }
 
 function costLabel(data: Dict) {
-  return data.budget_status === "UNSET" ? "비용 미정" : money(data.extra_cost_krw);
+  return data.extra_cost_krw === null || data.extra_cost_krw === undefined ? "비용 미정" : money(data.extra_cost_krw);
 }
 
 function shortId(value: unknown, fallback = "-") {
@@ -100,6 +101,9 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const [projects, setProjects] = useState<Dict[]>([]);
   const [run, setRun] = useState<RunResult | null>(null);
   const [selectedScenarioId, setSelectedScenarioId] = useState("");
+  const [selectedEventId, setSelectedEventId] = useState("");
+  const [pendingRunId, setPendingRunId] = useState("");
+  const [conditionNotes, setConditionNotes] = useState<Record<string, string>>({});
   const [manualMessage, setManualMessage] = useState("설비 제작 완료가 9월 25일에서 9월 30일로 변경됩니다. FAT는 10월 1일부터 가능하며 후속 출하 일정을 재협의해야 합니다.");
   const [budget, setBudget] = useState<number | "">("");
   const [notice, setNotice] = useState("프로젝트를 생성하거나 불러오세요.");
@@ -136,6 +140,39 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     if (projectId) sessionStorage.setItem("replan.projectId", projectId);
   }, [projectId]);
 
+  useEffect(() => {
+    setRun(null); setSelectedScenarioId(""); setSelectedEventId(""); setPendingRunId("");
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    let active = true;
+    let inFlight = false;
+    const poll = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const value = await callApi<ProjectState>(`/api/projects/${projectId}`);
+        if (!active) return;
+        setProject(value);
+        const latest = value.runs?.find((item) => item.kind === "analysis" &&
+          (!selectedEventId || item.event_id === selectedEventId));
+        const id = pendingRunId || latest?.id;
+        if (id) {
+          const result = await callApi<RunResult>(`/api/runs/${id}`);
+          if (!active) return;
+          setRun(result);
+          setSelectedScenarioId((current) => result.scenarios?.some((item) => item.id === current) ? current : result.scenarios?.[0]?.id || "");
+        }
+      } catch (caught) {
+        if (active) setError(caught as ApiError);
+      } finally { inFlight = false; }
+    };
+    void poll();
+    const timer = window.setInterval(poll, 4000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [projectId, selectedEventId, pendingRunId]);
+
   async function callApi<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = new Headers(init.headers);
     const response = await fetch(`${apiBase}${path}`, { ...init, headers });
@@ -155,13 +192,13 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     return response as T;
   }
 
-  async function guarded<T>(label: string, action: () => Promise<T>, done?: (value: T) => void) {
+  async function guarded<T>(label: string, action: () => Promise<T>, done?: (value: T) => void | Promise<unknown>) {
     setBusy(true);
     setError(null);
     setNotice(`${label} 처리 중...`);
     try {
       const value = await action();
-      done?.(value);
+      await done?.(value);
       setNotice(`${label} 완료`);
       return value;
     } catch (caught) {
@@ -299,22 +336,11 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     });
   }
 
-  async function saveWatchPlan(enabled = true) {
-    const suggestion = (project.watch_plan || {}) as Dict;
-    await guarded("감시계획 저장", () =>
-      callApi<Dict>(`/api/projects/${projectId}/watch-plan`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          enabled,
-          weather_site: suggestion.weather_site ?? null,
-          weather_poll_hours: suggestion.weather_poll_hours ?? 6,
-          notice_poll_hours: suggestion.notice_poll_hours ?? 12,
-          source_allowlist: suggestion.source_allowlist ?? ["https://environment.ec.europa.eu/news_en"],
-          public_search_terms: suggestion.public_search_terms ?? ["industrial emissions", "equipment import"],
-        }),
-      }),
-    async () => refreshProject(projectId));
+  async function saveExternalWatch(plan: Dict) {
+    await callApi<Dict>(`/api/projects/${projectId}/watch-plan`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(plan),
+    });
+    await refreshProject(projectId);
   }
 
   async function runScan() {
@@ -323,7 +349,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
         method: "POST",
         headers: { "Idempotency-Key": `scan-${Date.now()}` },
       }),
-    (value) => setNotice(`등록 소스 조회 ${value.status}: ${value.run_id}. worker 실행 후 새로고침하세요.`));
+    (value) => setNotice("외부 출처를 확인하고 있습니다. 새 근거와 분석 결과가 자동으로 표시됩니다."));
   }
 
   async function createEventFromDemo() {
@@ -374,31 +400,43 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     });
   }
 
-  async function analyzeLatestEvent() {
-    const latest = project.events?.[0];
-    const eventId = latest?.id || (latest?.data as Dict | undefined)?.id;
-    if (!eventId) {
-      setError({ status: 0, message: "분석할 이벤트가 없습니다." });
-      return;
-    }
-    const latestData = (project.events?.[0]?.data || project.events?.[0] || {}) as Dict;
-    if (latestData.patch && latestData.review_status !== "CONFIRMED") {
-      setError({ status: 409, message: "변경 해석을 먼저 확인해주세요." });
-      return;
-    }
+  async function analyzeEvent(eventId: string) {
+    setSelectedEventId(eventId); setPendingRunId(""); setRun(null); setSelectedScenarioId("");
     await guarded("영향 분석 시작", () =>
       callApi<{ run_id: string; status: string }>(`/api/projects/${projectId}/analyses`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ event_id: eventId }),
-      }),
-    (value) => setNotice(`영향 분석 ${value.status}: ${value.run_id}. 처리 후 결과를 확인하세요.`));
+      }), (value) => {
+        setPendingRunId(value.run_id);
+        setNotice("영향을 계산하고 있습니다. 완료되면 결과를 자동으로 표시합니다.");
+      });
+  }
+
+  async function analyzeLatestEvent() {
+    const id = selectedEventId || project.events?.[0]?.id;
+    if (id) await analyzeEvent(id);
+  }
+
+  async function reviewExternalEvent(eventId: string, payload: Dict) {
+    const reviewed = await guarded("외부 근거 적용 확인", () =>
+      callApi<Dict>(`/api/projects/${projectId}/events/${eventId}/review`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }));
+    if (reviewed) {
+      await refreshProject(projectId);
+      if (payload.confirmed) await analyzeEvent(eventId);
+    }
   }
 
   async function fetchRun(runId?: string) {
-    const id = runId || text(project.runs?.[0]?.id, "");
+    const id = runId || pendingRunId || text(project.runs?.find((item) => item.kind === "analysis" && (!selectedEventId || item.event_id === selectedEventId))?.id, "");
     if (!id) return;
     await guarded("분석 결과 조회", () => callApi<RunResult>(`/api/runs/${id}`), (value) => {
+      if (value.run?.kind === "analysis") {
+        setSelectedEventId(text(value.run.event_id, ""));
+        setPendingRunId(text(value.run.id, ""));
+      }
       setRun(value);
       const firstScenario = value.scenarios?.[0]?.id;
       if (firstScenario) setSelectedScenarioId(firstScenario);
@@ -414,7 +452,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ budget_krw: budget, unavailable_option_ids: [] }),
       }),
-    (value) => setNotice(`대응안 비교 ${value.status}: ${value.run_id}. 처리 후 결과를 확인하세요.`));
+    (value) => (setPendingRunId(value.run_id), setNotice("비용 한도를 반영한 결과를 계산하고 있습니다.")));
   }
 
   async function prepareScenario() {
@@ -424,22 +462,11 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     async () => refreshProject(projectId));
   }
 
-  async function acceptScenarioActions() {
-    const actions = (project.actions || []).filter((item) => item.scenario_id === selectedScenarioId || item.data?.scenario_id === selectedScenarioId);
-    if (!actions.length) {
-      setError({ status: 0, message: "먼저 확인 요청을 만들어주세요." });
-      return;
-    }
-    await guarded("조건 확인", async () => {
-      for (const action of actions) {
-        await callApi<Dict>(`/api/actions/${action.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ state: "ACCEPTED", note: "프로젝트 운영팀 확인" }),
-        });
-      }
-      return { ok: true };
-    }, async () => refreshProject(projectId));
+  async function acceptCondition(actionId: string) {
+    await guarded("조건 확인 기록", () => callApi<Dict>(`/api/actions/${actionId}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ state: "ACCEPTED", note: conditionNotes[actionId] }),
+    }), async () => refreshProject(projectId));
   }
 
   async function approveScenario() {
@@ -492,11 +519,11 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     }, {});
   }, [selectedScenario]);
 
-  const unreadNotifications = project.notifications?.filter((item) => item.data?.status === "UNREAD").length || 0;
+  const pendingReviews = project.events?.filter((item) => item.data?.review_status === "PENDING").length || 0;
   const openActions = project.actions?.filter((item) => String(item.data?.state || "OPEN") === "OPEN").length || 0;
   const eventCount = project.events?.length || 0;
   const runCount = project.runs?.length || 0;
-  const currentStep = !project.version ? 1 : !eventCount ? 2 : !runCount ? 3 : !selectedScenarioId ? 4 : openActions ? 5 : 6;
+  const currentStep = !project.version ? 1 : project.version.status === "committed" ? 6 : selectedScenarioId ? 5 : run?.scenarios?.length ? 4 : eventCount ? 3 : 2;
   const projectName = text((project.project || {}).name, "프로젝트 없음");
 
   return (
@@ -545,7 +572,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           ["03", "Detect", "변경 감지"],
           ["04", "Compare", "대응안 비교"],
           ["05", "Approve", "조건 승인"],
-          ["06", "Execute", "실행 연결"],
+          ["06", "Execute", "일정 반영·실행 추적"],
         ].map(([number, label, description], index) => {
           const step = index + 1;
           return <a className={`step-item ${step === currentStep ? "current" : ""} ${step < currentStep ? "complete" : ""}`} href={step <= 2 ? "#onboarding" : step <= 4 ? "#changes" : "#scenarios"} key={number}><span className="step-number">{step < currentStep ? "✓" : number}</span><span><b>{label}</b><small>{description}</small></span></a>;
@@ -560,9 +587,9 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       )}
 
       <section className="workspace-summary human-summary" aria-label="프로젝트 요약">
-        <article className="summary-card summary-card-primary"><span>DECISION QUEUE</span><strong>{eventCount ? `${eventCount}건 검토 필요` : "검토 항목 없음"}</strong><small>{eventCount ? "변경 이벤트와 영향 분석을 확인하세요." : "기준 Excel을 업로드하세요."}</small></article>
+        <article className="summary-card summary-card-primary"><span>DECISION QUEUE</span><strong>{pendingReviews ? `${pendingReviews}건 근거 확인 필요` : "근거 확인 대기 없음"}</strong><small>{!project.version ? "기준 Excel을 업로드하세요." : pendingReviews ? "근거와 적용 조건을 확인하세요." : "분석 결과와 감시 상태를 확인하세요."}</small></article>
         <article className="summary-card"><span>최근 변경</span><strong>{eventCount || "—"}</strong><small>{eventCount ? "저장된 이벤트" : "아직 변경 없음"}</small></article>
-        <article className="summary-card"><span>승인 대기</span><strong>{unreadNotifications || "—"}</strong><small>{unreadNotifications ? "확인하지 않은 알림" : "결정 큐가 비어 있습니다"}</small></article>
+        <article className="summary-card"><span>근거 확인 대기</span><strong>{pendingReviews || "—"}</strong><small>{pendingReviews ? "적용 여부 확인 필요" : "미확인 근거 없음"}</small></article>
         <article className="summary-card"><span>실행 항목</span><strong>{openActions || "—"}</strong><small>{openActions ? "열린 업무" : `${runCount || 0}개 분석 실행`}</small></article>
       </section>
 
@@ -613,7 +640,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
         </aside>
 
         <section className="panel main-panel decision-canvas" id="schedule">
-          <div className="canvas-intro"><div><p className="eyebrow">SCHEDULE / 02</p><h2>일정 변경</h2><p>기준 일정과 변경 이벤트를 확인합니다.</p></div><span className="canvas-state"><i />{eventCount ? "CHANGE DETECTED" : "BASELINE READY"}</span></div>
+          <div className="canvas-intro"><div><p className="eyebrow">SCHEDULE / 02</p><h2>일정 변경</h2><p>기준 일정과 변경 이벤트를 확인합니다.</p></div><span className="canvas-state"><i />{!project.version ? "BASELINE REQUIRED" : eventCount ? "CHANGE DETECTED" : "BASELINE READY"}</span></div>
           <div className="workspace-scene-panel" aria-hidden="true">
             <div className="scene-panel-copy"><span className="scene-kicker">CURRENT STATE</span><strong>{eventCount ? "변경 이벤트가 있습니다" : "기준 일정이 없습니다"}</strong><span>{eventCount ? "이벤트 타임라인에서 영향 범위를 확인하세요." : "작업·선후행·자원 조건이 포함된 Excel을 업로드하세요."}</span></div>
             <div className="scene-panel-art">
@@ -661,7 +688,10 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
                           ))}
                         </ul>
                       )}
-                      {Boolean(data.patch) && data.review_status !== "CONFIRMED" && (
+                      {data.evidence ? <EvidenceReview event={data} tasks={tasks} disabled={busy}
+                        onReview={(payload) => reviewExternalEvent(text(event.id || data.id, ""), payload)}
+                        onAnalyze={() => analyzeEvent(text(event.id || data.id, ""))} /> : null}
+                      {!data.evidence && Boolean(data.patch) && data.review_status !== "CONFIRMED" && (
                         <button className="text-button event-review-button" onClick={() => reviewEvent(text(event.id || data.id, ""))} disabled={busy}>변경 해석 확인</button>
                       )}
                     </article>
@@ -689,33 +719,26 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           <p className="rail-intro">알림, 실행 항목, 연결 상태를 관리합니다.</p>
           <div className="decision-lead">
             <p className="eyebrow">NEXT DECISION</p>
-            <h3>{eventCount ? "변경 영향 확인 필요" : "기준 일정 연결 필요"}</h3>
-            <p>{eventCount ? "이벤트 타임라인에서 근거를 확인하고 분석 Run을 실행합니다." : "기준 Excel을 연결하면 변경 감지와 시나리오 분석을 사용할 수 있습니다."}</p>
-            <span>{eventCount ? `${eventCount}건의 변경 기록` : "아직 기준 버전 없음"}</span>
+            <h3>{!project.version ? "기준 일정 연결 필요" : eventCount ? "외부 근거·영향 확인" : "외부 변화 감시 설정"}</h3>
+            <p>{!project.version ? "기준 Excel을 연결하세요." : eventCount ? "변경별 근거와 계산 결과를 확인하세요. 적용 조건이 확인되어야 승인할 수 있습니다." : "현장·공휴일·공식 출처를 작업에 연결하면 주기적으로 확인합니다."}</p>
+            <span>{eventCount ? `${eventCount}건의 변경 기록` : project.version ? "기준 일정 준비됨" : "아직 기준 버전 없음"}</span>
           </div>
-          <div className="watch-card">
-            <b>Watch plan</b>
-            <span className={project.watch_plan?.enabled ? "pill ok" : "pill"}>{project.watch_plan?.enabled ? "enabled" : "disabled"}</span>
-            <small>{text((project.watch_plan?.weather_site as Dict | undefined)?.label, "weather 미설정")} · sources {((project.watch_plan?.source_allowlist as unknown[]) || []).length}</small>
-            <div className="button-row">
-              <button onClick={() => saveWatchPlan(true)} disabled={!projectId || busy}>활성화</button>
-              <button className="secondary" onClick={runScan} disabled={!projectId || busy}>등록 소스 조회</button>
-            </div>
-            {(project.source_snapshots || []).slice(0, 3).map((source) => (
-              <small key={text(source.id)}>
-                {text(source.source_id)} · {source.status === "ok" ? "수집됨" : `수집 실패: ${text(source.data?.error, text(source.status))}`} · {text(source.fetched_at)}
-              </small>
-            ))}
-          </div>
+          <ExternalWatch plan={project.watch_plan || {}} tasks={tasks} disabled={!project.version || busy}
+            onSave={saveExternalWatch} onScan={runScan} />
+          {(project.source_snapshots || []).slice(0, 5).map((source) => (
+            <small className="external-source-state" key={text(source.id)}>
+              {text(source.data?.url, text(source.source_id))} · {source.status === "ok" ? "수집 성공" : "수집 실패 · 위험 여부 확인 불가"} · {text(source.fetched_at)}
+            </small>
+          ))}
           <div className="p1-card" id="scenarios">
-            <b>P1 운영 준비</b>
+            <b>실행 준비</b>
             <span>미확인 알림 {project.notifications?.filter((item) => item.data?.status === "UNREAD").length || 0}건</span>
             <span>공급사 캘린더 {project.supplier_calendars?.length || 0}건 · 현장 준비 {project.site_prep_items?.length || 0}건</span>
             <button className="secondary" onClick={createSitePrep} disabled={!projectId || busy}>현장 준비 템플릿 적용</button>
           </div>
 
           <section className="p1-operations" aria-labelledby="p1-operations-title">
-            <div className="section-head compact"><div><h3 id="p1-operations-title">운영 입력</h3><p>외부 입력은 저장·검토까지만 진행합니다.</p></div></div>
+            <div className="section-head compact"><div><h3 id="p1-operations-title">운영 입력</h3><p>외부 근거를 연결하고 적용 조건을 확인합니다.</p></div></div>
 
             <form className="p1-form" onSubmit={savePublicFeed}>
               <div className="p1-form-title"><b>공개 피드</b><span>{project.public_feeds?.length || 0}개 등록</span></div>
@@ -738,7 +761,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
               <div className="p1-inline-fields"><select aria-label="메일 제공자" value={mailForm.provider} onChange={(event) => setMailForm({ ...mailForm, provider: event.target.value })}><option value="imap">IMAP</option><option value="gmail">Gmail</option><option value="outlook">Outlook</option></select><input aria-label="메일 호스트" value={mailForm.host} onChange={(event) => setMailForm({ ...mailForm, host: event.target.value })} placeholder="imap.example.com" required /></div>
               <input aria-label="메일 사용자" value={mailForm.username} onChange={(event) => setMailForm({ ...mailForm, username: event.target.value })} placeholder="담당자 이메일" required />
               <button className="secondary" type="submit" disabled={!projectId || busy}>연결 정보 저장</button>
-              <small className="muted">비밀번호·OAuth 토큰은 저장하지 않습니다.</small>
+              <small className="muted">자동 메일 수신은 미연결입니다. 현재는 연결 정보만 저장합니다.</small>
             </form>
 
             <form className="p1-form" onSubmit={saveNotificationChannel}>
@@ -759,10 +782,11 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           </section>
 
           <div className="button-row">
-            <button onClick={createEventFromDemo} disabled={!project.demo_events?.length || busy}>변경 메시지 불러오기</button>
+            <button onClick={createEventFromDemo} disabled={!project.demo_events?.length || busy}>합성 메일 샘플 불러오기</button>
             <button className="secondary" onClick={analyzeLatestEvent} disabled={!project.events?.length || busy}>영향 분석 시작</button>
           </div>
-          <textarea value={manualMessage} onChange={(event) => setManualMessage(event.target.value)} rows={4} />
+          <small>보조 입력: 협력사 메일 내용 또는 변경 통보 (샘플은 합성 데이터)</small>
+          <textarea aria-label="협력사 변경 통보" value={manualMessage} onChange={(event) => setManualMessage(event.target.value)} rows={4} />
           <button className="secondary" onClick={createManualEvent} disabled={!project.version || busy}>변경 메시지 등록</button>
 
           <div className="button-row">
@@ -774,6 +798,19 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
             <button className="secondary" onClick={replan} disabled={!run?.run || budget === "" || busy}>비용 한도 반영</button>
           </div>
 
+          {run?.run && <div className="impact-result" aria-live="polite">
+            <h3>영향 분석 결과</h3>
+            <small>{text(run.run.status)} · {shortId(run.run.event_id)}</small>
+            <p>{text(run.run.data?.summary, run.run.status === "failed" ? "분석 실패: 다시 시도하거나 입력을 확인하세요." : "계산 중입니다.")}</p>
+            {selectedScenario && <>
+              <p>기준 완료 {text(selectedScenario.data?.baseline_finish)} → 예상 완료 {text(selectedScenario.data?.finish_date)}</p>
+              <b>완료일 변화 {text(selectedScenario.data?.finish_shift_days)}일 · 영향 작업 {((selectedScenario.data?.changed_tasks || []) as Dict[]).length}개</b>
+              {selectedScenario.data?.provisional ? <p>조건부 계산입니다. 외부 근거의 적용 여부를 확인한 뒤 승인하세요.</p> : null}
+              {((selectedScenario.data?.included_events || []) as Dict[]).length > 0 && <p>함께 반영한 외부 변화: {((selectedScenario.data?.included_events || []) as Dict[]).map((item) => text(item.title)).join(" · ")}</p>}
+              <ul>{((selectedScenario.data?.changed_tasks || []) as Dict[]).map((task) => <li key={text(task.task_id)}>{text(task.task_id)} · {text(task.name)} · {task.direct ? "직접 영향" : "후속 영향"}<br />{text(task.before_finish)} → {text(task.after_finish)}</li>)}</ul>
+            </>}
+          </div>}
+
           <ScenarioList scenarios={run?.scenarios || []} selected={selectedScenarioId} onSelect={setSelectedScenarioId} />
 
           {selectedScenario && (
@@ -781,9 +818,16 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
               <b>{text(selectedScenario.data?.label)} · {scenarioScore(selectedScenario.data || {})}</b>
               <small>완료 예정 {text(selectedScenario.data?.finish_date)} · 추가 비용 {costLabel(selectedScenario.data || {})}</small>
               <small>확인이 필요한 조건 {((selectedScenario.data?.required_confirmations as unknown[]) || []).length}건</small>
+              {(project.actions || []).filter((item) => item.scenario_id === selectedScenarioId).map((action) => (
+                <div key={text(action.id)} className="condition-review">
+                  <p>{text(action.data?.request)} · {text(action.data?.state)}</p>
+                  <label>회신·확인 근거<input value={conditionNotes[text(action.id)] || ""} onChange={(event) => setConditionNotes({ ...conditionNotes, [text(action.id)]: event.target.value })} /></label>
+                  <button className="secondary" disabled={busy || !conditionNotes[text(action.id)]?.trim()} onClick={() => acceptCondition(text(action.id))}>이 조건 확인 기록</button>
+                </div>
+              ))}
               <div className="button-row wrap">
                 <button onClick={prepareScenario} disabled={busy}>확인 요청 만들기</button>
-                <button className="secondary" onClick={acceptScenarioActions} disabled={busy}>회신 조건 확인</button>
+
                 <button className="secondary" onClick={approveScenario} disabled={busy}>승인</button>
                 <button onClick={commitScenario} disabled={busy}>일정 확정</button>
               </div>

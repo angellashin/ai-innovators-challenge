@@ -92,7 +92,15 @@ def simulate(
     extra_cost_krw = 0
     allow_earlier: set[str] = set()
     blocked_dates = _project_blocked_dates(project)
-    scoped_blocked_dates: list[dict[str, Any]] = []
+    scoped_blocked_dates: list[dict[str, Any]] = [
+        {"task_id": str(task["task_id"]), "dates": task.get("approved_blocked_dates", [])}
+        for task in tasks if task.get("approved_blocked_dates")
+    ]
+    for calendar in project.get("supplier_calendars", []):
+        for task in tasks:
+            supplier = str(task.get("supplier_id") or task.get("supplier") or task.get("owner") or "")
+            if supplier == str(calendar.get("supplier_id")):
+                scoped_blocked_dates.append({"task_id": str(task["task_id"]), "dates": calendar.get("unavailable_dates", [])})
     resource_unavailable: list[dict[str, Any]] = []
 
     _apply_event(project, task_map, event, resource_unavailable, blocked_dates, scoped_blocked_dates)
@@ -297,7 +305,10 @@ def _apply_typed_patch(
 
 
 def _project_blocked_dates(project: dict[str, Any]) -> set[date]:
-    dates = list(project.get("nonworking_dates") or []) + list(project.get("supplier_unavailable_dates") or [])
+    dates = list(project.get("nonworking_dates") or [])
+    # Old snapshots without scoped calendars retain their previous meaning.
+    if "supplier_calendars" not in project:
+        dates += list(project.get("supplier_unavailable_dates") or [])
     return {_parse_date(value) for value in dates}
 
 
@@ -368,6 +379,10 @@ def _is_workday(
     scoped_blocked_dates: list[dict[str, Any]],
     resource_unavailable: list[dict[str, Any]],
 ) -> bool:
+    supplier = str(task.get("supplier_id") or task.get("supplier") or task.get("owner") or "")
+    for calendar in project.get("supplier_calendars", []):
+        if supplier == str(calendar.get("supplier_id")) and current.isoformat() in calendar.get("unavailable_dates", []):
+            return False
     return _is_calendar_workday(project, current, blocked_dates) and not _is_scoped_unavailable(
         task,
         current,
