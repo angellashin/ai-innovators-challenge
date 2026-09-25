@@ -276,7 +276,9 @@ class Store:
         project = self.get_json("projects", project_id)
         profile = dict(project["data"] if project else {})
         calendars = [item["data"] for item in self.list_json("supplier_calendars", project_id)]
-        context = {"project": profile, "supplier_calendars": calendars}
+        watch = self.get_json("watch_plans", project_id)
+        context = {"project": profile, "supplier_calendars": calendars,
+                   "watch_plan": watch["data"] if watch else None}
         return {
             **context,
             "content_hash": digest(context),

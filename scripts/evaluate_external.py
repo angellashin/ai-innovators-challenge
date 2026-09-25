@@ -14,9 +14,9 @@ from app.scheduling import simulate
 def evaluate():
     source = json.loads((ROOT / "data/external/hu-2026-holidays.json").read_text(encoding="utf-8"))
     tasks = [
-        {"task_id": "LIFT", "name": "Equipment lifting", "supplier_id": "VENDOR", "outdoor": True,
+        {"task_id": "LIFT", "name": "Equipment lifting", "supplier_id": "VENDOR", "outdoor": True, "country": "Hungary",
          "baseline_start": "2026-10-22", "baseline_finish": "2026-10-23", "duration_workdays": 2, "predecessor_ids": []},
-        {"task_id": "SAT", "name": "Site acceptance test", "outdoor": False,
+        {"task_id": "SAT", "name": "Site acceptance test", "outdoor": False, "country": "Hungary",
          "baseline_start": "2026-10-26", "baseline_finish": "2026-10-26", "duration_workdays": 1, "predecessor_ids": ["LIFT"]},
     ]
     config = {"country_code": "HU", "year": 2026, "task_ids": ["LIFT"]}

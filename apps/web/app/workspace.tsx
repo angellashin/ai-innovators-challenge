@@ -105,6 +105,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const [pendingRunId, setPendingRunId] = useState("");
   const [conditionNotes, setConditionNotes] = useState<Record<string, string>>({});
   const [manualMessage, setManualMessage] = useState("");
+  const [selectedDemoIndex, setSelectedDemoIndex] = useState(0);
   const [budget, setBudget] = useState<number | "">("");
   const [notice, setNotice] = useState("프로젝트를 생성하거나 불러오세요.");
   const [busy, setBusy] = useState(false);
@@ -141,7 +142,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   }, [projectId]);
 
   useEffect(() => {
-    setRun(null); setSelectedScenarioId(""); setSelectedEventId(""); setPendingRunId("");
+    setRun(null); setSelectedScenarioId(""); setSelectedEventId(""); setPendingRunId(""); setSelectedDemoIndex(0);
   }, [projectId]);
 
   useEffect(() => {
@@ -353,13 +354,14 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   }
 
   async function createEventFromDemo() {
-    const first = project.demo_events?.[0];
+    const first = project.demo_events?.[selectedDemoIndex];
     if (!first) {
       setError({ status: 0, message: "hero 기준 일정을 업로드하고 확정하세요." });
       return;
     }
     await createEvent({
       event_id: text(first.event_id, "hero-change"),
+      corrects_event_id: first.corrects_event_id ? text(first.corrects_event_id) : undefined,
       content: text(first.body || first.content),
       channel: text(first.channel, "supplier_message"),
       source_label: text(first.source_label, "가상 협력사 메시지"),
@@ -798,6 +800,11 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           </section>
 
           <div className="button-row">
+            <label>hero 합성 통보 선택
+              <select aria-label="hero 합성 통보 선택" value={selectedDemoIndex} onChange={(event) => setSelectedDemoIndex(Number(event.target.value))}>
+                {(project.demo_events || []).map((item, index) => <option key={`${text(item.event_id)}-${index}`} value={index}>{text(item.event_id)} · {text(item.source_label)}{index > 0 && (project.demo_events || []).slice(0, index).some((earlier) => earlier.event_id === item.event_id) ? " (중복 수신)" : ""}</option>)}
+              </select>
+            </label>
             <button onClick={createEventFromDemo} disabled={!project.demo_events?.length || busy}>hero 합성 통보 불러오기</button>
             <button className="secondary" onClick={analyzeLatestEvent} disabled={!project.events?.length || busy}>영향 분석 시작</button>
           </div>
@@ -821,6 +828,14 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
             {selectedScenario && <>
               <p>기준 완료 {text(selectedScenario.data?.baseline_finish)} → 예상 완료 {text(selectedScenario.data?.finish_date)}</p>
               <b>완료일 변화 {text(selectedScenario.data?.finish_shift_days)}일 · 영향 작업 {((selectedScenario.data?.changed_tasks || []) as Dict[]).length}개</b>
+              {selectedScenario.data?.supplier_finish_shift_days !== undefined && <div className="impact-breakdown">
+                <p><b>협력사 통보에 의한 완료 지연: {text(selectedScenario.data.supplier_finish_shift_days)}일</b> · 통보만 적용한 완료일 {text(selectedScenario.data.supplier_finish_date)}</p>
+                <p><b>새 기간의 외부 제약에 의한 추가 지연: {text(selectedScenario.data.external_additional_shift_days)}일</b></p>
+                <ul>{((selectedScenario.data?.delay_breakdown || []) as Dict[]).filter((row) => Number(row.supplier_delay_days) || Number(row.external_additional_days)).map((row) => <li key={text(row.task_id)}>{text(row.task_id)} 시작 {text(row.before_start)} → 통보 {text(row.supplier_start)} → 재점검 {text(row.final_start)}<br />완료 {text(row.before_finish)} → 통보 {text(row.supplier_finish)} ({text(row.supplier_delay_days)}일) → 외부 제약 {text(row.final_finish)} (추가 {text(row.external_additional_days)}일)</li>)}</ul>
+                <p>밀린 기간에 새로 걸린 공휴일·예보: {((selectedScenario.data?.external_constraints || []) as Dict[]).length}건</p>
+                <ul>{((selectedScenario.data?.external_constraints || []) as Dict[]).map((row, index) => <li key={`${text(row.task_id)}-${text(row.date)}-${index}`}>{text(row.task_id)} · {text(row.date)} · {text(row.name, row.kind === "public_holiday" ? "공휴일" : "기상 예보 위험")} · 현장 적용 확인 필요</li>)}</ul>
+                {((selectedScenario.data?.seasonal_risks || []) as Dict[]).map((row, index) => <p key={`seasonal-${index}`}>조건부 계절 위험: {text(row.task_id)} {text(row.start)}~{text(row.finish)} · {text(row.reason)} {row.statistics ? Object.entries(row.statistics as Dict).map(([month, values]) => { const stat = values as Dict; return `${month}월 과거 ${text(stat.observed_days)}일 중 강풍 기준 초과 ${text(stat.wind_exceedance_days)}일·강수 기준 초과 ${text(stat.precipitation_exceedance_days)}일`; }).join(" / ") : ""}</p>)}
+              </div>}
               {selectedScenario.data?.provisional ? <p>잠정 계산입니다. 변경 해석과 필요한 조건을 확인한 뒤 승인하세요.</p> : null}
               {((selectedScenario.data?.included_events || []) as Dict[]).length > 0 && <p>함께 반영한 외부 변화: {((selectedScenario.data?.included_events || []) as Dict[]).map((item) => text(item.title)).join(" · ")}</p>}
               <ul>{((selectedScenario.data?.changed_tasks || []) as Dict[]).map((task) => <li key={text(task.task_id)}>{text(task.task_id)} · {text(task.name)} · {task.direct ? "직접 영향" : "후속 영향"}<br />{text(task.before_finish)} → {text(task.after_finish)}</li>)}</ul>

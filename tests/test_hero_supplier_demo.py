@@ -13,6 +13,7 @@ from app.main import app, normalize_import_snapshot, ConfirmInput
 from app.scheduling import simulate
 from app.storage import Store
 from app.worker import run_once
+from app.shifted_external import bundled_hu_calendars, recheck_shifted_schedule
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,7 +68,10 @@ def test_hero_import_preserves_operational_fields_and_snapshot(client):
     assert by_id["T036"]["currency"] == "USD"
     assert by_id["T040"]["predecessor_ids"] == ["T038", "T020"]
     assert by_id["T045"]["predecessor_ids"] == ["T044", "T034"]
-    assert len(result["demo_events"]) == 8
+    assert len(result["demo_events"]) == 9
+    assert by_id["T021"]["outdoor"] and by_id["T045"]["outdoor"]
+    assert by_id["T021"]["outdoor_data_origin"] == "SYNTHETIC"
+    assert not by_id["T036"]["outdoor"]
     assert result["demo_events"][0]["event_id"] == "H01"
 
 
@@ -93,7 +97,7 @@ def test_hero_supplier_cases_match_reviewed_synthetic_answers():
     baseline = {task["task_id"]: task for task in simulate(project, tasks)["schedule"]}
     by_id = {task["task_id"]: task for task in tasks}
     assert TRUTH["label"] == "검토자가 작성한 합성 정답"
-    assert len(MESSAGES["events"]) == len(TRUTH["cases"]) == 8
+    assert len(MESSAGES["events"]) == len(TRUTH["cases"]) == 9
     for source, answer in zip(MESSAGES["events"], TRUTH["cases"]):
         assert source["content"].startswith("[가상 메시지]")
         assert source["mode"] == "SYNTHETIC" and source["channel"] == "supplier_message"
@@ -113,6 +117,8 @@ def test_hero_supplier_cases_match_reviewed_synthetic_answers():
             assert event["classification_status"] == "NEEDS_INPUT"
         elif answer["expected_outcome"] == "NO_IMPACT":
             assert event["classification_status"] == "NO_SCHEDULE_IMPACT"
+        elif answer["expected_outcome"] == "RETRACTION":
+            assert event["corrects_event_id"] == "H04"
         else:
             assert event["classification_status"] == "PATCH_PROPOSED"
         after = {task["task_id"]: task for task in simulate(project, tasks, event=event)["schedule"]}
@@ -122,11 +128,72 @@ def test_hero_supplier_cases_match_reviewed_synthetic_answers():
         assert changed == answer["changed_task_ids"]
         for constraint in answer["newly_overlapping_external_constraints"]:
             task_id = constraint["task_id"]
-            assert (baseline[task_id]["planned_start"], baseline[task_id]["planned_finish"]) == tuple(constraint["baseline_window"])
-            assert (after[task_id]["planned_start"], after[task_id]["planned_finish"]) == tuple(constraint["changed_window"])
+            if "baseline_window" in constraint:
+                assert (baseline[task_id]["planned_start"], baseline[task_id]["planned_finish"]) == tuple(constraint["baseline_window"])
+                assert (after[task_id]["planned_start"], after[task_id]["planned_finish"]) == tuple(constraint["changed_window"])
             for blocked in constraint["dates"]:
                 assert not (baseline[task_id]["planned_start"] <= blocked < baseline[task_id]["planned_finish"])
-                assert after[task_id]["planned_start"] <= blocked < after[task_id]["planned_finish"]
+
+
+def test_reviewed_external_truth_matches_independent_calendar_dates():
+    parsed = parse_upload(HERO.name, HERO.read_bytes())
+    snapshot = normalize_import_snapshot(parsed, {"name": "Hero", "mode": "REPLAY"}, ConfirmInput())
+    calendars = bundled_hu_calendars(snapshot["tasks"])
+    by_id = {task["task_id"]: task for task in snapshot["tasks"]}
+    for source, answer in zip(MESSAGES["events"], TRUTH["cases"]):
+        event = normalize_event(input_event(source), snapshot["project"], snapshot["tasks"])
+        result = recheck_shifted_schedule(snapshot["project"], snapshot["tasks"], event, [], None,
+                                          calendars, [], {})
+        assert result["recheck_status"] == "CONVERGED"
+        expected = {(row["task_id"], day) for row in answer["newly_overlapping_external_constraints"]
+                    for day in row["dates"]}
+        for row in answer["newly_overlapping_external_constraints"]:
+            stored = json.loads((ROOT / row["source"]).read_text(encoding="utf-8"))
+            source_dates = {holiday["date"] for holiday in stored["holidays"] if "Public" in holiday["types"]}
+            assert set(row["dates"]) <= source_dates
+            assert by_id[row["task_id"]]["country"] == "Hungary"
+        observed = {(row["task_id"], row["date"]) for row in result["external_constraints"]
+                    if row["kind"] == "public_holiday"}
+        assert observed == expected, answer["case_id"]
+        assert not {row["task_id"] for row in result["external_constraints"]} & {"T036", "T037", "T038", "T039"}
+
+
+def test_h04_upload_to_preview_separates_supplier_and_new_holiday_delay(client):
+    project_id, baseline = hero_baseline(client)
+    selected = next(item for item in baseline["demo_events"] if item["event_id"] == "H04")
+    event = request(client, "post", f"/api/projects/{project_id}/events", json=selected)
+    queued = request(client, "post", f"/api/projects/{project_id}/analyses",
+                     json={"event_id": event["event_id"], "preview_only": True})
+    assert run_once(Store())
+    result = request(client, "get", f"/api/runs/{queued['run_id']}")
+    scenario = result["scenarios"][0]["data"]
+    assert result["run"]["status"] == "succeeded"
+    assert scenario["supplier_finish_shift_days"] == 21
+    assert scenario["external_additional_shift_days"] == 14
+    assert scenario["finish_date"] == "2028-01-25"
+    assert scenario["recheck_status"] == "CONVERGED"
+    assert scenario["required_confirmations"]
+    truth = next(case for case in TRUTH["cases"] if case["case_id"] == "H04")
+    expected = {(row["task_id"], day) for row in truth["newly_overlapping_external_constraints"] for day in row["dates"]}
+    assert {(row["task_id"], row["date"]) for row in scenario["external_constraints"]} == expected
+    assert scenario["applied_patch"]["calendar_nonworking_dates"]["T049"] == ["2027-03-15", "2027-03-26", "2027-03-28", "2027-03-29"]
+
+
+def test_h08_retraction_supersedes_h04(client):
+    project_id, baseline = hero_baseline(client)
+    old = request(client, "post", f"/api/projects/{project_id}/events", json=baseline["demo_events"][3])
+    correction = request(client, "post", f"/api/projects/{project_id}/events", json=baseline["demo_events"][8])
+    assert correction["event"]["patch"] == {"estimated_finish": {"T045": "2026-12-05"}}
+    assert Store().get_json("events", old["event_id"])["data"]["review_status"] == "SUPERSEDED"
+    denied = client.post(f"/api/projects/{project_id}/analyses", headers={"Authorization": "Bearer test-token"},
+                         json={"event_id": old["event_id"], "preview_only": True})
+    assert denied.status_code == 409
+    queued = request(client, "post", f"/api/projects/{project_id}/analyses",
+                     json={"event_id": correction["event_id"], "preview_only": True})
+    assert run_once(Store())
+    scenario = request(client, "get", f"/api/runs/{queued['run_id']}")["scenarios"][0]["data"]
+    assert scenario["supplier_finish_shift_days"] == 0
+    assert scenario["external_additional_shift_days"] == 0
 
 
 def test_hero_upload_message_preview_analysis_result_and_review_gate(client):

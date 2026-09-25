@@ -4,6 +4,7 @@
   "as_of_date": "2025-08-20",
   "source_fixture": "data/hero_demo/supplier_messages.json",
   "comparison_basis": "각 통보를 hero 기준 일정에 독립적으로 적용한 결과. 실제 업체 이력이나 L2/L3 기사 속 지연 일수를 사용하지 않음.",
+  "external_review_method": "검토자가 통보만 적용한 작업 기간과 Nager.Date의 2025~2028년 헝가리 공휴일 날짜를 별도 대조했다. 작업별 신규 중첩 날짜를 작성한 후 반복 계산 결과와 비교한다. 2028년은 H04의 후속 작업이 해당 연도로 넘어가 추가 수집했다.",
   "cases": [
     {
       "case_id": "H01",
@@ -12,7 +13,7 @@
       "expected_patch": {"estimated_finish": {"T036": "2026-01-15"}},
       "changed_task_ids": ["T036", "T038", "T040", "T042", "T044"],
       "expected_outcome": "IMPACT",
-      "newly_overlapping_external_constraints": []
+      "newly_overlapping_external_constraints": [{"task_id": "T042", "dates": ["2026-03-15"], "kind": "HU_PUBLIC_HOLIDAY_CANDIDATE", "source": "data/external/hu-2026-holidays.json"}]
     },
     {
       "case_id": "H02",
@@ -31,7 +32,10 @@
       "expected_patch": {"not_before": {"T038": "2026-02-02"}},
       "changed_task_ids": ["T038", "T040", "T042", "T044"],
       "expected_outcome": "IMPACT",
-      "newly_overlapping_external_constraints": []
+      "newly_overlapping_external_constraints": [
+        {"task_id": "T040", "dates": ["2026-03-15"], "kind": "HU_PUBLIC_HOLIDAY_CANDIDATE", "source": "data/external/hu-2026-holidays.json"},
+        {"task_id": "T042", "dates": ["2026-04-03", "2026-04-05", "2026-04-06"], "kind": "HU_PUBLIC_HOLIDAY_CANDIDATE", "source": "data/external/hu-2026-holidays.json"}
+      ]
     },
     {
       "case_id": "H04",
@@ -48,8 +52,15 @@
           "dates": ["2026-12-25", "2026-12-26"],
           "kind": "HU_PUBLIC_HOLIDAY_CANDIDATE",
           "source": "data/external/hu-2026-holidays.json",
-          "review_note": "12월 25일·26일은 공개 집계 달력의 공휴일 후보이다. 현장 적용 여부와 실제 휴무는 다음 작업에서 재점검한다."
-        }
+          "review_note": "12월 25일·26일은 공개 달력의 공휴일 후보이다. 실제 현장 휴무 여부는 조건 승인에서 확인한다."
+        },
+        {"task_id": "T049", "dates": ["2027-03-15", "2027-03-26", "2027-03-28", "2027-03-29"], "kind": "HU_PUBLIC_HOLIDAY_CANDIDATE", "source": "data/external/hu-2027-holidays.json"},
+        {"task_id": "T050", "dates": ["2027-05-01"], "kind": "HU_PUBLIC_HOLIDAY_CANDIDATE", "source": "data/external/hu-2027-holidays.json"},
+        {"task_id": "T051", "dates": ["2027-05-01", "2027-05-16", "2027-05-17"], "kind": "HU_PUBLIC_HOLIDAY_CANDIDATE", "source": "data/external/hu-2027-holidays.json"},
+        {"task_id": "T057", "dates": ["2027-08-20"], "kind": "HU_PUBLIC_HOLIDAY_CANDIDATE", "source": "data/external/hu-2027-holidays.json"},
+        {"task_id": "T061", "dates": ["2027-10-23", "2027-11-01"], "kind": "HU_PUBLIC_HOLIDAY_CANDIDATE", "source": "data/external/hu-2027-holidays.json"},
+        {"task_id": "T063", "dates": ["2027-12-25", "2027-12-26"], "kind": "HU_PUBLIC_HOLIDAY_CANDIDATE", "source": "data/external/hu-2027-holidays.json"},
+        {"task_id": "T063", "dates": ["2028-01-01"], "kind": "HU_PUBLIC_HOLIDAY_CANDIDATE", "source": "data/external/hu-2028-holidays.json"}
       ]
     },
     {
@@ -88,6 +99,16 @@
       "expected_patch": {"estimated_finish": {"T036": "2026-01-15"}},
       "changed_task_ids": [],
       "expected_outcome": "DUPLICATE",
+      "newly_overlapping_external_constraints": [{"task_id": "T042", "dates": ["2026-03-15"], "kind": "HU_PUBLIC_HOLIDAY_CANDIDATE", "source": "data/external/hu-2026-holidays.json"}]
+    },
+    {
+      "case_id": "H08",
+      "event_id": "H08",
+      "corrects_event_id": "H04",
+      "direct_task_ids": ["T045"],
+      "expected_patch": {"estimated_finish": {"T045": "2026-12-05"}},
+      "changed_task_ids": [],
+      "expected_outcome": "RETRACTION",
       "newly_overlapping_external_constraints": []
     }
   ]

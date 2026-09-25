@@ -13,7 +13,7 @@ import ipaddress
 import re
 import socket
 from xml.etree import ElementTree as ET
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 from email.utils import parsedate_to_datetime
@@ -28,6 +28,7 @@ MAX_CONTENT_CHARS = 8_000
 REQUEST_TIMEOUT_SECONDS = 10.0
 USER_AGENT = "replan-source-adapter/0.1"
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 
 
 def fetch_weather(site: dict[str, Any], days: int = 7, *, transport: httpx.BaseTransport | None = None) -> dict[str, Any]:
@@ -83,6 +84,54 @@ def fetch_weather(site: dict[str, Any], days: int = 7, *, transport: httpx.BaseT
             "body_hash": _hash_text(response.text),
         }
     except (httpx.HTTPError, ValueError, TypeError) as exc:
+        return _error("error", source_id, fetched_at, str(exc))
+
+
+def fetch_seasonal_statistics(site: dict[str, Any], limits: dict[str, float], *, transport: httpx.BaseTransport | None = None) -> dict[str, Any]:
+    """Historical monthly exceedance frequencies; never a forecast or confirmed outage."""
+    fetched_at = _utcnow()
+    source_id = f"{site.get('source_id') or site.get('weather_site_id') or site.get('id') or 'weather'}:seasonal"
+    try:
+        latitude = _required_float(site, "latitude", "lat")
+        longitude = _required_float(site, "longitude", "lon", "lng")
+        if not math.isfinite(latitude) or not math.isfinite(longitude) or not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+            raise ValueError("invalid coordinates")
+        last_year = datetime.now(timezone.utc).year - 1
+        params = {"latitude": latitude, "longitude": longitude,
+                  "start_date": f"{last_year - 4}-01-01", "end_date": f"{last_year}-12-31",
+                  "timezone": site.get("timezone", "UTC"),
+                  "daily": "precipitation_sum,wind_speed_10m_max"}
+        with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS, transport=transport, headers={"User-Agent": USER_AGENT}) as client:
+            response = client.get(OPEN_METEO_ARCHIVE_URL, params=params)
+            response.raise_for_status()
+        payload = response.json()
+        daily = payload.get("daily") if isinstance(payload, dict) else None
+        units = payload.get("daily_units", {}) if isinstance(payload, dict) else {}
+        if (not isinstance(daily, dict) or not isinstance(daily.get("time"), list)
+                or units.get("precipitation_sum") != "mm" or units.get("wind_speed_10m_max") != "km/h"):
+            raise ValueError("historical daily data or units are missing")
+        months: dict[str, dict[str, Any]] = {}
+        for index, raw_day in enumerate(daily["time"]):
+            month = str(date.fromisoformat(raw_day).month)
+            row = months.setdefault(month, {"observed_days": 0, "precipitation_exceedance_days": 0,
+                                            "wind_exceedance_days": 0})
+            precipitation = daily["precipitation_sum"][index]
+            wind = daily["wind_speed_10m_max"][index]
+            if precipitation is None or wind is None:
+                continue
+            row["observed_days"] += 1
+            if "max_precipitation_mm" in limits and float(precipitation) > limits["max_precipitation_mm"]:
+                row["precipitation_exceedance_days"] += 1
+            if "max_wind_speed_kmh" in limits and float(wind) > limits["max_wind_speed_kmh"]:
+                row["wind_exceedance_days"] += 1
+        if not months:
+            raise ValueError("historical daily data is empty")
+        return {"status": "ok", "source_id": source_id, "provider": "open_meteo_archive",
+                "url": str(response.url), "fetched_at": fetched_at, "body_hash": _hash_text(response.text),
+                "site": site, "seasonal_statistics": {"period_start": params["start_date"],
+                                                "period_end": params["end_date"], "limits": limits,
+                                                "by_month": months}}
+    except (httpx.HTTPError, ValueError, TypeError, KeyError, IndexError) as exc:
         return _error("error", source_id, fetched_at, str(exc))
 
 

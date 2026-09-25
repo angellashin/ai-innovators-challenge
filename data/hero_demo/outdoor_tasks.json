@@ -1,0 +1,6 @@
+{
+  "label": "검토자가 작성한 합성 야외 작업 분류",
+  "source_workbook": "data/l1_project/hero_battery_factory_project.xlsx",
+  "data_origin": "SYNTHETIC",
+  "outdoor_task_ids": ["T006", "T009", "T021", "T022", "T023", "T024", "T025", "T027", "T028", "T030", "T044", "T045"]
+}

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
 from app.adapters.llm import ChatResult
-from app.adapters.sources import fetch_holidays, fetch_registered_source
+from app.adapters.sources import fetch_holidays, fetch_registered_source, fetch_seasonal_statistics
 from app.external_risks import combine_patches, holiday_patch, interpret_notice, match_notice, weather_patch
 from app.main import app
 from app.scheduling import simulate
@@ -74,6 +74,84 @@ def test_holiday_scope_subdivision_and_public_type():
     ]}
     assert holiday_patch(TASKS, config, source)[0] == {"blocked_dates": {"A": ["2026-10-07"]}}
     assert holiday_patch(TASKS, {**config, "subdivision": "HU-BU"}, source)[0]["blocked_dates"]["A"] == ["2026-10-07", "2026-10-08"]
+
+
+def test_hungarian_holiday_never_applies_to_korean_or_german_task():
+    config = {"country_code": "HU", "year": 2026, "task_ids": ["KR", "DE", "HU"]}
+    source = {"holidays": [{"date": "2026-10-07", "countryCode": "HU", "types": ["Public"], "global": True}]}
+    tasks = [{**TASKS[0], "task_id": task_id, "country": country} for task_id, country in
+             (("KR", "South Korea"), ("DE", "Germany"), ("HU", "Hungary"))]
+    assert holiday_patch(tasks, config, source)[0] == {"blocked_dates": {"HU": ["2026-10-07"]}}
+
+
+def test_shifted_forecast_and_out_of_range_seasonal_risk_are_distinct():
+    from app.shifted_external import recheck_shifted_schedule
+
+    tasks = [{"task_id": "A", "baseline_start": "2026-10-07", "baseline_finish": "2026-10-08",
+              "duration_workdays": 2, "outdoor": True, "predecessor_ids": [], "country": "Hungary"}]
+    source = forecast()
+    source["forecast"]["validity"] = {"start": "2026-10-07", "end": "2026-10-07"}
+    event = {"event_id": "supplier", "patch": {"not_before": {"A": "2026-10-07"}}}
+    on_range = recheck_shifted_schedule({}, tasks, event, [], None, [], [source], PLAN)
+    assert on_range["external_constraints"] == []  # no newly overlapping date
+    moved = {"event_id": "supplier", "patch": {"not_before": {"A": "2026-10-09"}}}
+    out_range = recheck_shifted_schedule({}, tasks, moved, [], None, [], [source], PLAN)
+    assert out_range["external_additional_shift_days"] == 0
+    assert not out_range["external_constraints"]
+    assert out_range["seasonal_risks"][0]["basis"] == "seasonal_statistics_unavailable"
+    assert out_range["seasonal_risks"][0]["status"] == "NEEDS_INPUT"
+    historical = {"status": "ok", "provider": "open_meteo_archive", "body_hash": "historical-sample",
+                  "seasonal_statistics": {"by_month": {"10": {"observed_days": 150,
+                                                              "wind_exceedance_days": 12,
+                                                              "precipitation_exceedance_days": 8}}}}
+    conditional = recheck_shifted_schedule({}, tasks, moved, [], None, [], [source, historical], PLAN)
+    assert conditional["seasonal_risks"][0]["status"] == "CONDITIONAL"
+    assert conditional["seasonal_risks"][0]["statistics"]["10"]["wind_exceedance_days"] == 12
+    assert conditional["external_additional_shift_days"] == 0
+
+
+def test_historical_weather_adapter_records_empirical_monthly_exceedances():
+    payload = {"daily_units": {"precipitation_sum": "mm", "wind_speed_10m_max": "km/h"},
+               "daily": {"time": ["2025-10-07", "2025-10-08"],
+                         "precipitation_sum": [1, 22], "wind_speed_10m_max": [40, 10]}}
+    source = fetch_seasonal_statistics({"id": "site", "latitude": 47.5, "longitude": 19.0},
+                                       {"max_precipitation_mm": 15, "max_wind_speed_kmh": 35},
+                                       transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload)))
+    assert source["status"] == "ok" and source["body_hash"] and source["url"].startswith("https://archive-api.open-meteo.com/")
+    assert source["seasonal_statistics"]["by_month"]["10"] == {
+        "observed_days": 2, "precipitation_exceedance_days": 1, "wind_exceedance_days": 1}
+
+
+def test_recheck_iteration_limit_requests_input():
+    from app.shifted_external import recheck_shifted_schedule
+
+    event = {"event_id": "supplier", "patch": {"not_before": {"A": "2026-10-07"}}}
+    tasks = [{**TASKS[0], "baseline_start": "2026-10-05", "baseline_finish": "2026-10-06",
+              "duration_workdays": 2, "country": "Hungary"}]
+    calendar = ({"country_code": "HU", "year": 2026, "task_ids": ["A"]},
+                {"holidays": [{"date": "2026-10-07", "countryCode": "HU", "global": True,
+                               "types": ["Public"]}]})
+    result = recheck_shifted_schedule({}, tasks, event, [], None, [calendar], [], {}, max_iterations=1)
+    assert result["recheck_status"] == "NEEDS_INPUT"
+
+
+def test_recheck_preserves_approved_calendar_and_unions_same_day_weather():
+    from app.shifted_external import recheck_shifted_schedule
+
+    tasks = [{**TASKS[0], "baseline_start": "2026-10-05", "baseline_finish": "2026-10-06",
+              "duration_workdays": 2, "country": "Hungary"}]
+    event = {"event_id": "supplier", "patch": {"not_before": {"A": "2026-10-07"}}}
+    calendar = ({"country_code": "HU", "year": 2026, "task_ids": ["A"]},
+                {"source_id": "holiday", "holidays": [{"date": "2026-10-07", "countryCode": "HU",
+                                                      "types": ["Public"], "global": True}]})
+    source = forecast()
+    combined = recheck_shifted_schedule({}, tasks, event, [], None, [calendar], [source], PLAN)
+    assert combined["combined_patch"]["calendar_nonworking_dates"]["A"] == ["2026-10-07"]
+    assert {item["kind"] for item in combined["external_constraints"]} == {"public_holiday", "forecast_threshold"}
+    approved = recheck_shifted_schedule({}, [{**tasks[0], "approved_calendar_nonworking_dates": ["2026-10-07"]}],
+                                        event, [], None, [calendar], [source], PLAN)
+    assert approved["external_constraints"] == []
+    assert "calendar_nonworking_dates" not in approved["combined_patch"]
 
 
 def test_calendar_union_and_finish_conflict():
@@ -158,6 +236,9 @@ def test_external_scan_to_review_approval_export(setup):
     book = load_workbook(io.BytesIO(exported.content))
     assert book["변경 근거"]["C2"].value.startswith("https://api.open-meteo.com")
     assert committed["version_id"] != "V"
+    updated = db.current_version("P")["data"]["tasks"]
+    assert all(task["planned_start"] == task["baseline_start"] and
+               task["planned_finish"] == task["baseline_finish"] for task in updated)
 
 
 def test_all_combined_evidence_requires_review(setup):

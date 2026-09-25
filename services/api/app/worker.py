@@ -19,6 +19,10 @@ from .storage import Store, digest, identifier, utcnow
 
 def _scenario_record(run: dict[str, Any], event: dict[str, Any], version: dict[str, Any], label: str, option_ids: list[str], result: dict[str, Any]) -> dict[str, Any]:
     required = list(event.get("verification_required") or [])
+    if result.get("external_constraints"):
+        required.append("새 기간의 공휴일·예보상 작업 중단일이 해당 작업에 실제 적용되는지 확인")
+    if result.get("seasonal_risks"):
+        required.append("예보 범위 밖 야외 작업의 계절 통계와 현장 대응 조건 확인")
     if option_ids:
         options_by_id = {item.get("option_id"): item for item in version["data"].get("options", [])}
         for option_id in option_ids:
@@ -33,7 +37,7 @@ def _scenario_record(run: dict[str, Any], event: dict[str, Any], version: dict[s
         "event_patch_hash": digest(event.get("patch", {})),
         "evidence": event.get("evidence"),
         "included_events": event.get("included_events", []),
-        "applied_patch": event.get("patch", {}),
+        "applied_patch": result.get("combined_patch", event.get("patch", {})),
         "provisional": bool(event.get("review_status") != "CONFIRMED"),
         "version_id": version["id"],
         "input_version_hash": version["content_hash"],
@@ -108,6 +112,47 @@ def _reserve_paid_attempt(db: Store, run_id: str) -> str:
             (identifier(), run_id, os.environ.get("LLM_MODEL"), None, None, None, "UNKNOWN", utcnow()),
         )
     return "reserved"
+
+
+def _supplier_external_sources(db: Store, project_id: str, project: dict, tasks: list[dict], event: dict, plan_snapshot: dict | None = None) -> tuple[list[tuple[dict, dict]], list[dict], dict, list[str]]:
+    """Use immutable hero snapshots or the latest monitored evidence, never an LLM."""
+    from .shifted_external import bundled_hu_calendars
+    watch = db.get_json("watch_plans", project_id)
+    plan = plan_snapshot if plan_snapshot is not None else watch["data"] if watch else {}
+    snapshots = [row["data"] for row in db.list_json("source_snapshots", project_id, 1000)
+                 if row["data"].get("status") == "ok"]
+    latest = {}
+    for source in snapshots:
+        latest.setdefault(source.get("source_id"), source)
+    calendars = bundled_hu_calendars(tasks) if project.get("hero_fixture_id") == "HERO-BAT-HU-001" and project.get("data_origin") == "SYNTHETIC" else []
+    known = {(config["country_code"], config["year"]) for config, _ in calendars}
+    missing = []
+    for configured in plan.get("holiday_calendars") or []:
+        country = configured["country_code"]
+        relevant = [task for task in tasks if str(task["task_id"]) in configured["task_ids"]]
+        years = {configured["year"]}
+        for task in relevant:
+            years.update(range(date.fromisoformat(task["baseline_start"][:10]).year,
+                               min(2100, date.fromisoformat(task["baseline_finish"][:10]).year + 2) + 1))
+        for year in sorted(years):
+            if (country, year) in known:
+                continue
+            source = latest.get(f"nager:{country}:{year}")
+            if source is None:
+                from .adapters.sources import fetch_holidays
+                source = fetch_holidays(country, year)
+                _store_source_snapshot(db, project_id, source)
+            if source.get("status") == "ok":
+                calendars.append(({**configured, "year": year}, source))
+                known.add((country, year))
+            else:
+                missing.append(f"{country} {year} 공휴일 데이터를 확인할 수 없습니다")
+    site = plan.get("weather_site") or {}
+    weather = [source for source in latest.values() if source.get("provider") in {"open_meteo", "open_meteo_archive"} and source.get("status") == "ok"
+               and site and all(str((source.get("site") or {}).get(key)) == str(site.get(key)) for key in ("latitude", "longitude"))]
+    weather = [source for source in weather if source.get("provider") != "open_meteo_archive"
+               or (source.get("seasonal_statistics") or {}).get("limits") == plan.get("weather_limits")]
+    return calendars, weather, plan, missing
 
 
 def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
@@ -186,9 +231,24 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
 
     scenario_ids = []
     scenario_results = []
+    supplier_sources = (_supplier_external_sources(db, run["project_id"], project, tasks, event,
+                                                  context_snapshot.get("watch_plan"))
+                        if event.get("channel") == "supplier_message" else None)
+    if supplier_sources and supplier_sources[3]:
+        return {"status": "NEEDS_INPUT", "summary": "공휴일 출처를 확인할 수 없어 재계획을 멈췄습니다.",
+                "missing_fields": supplier_sources[3], "scenario_ids": []}
     for label, selected in candidates:
         chosen = [item for item in options if item.get("option_id") in selected]
-        result = simulate(project, tasks, event=event, options=chosen, budget_krw=budget)
+        if supplier_sources:
+            from .shifted_external import recheck_shifted_schedule
+            calendars, weather_sources, weather_plan, _ = supplier_sources
+            result = recheck_shifted_schedule(project, tasks, event, chosen, budget,
+                                              calendars, weather_sources, weather_plan)
+            if result.get("recheck_status") != "CONVERGED":
+                return {"status": "NEEDS_INPUT", "summary": result.get("recheck_reason"), "scenario_ids": [],
+                        "missing_fields": [result.get("recheck_reason")]}
+        else:
+            result = simulate(project, tasks, event=event, options=chosen, budget_krw=budget)
         baseline_finish = max(str(task["baseline_finish"])[:10] for task in tasks)
         by_id = {str(task["task_id"]): task for task in tasks}
         changed_tasks = [
@@ -210,7 +270,7 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         scenario_results.append({"id": scenario_id, **record})
 
     agent_output: dict[str, Any] = {"status": "llm_unavailable", "summary": "LLM 설정이 없어 계산 결과만 제공합니다."}
-    if os.environ.get("API_KEY") and os.environ.get("LLM_MODEL") and os.environ.get("LLM_BASE_URL") and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
+    if event.get("channel") != "supplier_message" and os.environ.get("API_KEY") and os.environ.get("LLM_MODEL") and os.environ.get("LLM_BASE_URL") and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
         paid_state = _reserve_paid_attempt(db, run["id"])
         if paid_state != "reserved":
             agent_output = {"status": paid_state, "summary": "유료 호출 한도 또는 중복 실행 방지로 계산 결과만 제공합니다."}
@@ -468,7 +528,7 @@ def _record_public_risks(db: Store, project_id: str, plan: dict, result: dict, s
 
 
 def _run_scan(db: Store, run: dict[str, Any]) -> dict[str, Any]:
-    from .adapters.sources import fetch_registered_source, fetch_weather, fetch_holidays
+    from .adapters.sources import fetch_registered_source, fetch_weather, fetch_holidays, fetch_seasonal_statistics
     watch = db.get_json("watch_plans", run["project_id"])
     if not watch or not watch["data"].get("enabled"):
         return {"status": "disabled", "sources": []}
@@ -491,6 +551,9 @@ def _run_scan(db: Store, run: dict[str, Any]) -> dict[str, Any]:
             result = {"status": "failed", "source_id": "open-meteo", "fetched_at": utcnow(), "error": type(exc).__name__}
         snapshot_id = record(result)
         new_event_ids.extend(_record_weather_risks(db, run["project_id"], plan, result, snapshot_id))
+        if plan.get("seasonal_statistics_enabled") and plan.get("weather_limits"):
+            seasonal = fetch_seasonal_statistics(site, plan["weather_limits"])
+            record(seasonal)
     if scope in {"all", "holidays"}:
         for config in plan.get("holiday_calendars", []):
             result = fetch_holidays(config["country_code"], config["year"])
