@@ -104,7 +104,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const [selectedEventId, setSelectedEventId] = useState("");
   const [pendingRunId, setPendingRunId] = useState("");
   const [conditionNotes, setConditionNotes] = useState<Record<string, string>>({});
-  const [manualMessage, setManualMessage] = useState("설비 제작 완료가 9월 25일에서 9월 30일로 변경됩니다. FAT는 10월 1일부터 가능하며 후속 출하 일정을 재협의해야 합니다.");
+  const [manualMessage, setManualMessage] = useState("");
   const [budget, setBudget] = useState<number | "">("");
   const [notice, setNotice] = useState("프로젝트를 생성하거나 불러오세요.");
   const [busy, setBusy] = useState(false);
@@ -355,20 +355,29 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   async function createEventFromDemo() {
     const first = project.demo_events?.[0];
     if (!first) {
-      setError({ status: 0, message: "확정된 baseline에 demo_events가 없습니다." });
+      setError({ status: 0, message: "hero 기준 일정을 업로드하고 확정하세요." });
       return;
     }
     await createEvent({
-      event_id: text(first.event_id, "demo-change"),
+      event_id: text(first.event_id, "hero-change"),
       content: text(first.body || first.content),
-      mode: "REPLAY",
+      channel: text(first.channel, "supplier_message"),
+      source_label: text(first.source_label, "가상 협력사 메시지"),
+      published_at: text(first.published_at),
+      mode: text(first.mode, "SYNTHETIC"),
       data_origin: "SYNTHETIC",
-      simulation_as_of: "2026-09-23T09:00:00+02:00",
-    });
+      simulation_as_of: text(first.published_at),
+    }, true);
   }
 
-  async function createEvent(payload: Dict) {
-    await guarded("이벤트 등록", () =>
+  async function loadHeroBaseline() {
+    if (!projectId) return;
+    await guarded("hero 데모 일정 연결", () => callApi<Dict>(`/api/projects/${projectId}/demo/hero-baseline`, { method: "POST" }),
+      async () => { await refreshProject(projectId); });
+  }
+
+  async function createEvent(payload: Dict, autoAnalyze = false) {
+    const created = await guarded("이벤트 등록", () =>
       callApi<{ event_id: string; event: Dict; duplicate?: boolean }>(`/api/projects/${projectId}/events`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -378,6 +387,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       setNotice(value.duplicate ? `중복 이벤트 사용: ${value.event_id}` : `이벤트 등록: ${value.event_id}`);
       await refreshProject(projectId);
     });
+    if (created && autoAnalyze) await analyzeEvent(created.event_id, true);
   }
 
   async function reviewEvent(eventId: string) {
@@ -387,7 +397,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ confirmed: true }),
       }),
-    async () => refreshProject(projectId));
+    async () => { await refreshProject(projectId); await analyzeEvent(eventId); });
   }
 
   async function createManualEvent() {
@@ -397,15 +407,16 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       source_label: "수동 메시지",
       mode: text((project.project || {}).mode, "LIVE"),
       data_origin: text((project.project || {}).data_origin, "USER"),
-    });
+      ...(project.project?.status_as_of ? { simulation_as_of: `${project.project.status_as_of}T09:00:00+02:00` } : {}),
+    }, true);
   }
 
-  async function analyzeEvent(eventId: string) {
+  async function analyzeEvent(eventId: string, previewOnly = false) {
     setSelectedEventId(eventId); setPendingRunId(""); setRun(null); setSelectedScenarioId("");
     await guarded("영향 분석 시작", () =>
       callApi<{ run_id: string; status: string }>(`/api/projects/${projectId}/analyses`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event_id: eventId }),
+        body: JSON.stringify({ event_id: eventId, preview_only: previewOnly }),
       }), (value) => {
         setPendingRunId(value.run_id);
         setNotice("영향을 계산하고 있습니다. 완료되면 결과를 자동으로 표시합니다.");
@@ -613,6 +624,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
 
           <div className="divider" />
           <h2>2. Excel import</h2>
+          <button className="secondary" onClick={loadHeroBaseline} disabled={busy || !projectId || Boolean(project.version)}>hero 데모 기준 일정 사용 (64개 작업)</button>
           <input type="file" accept=".xlsx,.csv" onChange={(event: ChangeEvent<HTMLInputElement>) => setSelectedFile(event.target.files?.[0] || null)} />
           <button onClick={uploadImport} disabled={busy || !selectedFile || !projectId}>Excel 업로드·미리보기</button>
           {preview && (
@@ -658,6 +670,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
               <p className="eyebrow">PROJECT PULSE</p>
               <h2>기준 일정과 변경 영향</h2>
               <p>기준 버전 {shortId(project.version?.id)} · hash {shortId(project.version?.content_hash)}</p>
+              {Boolean(project.project?.status_as_of) && <p>합성 데모 기준일 {text(project.project?.status_as_of)} · 전체 {tasks.length}개 작업 · 완료 {tasks.filter((task) => task.status === "completed").length} · 진행 중 {tasks.filter((task) => task.status === "in_progress").length} · 예정 {tasks.filter((task) => task.status === "planned").length}</p>}
             </div>
             <button className="secondary" onClick={downloadExport} disabled={!project.version}>Excel-out</button>
           </div>
@@ -679,6 +692,9 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
                       <b>{text(data.title, "변경 메시지")}</b>
                       <p>{text(data.content || data.title)}</p>
                       <small>{text(data.source_label)} · {data.review_status === "CONFIRMED" ? "변경 해석 확인됨" : "변경 해석 확인 필요"}</small>
+                      <small>{text(data.mode)} · {text(data.data_origin)}</small>
+                      {Array.isArray(data.verification_required) && data.verification_required.length > 0 &&
+                        <small>추가 확인: {(data.verification_required as string[]).join(" · ")}</small>}
                       {Array.isArray(data.extracted_facts) && data.extracted_facts.length > 0 && (
                         <ul className="event-facts">
                           {(data.extracted_facts as Dict[]).slice(0, 3).map((fact, index) => (
@@ -691,7 +707,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
                       {data.evidence ? <EvidenceReview event={data} tasks={tasks} disabled={busy}
                         onReview={(payload) => reviewExternalEvent(text(event.id || data.id, ""), payload)}
                         onAnalyze={() => analyzeEvent(text(event.id || data.id, ""))} /> : null}
-                      {!data.evidence && Boolean(data.patch) && data.review_status !== "CONFIRMED" && (
+                      {!data.evidence && Object.keys((data.patch || {}) as Dict).length > 0 && data.review_status !== "CONFIRMED" && (
                         <button className="text-button event-review-button" onClick={() => reviewEvent(text(event.id || data.id, ""))} disabled={busy}>변경 해석 확인</button>
                       )}
                     </article>
@@ -782,10 +798,10 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           </section>
 
           <div className="button-row">
-            <button onClick={createEventFromDemo} disabled={!project.demo_events?.length || busy}>합성 메일 샘플 불러오기</button>
+            <button onClick={createEventFromDemo} disabled={!project.demo_events?.length || busy}>hero 합성 통보 불러오기</button>
             <button className="secondary" onClick={analyzeLatestEvent} disabled={!project.events?.length || busy}>영향 분석 시작</button>
           </div>
-          <small>보조 입력: 협력사 메일 내용 또는 변경 통보 (샘플은 합성 데이터)</small>
+          <small>보조 입력: 협력사 메일 내용 또는 변경 통보 (샘플은 합성 데이터). 입력 후 영향 미리보기가 자동으로 표시됩니다.</small>
           <textarea aria-label="협력사 변경 통보" value={manualMessage} onChange={(event) => setManualMessage(event.target.value)} rows={4} />
           <button className="secondary" onClick={createManualEvent} disabled={!project.version || busy}>변경 메시지 등록</button>
 
@@ -805,7 +821,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
             {selectedScenario && <>
               <p>기준 완료 {text(selectedScenario.data?.baseline_finish)} → 예상 완료 {text(selectedScenario.data?.finish_date)}</p>
               <b>완료일 변화 {text(selectedScenario.data?.finish_shift_days)}일 · 영향 작업 {((selectedScenario.data?.changed_tasks || []) as Dict[]).length}개</b>
-              {selectedScenario.data?.provisional ? <p>조건부 계산입니다. 외부 근거의 적용 여부를 확인한 뒤 승인하세요.</p> : null}
+              {selectedScenario.data?.provisional ? <p>잠정 계산입니다. 변경 해석과 필요한 조건을 확인한 뒤 승인하세요.</p> : null}
               {((selectedScenario.data?.included_events || []) as Dict[]).length > 0 && <p>함께 반영한 외부 변화: {((selectedScenario.data?.included_events || []) as Dict[]).map((item) => text(item.title)).join(" · ")}</p>}
               <ul>{((selectedScenario.data?.changed_tasks || []) as Dict[]).map((task) => <li key={text(task.task_id)}>{text(task.task_id)} · {text(task.name)} · {task.direct ? "직접 영향" : "후속 영향"}<br />{text(task.before_finish)} → {text(task.after_finish)}</li>)}</ul>
             </>}
@@ -871,7 +887,10 @@ function ScenarioList({ scenarios, selected, onSelect }: { scenarios: Array<Dict
 }
 
 function Gantt({ tasks, scenarioSchedule }: { tasks: Dict[]; scenarioSchedule: Record<string, Dict> }) {
-  const dates = tasks.flatMap((task) => {
+  const visibleTasks = tasks.some((task) => task.task_id === "T036") && tasks.length === 64
+    ? tasks.filter((task) => /^T0(3[4-9]|4[0-9]|5[0-7])$/.test(text(task.task_id)))
+    : tasks.slice(0, 20);
+  const dates = visibleTasks.flatMap((task) => {
     const original = taskDates(task);
     const scenario = scenarioSchedule[text(task.task_id)];
     return [original.start, original.finish, text(scenario?.planned_start, ""), text(scenario?.planned_finish, "")].filter(Boolean);
@@ -880,11 +899,11 @@ function Gantt({ tasks, scenarioSchedule }: { tasks: Dict[]; scenarioSchedule: R
   const max = dates.length ? new Date(dates.sort()[dates.length - 1]) : null;
   const total = min && max ? Math.max(1, (max.getTime() - min.getTime()) / 86400000 + 1) : 1;
 
-  if (!tasks.length) return <div className="empty">Excel baseline을 confirm하면 20개 작업 일정이 표시됩니다.</div>;
+  if (!tasks.length) return <div className="empty">Excel 기준 일정을 확정하면 작업 일정이 표시됩니다.</div>;
 
   return (
     <div className="gantt">
-      {tasks.slice(0, 20).map((task) => {
+      {visibleTasks.map((task) => {
         const id = text(task.task_id);
         const original = taskDates(task);
         const scenario = scenarioSchedule[id];
@@ -898,7 +917,7 @@ function Gantt({ tasks, scenarioSchedule }: { tasks: Dict[]; scenarioSchedule: R
           <div className="gantt-row" key={id}>
             <div className="task-meta">
               <b>{id}</b>
-              <span>{text(task.name)}</span>
+              <span>{text(task.name)}{task.status === "in_progress" ? " · 진행 중" : task.status === "completed" ? " · 완료" : ""}</span>
               <time className="task-date" dateTime={finishLabel}>{finishLabel.slice(5)}</time>
             </div>
             <div className="bar-track">

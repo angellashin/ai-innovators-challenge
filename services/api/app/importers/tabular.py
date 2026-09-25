@@ -59,8 +59,9 @@ BUILTIN_DATE_FORMATS = {
 }
 
 HEADER_ALIASES = {
-    "supplier_id": {"supplier_id", "공급사id", "공급사"},
+    "supplier_id": {"supplier_id", "공급사id", "공급사", "owner_company"},
     "equipment_id": {"equipment_id", "설비id", "설비번호"},
+    "country": {"country", "국가"},
     "country_code": {"country_code", "국가코드"},
     "risk_tags": {"risk_tags", "위험태그"},
     "planned_cost": {"planned_cost", "계획비용"},
@@ -72,7 +73,7 @@ HEADER_ALIASES = {
     "planned_finish": {"계획종료", "finish", "plannedfinish", "planned_finish", "plannedend", "planned_end", "종료일", "완료일"},
     "duration_days": {"durationdays", "duration_days"},
     "duration_workdays": {"작업일수", "기간작업일", "duration", "duration_workdays", "기간"},
-    "owner": {"담당조직", "owner", "ownercompany", "owner_company", "담당", "조직"},
+    "owner": {"담당조직", "owner", "담당", "조직"},
     "location": {"위치", "location", "region", "site"},
     "status": {"상태", "status"},
     "progress": {"진척률", "progress", "percent", "완료율"},

@@ -86,6 +86,9 @@ def decision_deadline(project: dict[str, Any], scenario: dict[str, Any], option_
 
 def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str, Any], overrides: "ConfirmInput") -> dict[str, Any]:
     """Bridge workbook labels to the Task and Option fields used by tools."""
+    from .hero_demo import hero_fixture, status_at
+
+    hero = hero_fixture(parsed) if overrides.tasks is None else None
     raw_project = {**parsed.get("project", {}), **(overrides.project or {})}
     profile = {**current_project, **raw_project}
     profile["name"] = profile.get("name") if profile.get("name") != "새 프로젝트" else profile.get("project_name", "새 프로젝트")
@@ -94,6 +97,10 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
     profile["target_finish"] = profile.get("target_finish") or profile.get("planned_completion")
     profile["mode"] = profile.get("input_mode") or profile.get("mode", "LIVE")
     profile["data_origin"] = profile.get("data_origin") or ("SYNTHETIC" if profile["mode"] == "REPLAY" else "USER")
+    if hero:
+        profile["mode"] = "REPLAY"
+        profile["data_origin"] = "SYNTHETIC"
+        profile["status_as_of"] = hero["as_of_date"]
     calendars = overrides.calendars if overrides.calendars is not None else parsed.get("calendars", [])
     profile["nonworking_dates"] = [item.get("calendar_date") for item in calendars if item.get("scope") == profile.get("site_id") and item.get("calendar_date")]
     raw_tasks = overrides.tasks if overrides.tasks is not None else parsed.get("tasks", [])
@@ -102,6 +109,11 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
         task = dict(original)
         task["baseline_start"] = task.get("baseline_start") or task.get("planned_start")
         task["baseline_finish"] = task.get("baseline_finish") or task.get("planned_finish")
+        task["owner"] = task.get("owner") or task.get("supplier_id")
+        task["supplier_id"] = task.get("supplier_id") or task.get("owner")
+        if hero:
+            task["status"] = status_at(task, hero["as_of_date"])
+            task["status_as_of"] = hero["as_of_date"]
         task["dependency_type"] = str(task.get("dependency_type") or task.get("relationship") or "FS").upper()
         task["location_id"] = task.get("location_id") or task.get("location")
         task["resource_demand"] = task.get("resource_demand") or task.get("demand_teams") or 1
@@ -132,7 +144,8 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
         option["conditions"] = option.get("conditions") or option.get("condition")
         option["approval_state"] = option.get("approval_state") or option.get("execution_status")
         options.append(option)
-    return {"project": profile, "tasks": tasks, "options": options, "calendars": calendars, "demo_events": parsed.get("events", []), "data_origin": profile["data_origin"]}
+    return {"project": profile, "tasks": tasks, "options": options, "calendars": calendars,
+            "demo_events": hero["events"] if hero else [], "data_origin": profile["data_origin"]}
 
 
 def suggest_watch_plan(project: dict[str, Any], tasks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -228,6 +241,7 @@ class AnalysisInput(BaseModel):
     event_id: str
     version_id: str | None = None
     budget_krw: int | None = Field(default=None, ge=0)
+    preview_only: bool = False
 
 
 class ReplanInput(BaseModel):
@@ -568,6 +582,20 @@ def get_project(project_id: str) -> dict[str, Any]:
     }
 
 
+@app.post("/api/projects/{project_id}/demo/hero-baseline", dependencies=[Depends(authorize)])
+async def import_hero_demo_baseline(project_id: str) -> dict[str, Any]:
+    """Load the bundled synthetic workbook through the same import path as an upload."""
+    from .hero_demo import HERO_WORKBOOK
+
+    db = store()
+    project_or_404(db, project_id)
+    if db.current_version(project_id):
+        raise HTTPException(409, "a baseline already exists")
+    workbook = UploadFile(filename=HERO_WORKBOOK.name, file=io.BytesIO(HERO_WORKBOOK.read_bytes()))
+    preview = await preview_import(project_id, workbook)
+    return confirm_import(project_id, preview["import_id"], ConfirmInput())
+
+
 @app.post("/api/projects/{project_id}/imports", dependencies=[Depends(authorize)])
 async def preview_import(project_id: str, file: UploadFile = File(...)) -> dict[str, Any]:
     db = store()
@@ -730,12 +758,20 @@ def create_event(project_id: str, value: EventInput) -> dict[str, Any]:
     raw = value.model_dump(exclude_none=True)
     if raw.get("mode") is None:
         raw["mode"] = project["data"].get("mode", "LIVE")
+    if raw["mode"] == "SYNTHETIC":
+        raw["mode"] = "REPLAY"
+        raw["data_origin"] = "SYNTHETIC"
     if raw["mode"] not in {"LIVE", "REPLAY"}:
         raise HTTPException(422, "invalid mode")
     if raw["mode"] == "REPLAY" and not raw.get("simulation_as_of"):
         raw["simulation_as_of"] = raw.get("published_at") or utcnow()
     raw.setdefault("received_at", utcnow())
     event = normalize_event(raw, project["data"], version["data"]["tasks"])
+    if project["data"].get("status_as_of") and event.get("patch"):
+        completed = {str(task["task_id"]) for task in version["data"]["tasks"] if task.get("status") == "completed"}
+        affected = {str(task_id) for values in event["patch"].values() if isinstance(values, dict) for task_id in values}
+        if affected & completed:
+            raise HTTPException(422, "완료된 작업에 새 일정 변경을 적용할 수 없습니다")
     fingerprint = digest({"source": event.get("source_label"), "external_id": event.get("event_id"), "content": event["content"], "published_at": event.get("published_at")})
     with db.connection() as conn:
         prior = conn.execute("SELECT * FROM events WHERE project_id=? AND fingerprint=?", (project_id, fingerprint)).fetchone()
@@ -802,7 +838,7 @@ def create_analysis(project_id: str, value: AnalysisInput, idempotency_key: str 
     if not event:
         raise HTTPException(404, "event not found")
     event_data = event["data"]
-    if event_data.get("patch") and event_data.get("review_status") != "CONFIRMED" and not event_data.get("evidence"):
+    if event_data.get("patch") and event_data.get("review_status") != "CONFIRMED" and not event_data.get("evidence") and not value.preview_only:
         raise HTTPException(409, "review the proposed change before analysis")
     version = db.get_json("versions", value.version_id, project_id) if value.version_id else db.current_version(project_id)
     if not version:
@@ -820,6 +856,7 @@ def create_analysis(project_id: str, value: AnalysisInput, idempotency_key: str 
         key,
         {
             "budget_krw": value.budget_krw,
+            "preview_only": value.preview_only,
             "project_context_snapshot": db.project_context_snapshot(project_id),
         },
     )
@@ -887,6 +924,13 @@ def prepare_scenario(scenario_id: str) -> dict[str, Any]:
 def validate_external_approval(db: Store, scenario: dict[str, Any]) -> None:
     data = scenario["data"]
     event = db.get_json("events", str(data.get("event_id") or ""), scenario["project_id"])
+    if event and event["data"].get("channel") == "supplier_message":
+        if data.get("provisional"):
+            raise HTTPException(409, "변경 해석을 확인한 뒤 다시 분석하세요")
+        if event["data"].get("review_status") != "CONFIRMED":
+            raise HTTPException(409, "협력사 통보의 해석을 먼저 확인하세요")
+        if data.get("event_patch_hash") != digest(event["data"].get("patch", {})):
+            raise HTTPException(409, "통보 해석이 수정되었습니다. 다시 분석하세요")
     if not event or not event["data"].get("evidence"):
         return
     included = data.get("included_events") or [{"event_id": event["id"], "patch_hash": data.get("event_patch_hash")}]
