@@ -564,6 +564,18 @@ def get_project(project_id: str) -> dict[str, Any]:
             version = {**version, "data": {**version["data"], "options": options}}
     watch = db.get_json("watch_plans", project_id)
     mail_account = db.get_json("mail_accounts", f"mail-{project_id}", project_id)
+    # Read-only history so the workspace can derive its step state from records.
+    with db.connection() as conn:
+        version_rows = conn.execute(
+            "SELECT id, parent_id, status, created_at, json_extract(data,'$.scenario_id') AS scenario_id "
+            "FROM versions WHERE project_id=? ORDER BY created_at DESC, rowid DESC LIMIT 50", (project_id,),
+        ).fetchall()
+        approval_rows = conn.execute(
+            "SELECT a.id, a.scenario_id, a.actor, a.decision, a.created_at, s.run_id, "
+            "json_extract(s.data,'$.event_id') AS event_id FROM approvals a "
+            "LEFT JOIN scenarios s ON s.id=a.scenario_id WHERE a.project_id=? ORDER BY a.created_at DESC LIMIT 50",
+            (project_id,),
+        ).fetchall()
     return {
         "project": project["data"],
         "version": version,
@@ -580,6 +592,8 @@ def get_project(project_id: str) -> dict[str, Any]:
         "supplier_calendars": db.list_json("supplier_calendars", project_id),
         "decision_deadlines": [{"id": item["id"], **item["data"]} for item in db.list_json("actions", project_id) if item["data"].get("due_at")],
         "demo_events": version["data"].get("demo_events", []) if version else [],
+        "versions": [dict(row) for row in version_rows],
+        "approvals": [dict(row) for row in approval_rows],
     }
 
 
