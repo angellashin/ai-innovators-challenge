@@ -44,7 +44,6 @@ def run_agent(
     usage: Dict[str, Any] = {}
     max_calls = min(MAX_TOOL_CALLS, max(0, max_steps) * 2)
     invalid_arg_retries = 0
-    recheck_prompted = False
 
     try:
         gateway = _gateway(context)
@@ -66,7 +65,7 @@ def run_agent(
                 usage=usage,
             )
 
-        usage = _merge_usage(usage, reply.usage)
+        usage = _merge_usage(usage, {**(reply.usage or {}), "llm_calls": 1})
         action = _next_action(reply)
         if action:
             name = str(action.get("tool") or "")
@@ -88,25 +87,13 @@ def run_agent(
             messages.extend(_tool_result_messages(action, tool_log[-1]))
             continue
 
-        if (event.get("patch") and "recheck_shifted_schedule" in allowed_tools
-                and not (event.get("corrects_event_id") and
-                         any(word in str(event.get("content") or "") for word in ("철회", "정정")))
-                and not any(entry.get("tool") == "recheck_shifted_schedule" and entry.get("status") == "ok"
-                            for entry in tool_log)):
-            if not recheck_prompted and step + 1 < max_steps and len(tool_log) < max_calls:
-                recheck_prompted = True
-                messages.append({"role": "user", "content": "Before the final answer, call recheck_shifted_schedule "
-                                 "with option_ids [] to calculate the shifted schedule."})
-                continue
-            return _result(status="needs_review", summary="Shifted schedule recheck was not completed.",
-                           unresolved_items=["recheck_shifted_schedule is required before the final answer"],
-                           tool_log=tool_log, usage=usage)
-
         final = _parse_final(reply.content)
         final["tool_log"] = tool_log
         final["usage"] = usage
         final.setdefault("status", "completed")
-        final = _ground_final(final, event, tool_log)
+        final = _ground_final(final, event, tool_log, _calculated_context(context))
+        if not isinstance(final.get("summary"), str):
+            final["summary"] = _summary_sentence(final.get("summary"), tool_log, context.get("scenario_summaries"))
         return _normalize_result(final)
 
     return _result(
@@ -132,21 +119,26 @@ def _initial_messages(
 ) -> List[Dict[str, Any]]:
     tool_names = sorted(tools)
     system = (
-        "You are a schedule replanning assistant. Return only JSON. "
-        "Allowed final keys: summary, impacted_tasks, options, option_explanations, "
-        "regulatory_assessment, email_draft, required_actions, unresolved_items, stop_reason, status. "
-        "You may request exactly one tool call at a time using native tool calls or "
-        '{"action":"tool","tool":"name","args":{...}}. '
-        "Pass {} to tools that declare no arguments. For a schedule patch, call "
-        "recheck_shifted_schedule with option_ids [] before the final answer when available. "
-        "Choose tools in the order needed. If the task is ambiguous or the changed date is missing, "
-        "ask a concrete question and stop before schedule tools. Use calculator tool results exclusively "
-        "for all dates, durations and costs; do not alter them. L2 cases show analogies, not legal "
-        "applicability or project delay. POST_AS_OF_REFERENCE is reference only, never reasoning evidence. "
-        "Unconfirmed regulation is a conditional scenario only; call simulate_regulatory_condition "
-        "when available and report NEEDS_INPUT if its date or duration is missing. Explain option tradeoffs and draft a supplier negotiation "
-        "email only after schedule calculation. A draft never sends or confirms a plan. "
-        "Never request commit or send actions."
+        "You review a schedule change for a project team. Return only one JSON object with these keys: "
+        "summary (Korean string, 1-2 sentences: what changed and what it means for the finish date), "
+        "status (one of completed, needs_input, needs_review), "
+        "stop_reason (Korean string: the one thing a person must confirm next, or empty), "
+        'option_explanations (array of {"option_ids": [...], "text": Korean string}; option_ids copied from '
+        "context.scenario_summaries, [] for no response), "
+        'regulatory_assessment (null unless the notice mentions a regulation or permit, else {"likelihood": '
+        '"높음|중간|낮음|불확실", "reason": string, "human_check": string, "evidence_risk_ids": [...]}), '
+        'email_draft ({"to", "subject", "body"} in Korean, or null), unresolved_items (array of concrete '
+        "questions for a person). Do not add other keys and do not restate task lists or schedules. "
+        "When context.scenario_summaries is present, deterministic calculators have already produced those "
+        "scenarios: compare and explain them, cite them by option_ids, and never say they were not calculated. "
+        "Use calculator values exclusively for all dates, durations and costs; do not alter them. "
+        "Tools are optional; call one only when it adds evidence, one at a time, using native tool calls or "
+        '{"action":"tool","tool":"name","args":{...}}. Pass {} to tools that declare no arguments. '
+        "If the task or changed date is ambiguous, ask a concrete question and stop before schedule tools. "
+        "L2 cases show analogies, not legal applicability or project delay. POST_AS_OF_REFERENCE is reference "
+        "only, never reasoning evidence. Unconfirmed regulation is a conditional scenario only; call "
+        "simulate_regulatory_condition when available and report needs_input if its date or duration is missing. "
+        "A draft never sends or confirms a plan. Never request commit or send actions."
     )
     user = {
         "context": _public_context(context),
@@ -256,9 +248,28 @@ def _tool_result_messages(action: Dict[str, Any], result: Dict[str, Any]) -> Lis
                     }
                 ],
             },
-            {"role": "tool", "tool_call_id": tool_call_id, "content": _encode(result)},
+            {"role": "tool", "tool_call_id": tool_call_id, "content": _encode(model_view(result))},
         ]
-    return [{"role": "user", "content": "Tool result: %s" % _encode(result)}]
+    return [{"role": "user", "content": "Tool result: %s" % _encode(model_view(result))}]
+
+
+MODEL_VIEW_DROP = {"schedule", "supplier_schedule", "combined_patch", "external_source_hashes", "scenario_hash"}
+MODEL_VIEW_LIST_LIMIT = 12
+MODEL_VIEW_TEXT_LIMIT = 1_500
+
+
+def model_view(value: Any, depth: int = 0) -> Any:
+    """What the model sees from a tool: full per-task schedules are dropped and long lists cut."""
+    if isinstance(value, dict):
+        return {key: model_view(item, depth + 1) for key, item in value.items() if key not in MODEL_VIEW_DROP}
+    if isinstance(value, list):
+        kept = [model_view(item, depth + 1) for item in value[:MODEL_VIEW_LIST_LIMIT]]
+        if len(value) > MODEL_VIEW_LIST_LIMIT:
+            kept.append({"omitted_items": len(value) - MODEL_VIEW_LIST_LIMIT})
+        return kept
+    if isinstance(value, str) and len(value) > MODEL_VIEW_TEXT_LIMIT:
+        return value[:MODEL_VIEW_TEXT_LIMIT] + "…"
+    return value
 
 
 def _execute_action(
@@ -417,13 +428,15 @@ def _normalize_status(value: Any) -> str:
     return str(value or "completed")
 
 
-def _summary_sentence(summary: Any, tool_log: List[Any]) -> str:
+def _summary_sentence(summary: Any, tool_log: List[Any], scenarios: Any = None) -> str:
     if not isinstance(summary, dict):
         return str(summary or "")
     calculator = next((entry.get("result") for entry in reversed(tool_log)
                        if isinstance(entry, dict) and entry.get("status") == "ok"
                        and entry.get("tool") in {"recheck_shifted_schedule", "simulate_schedule"}
                        and isinstance(entry.get("result"), dict)), None)
+    if calculator is None and isinstance(scenarios, list):
+        calculator = next((row for row in scenarios if isinstance(row, dict) and not row.get("option_ids")), None)
     if calculator and calculator.get("finish_date"):
         target = "목표일을 충족합니다." if calculator.get("target_met") else "목표일을 충족하지 못합니다."
         return f"통보의 일정 영향을 검토했습니다. 계산된 완료 예정일은 {calculator['finish_date']}이며, {target}"
@@ -433,10 +446,18 @@ def _summary_sentence(summary: Any, tool_log: List[Any]) -> str:
 _NUMBER_OR_DATE = re.compile(r"(?<![A-Za-z0-9])(?:\d{4}-\d{2}-\d{2}|\d[\d,]*(?:\.\d+)?)(?![A-Za-z0-9])")
 
 
-def _ground_final(value: Dict[str, Any], event: Dict[str, Any], tool_log: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _calculated_context(context: Dict[str, Any]) -> List[Any]:
+    """Calculator output and registered option data the caller put in context."""
+    return [context[key] for key in ("scenario_summaries", "changed_tasks_without_response", "response_options",
+                                     "baseline_finish", "related_tasks") if context.get(key) is not None]
+
+
+def _ground_final(value: Dict[str, Any], event: Dict[str, Any], tool_log: List[Dict[str, Any]],
+                  calculated: Optional[List[Any]] = None) -> Dict[str, Any]:
     """Treat model prose as untrusted; numeric claims need calculator provenance."""
     calculator = [row["result"] for row in tool_log if row.get("status") == "ok"
                   and row.get("tool") in {"simulate_schedule", "recheck_shifted_schedule", "simulate_regulatory_condition"}]
+    calculator.extend(calculated or [])
     allowed: set[str] = set()
 
     def collect(item: Any) -> None:

@@ -309,3 +309,51 @@ def test_hero_ambiguous_no_impact_duplicate_and_past_task_guard(client):
                        json={"content": "T001 작업 완료일이 2025-02-05에서 2025-08-30로 변경됩니다.",
                              "published_at": "2025-08-21T09:00:00+02:00", "mode": "REPLAY"})
     assert past.status_code == 422
+
+
+def test_h04_agent_reviews_calculated_scenarios_once(client, monkeypatch):
+    import json as _json
+
+    from app.adapters.llm import ChatResult, OpenAICompatibleLLM
+
+    project_id, _ = hero_baseline(client)
+    h04 = next(item for item in MESSAGES["events"] if item["event_id"] == "H04")
+    event = request(client, "post", f"/api/projects/{project_id}/events", json=input_event(h04))
+    request(client, "patch", f"/api/projects/{project_id}/events/{event['event_id']}/review", json={"confirmed": True})
+    requests = []
+
+    def fake_chat(self, messages, tools=None, response_format=None):
+        requests.append({"messages": messages, "tools": [tool["function"]["name"] for tool in tools or []]})
+        return ChatResult(content=_json.dumps({
+            "summary": "T045 반입 지연으로 무대응 완료일이 늦어지고, 설치팀 추가 투입안이 가장 많이 회복합니다.",
+            "status": "needs_review", "stop_reason": "새 기간 공휴일의 현장 적용 확인",
+            "option_explanations": [{"option_ids": ["HOPT-01"], "text": "HOPT-01은 2028-01-11로 14일 회복합니다."}],
+            "regulatory_assessment": None, "email_draft": None, "unresolved_items": []}, ensure_ascii=False),
+            usage={"prompt_tokens": 100, "completion_tokens": 20})
+
+    for key, value in {"API_KEY": "k", "LLM_MODEL": "m", "LLM_BASE_URL": "https://gateway.invalid/v1",
+                       "REPLAN_PAID_CALLS_ENABLED": "true"}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(OpenAICompatibleLLM, "chat", fake_chat)
+    queued = request(client, "post", f"/api/projects/{project_id}/analyses", json={"event_id": event["event_id"]})
+    assert run_once(Store())
+    result = request(client, "get", f"/api/runs/{queued['run_id']}")
+
+    by_options = {tuple(row["data"]["option_ids"]): row["data"] for row in result["scenarios"]}
+    assert by_options[()]["finish_date"] == "2028-01-25"
+    assert by_options[()]["supplier_finish_shift_days"] == 21
+    assert by_options[()]["external_additional_shift_days"] == 14
+    assert by_options[("HOPT-01",)]["finish_date"] == "2028-01-11"
+
+    assert len(requests) == 1
+    assert not {"recheck_shifted_schedule", "simulate_schedule", "get_project_context",
+                "list_response_options"} & set(requests[0]["tools"])
+    context = _json.loads(requests[0]["messages"][1]["content"])["context"]
+    no_response = next(row for row in context["scenario_summaries"] if row["option_ids"] == [])
+    assert (no_response["finish_date"], no_response["supplier_finish_shift_days"],
+            no_response["external_additional_shift_days"]) == ("2028-01-25", 21, 14)
+    assert len(context["scenario_summaries"]) == 8
+    assert len(requests[0]["messages"][1]["content"]) < 30_000
+    agent = result["run"]["data"]["agent"]
+    assert agent["status"] == "needs_review"
+    assert "2028-01-11" in agent["option_explanations"][0]["text"]

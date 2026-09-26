@@ -68,7 +68,7 @@ def test_json_action_fallback_executes_allowed_tool_then_returns_final():
     assert result["tool_log"] == [
         {"tool": "inspect_task", "args": {"task_id": "T03"}, "status": "ok", "result": {"task_id": "T03", "days": 2}}
     ]
-    assert result["usage"] == {"prompt_tokens": 10, "completion_tokens": 5}
+    assert result["usage"] == {"prompt_tokens": 10, "completion_tokens": 5, "llm_calls": 2}
 
 
 def test_native_tool_call_is_supported():
@@ -251,23 +251,36 @@ def test_structured_final_status_is_normalized():
     assert result["status"] == "needs_input"
 
 
-def test_agent_is_prompted_to_recheck_before_final_answer():
+def test_final_answer_is_not_forced_through_a_no_response_recheck():
     gateway = FakeGateway([
-        ChatResult(content=json.dumps({"action": "tool", "tool": "simulate_schedule",
-                                       "args": {"option_ids": []}})),
-        ChatResult(content=json.dumps({"status": "completed", "summary": "done"})),
-        ChatResult(content=json.dumps({"action": "tool", "tool": "recheck_shifted_schedule",
-                                       "args": {"option_ids": []}})),
-        ChatResult(content=json.dumps({"status": "completed", "summary": "done"})),
+        ChatResult(content=json.dumps({"status": "completed", "summary": "계산된 대응안을 비교했습니다."},
+                                      ensure_ascii=False)),
     ])
-    result = run_agent({"_llm_gateway": gateway}, {"content": "확정된 변경", "patch": {"estimated_finish": {"T045": "2026-12-28"}}},
-                       {"simulate_schedule": lambda option_ids: {"finish_date": "2026-12-28"},
-                        "recheck_shifted_schedule": lambda option_ids: {"finish_date": "2026-12-29"}},
-                       max_steps=4)
+    result = run_agent({"_llm_gateway": gateway,
+                        "scenario_summaries": [{"option_ids": [], "finish_date": "2028-01-25", "target_met": False}]},
+                       {"content": "확정된 변경", "patch": {"estimated_finish": {"T045": "2026-12-28"}}},
+                       {"recheck_shifted_schedule": lambda option_ids: {"finish_date": "2026-12-29"}})
     assert result["status"] == "completed"
-    assert [entry["tool"] for entry in result["tool_log"]] == ["simulate_schedule", "recheck_shifted_schedule"]
-    assert any("Before the final answer" in message.get("content", "")
-               for message in gateway.requests[2]["messages"])
+    assert result["tool_log"] == []
+    assert len(gateway.requests) == 1
+
+
+def test_tool_results_reach_the_model_without_per_task_schedules():
+    gateway = FakeGateway([
+        ChatResult(content=json.dumps({"action": "tool", "tool": "simulate_schedule", "args": {"option_ids": []}})),
+        ChatResult(content=json.dumps({"status": "completed", "summary": "검토 완료"}, ensure_ascii=False)),
+    ])
+    schedule = [{"task_id": f"T{index:03}", "planned_finish": "2027-01-01"} for index in range(64)]
+    constraints = [{"task_id": "T045", "date": f"2026-12-{day:02}"} for day in range(1, 21)]
+    full = {"finish_date": "2028-01-25", "schedule": schedule, "supplier_schedule": schedule,
+            "external_constraints": constraints}
+    result = run_agent({"_llm_gateway": gateway},
+                       {"content": "확정된 변경", "patch": {"estimated_finish": {"T045": "2026-12-28"}}},
+                       {"simulate_schedule": lambda option_ids: full})
+    sent = json.dumps(gateway.requests[1]["messages"][-1], ensure_ascii=False)
+    assert "planned_finish" not in sent and "2028-01-25" in sent
+    assert '\\"omitted_items\\": 8' in sent
+    assert result["tool_log"][0]["result"]["schedule"] == schedule
 
 
 def test_other_project_id_is_rejected_before_tool_execution():
