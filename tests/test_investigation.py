@@ -41,26 +41,27 @@ def notice(signal_id):
 def test_x2_finds_later_items_and_only_the_critical_one_moves_the_finish(hero):
     project, tasks, procurement = hero
     found = inv.procurement_items(tasks, procurement, supplier_id="Equipment Vendor A",
-                                  origin_country="South Korea", customs_required=True, arriving_after="2026-03-07")
+                                  origin_country="China", customs_required=True, arriving_after="2026-03-07")
     assert [row["item_id"] for row in found["items"]] == ["P-B", "P-C"]
     assert [row["needed_by"] for row in found["items"]] == ["2026-10-08", "2027-04-09"]
 
     named = inv.mentioned_items(LOOP["supplier_messages"][0]["content"], procurement)
     assert [(row["item_id"], row["supplier_id"], row["planned_arrival"]) for row in named] == [
         ("P-A1", "Equipment Vendor A", "2026-03-07")]
-    pinned = inv.schedule_slack(project, tasks, ["T042"], X2_PATCH, bound_days=30)["tasks"][0]
+    assert named[0]["origin_country"] == "China"
+    pinned = inv.schedule_slack(project, tasks, ["T042"], X2_PATCH, bound_days=60)["tasks"][0]
     assert 200 <= pinned["float_calendar_days"] < inv.FLOAT_SEARCH_DAYS and pinned["absorbs_bound"]
-    slack = inv.schedule_slack(project, tasks, ["T058", "T051"], X2_PATCH, bound_days=30)
+    slack = inv.schedule_slack(project, tasks, ["T058", "T051"], X2_PATCH, bound_days=60)
     by_task = {row["task_id"]: row for row in slack["tasks"]}
     assert by_task["T058"]["absorbs_bound"] and by_task["T058"]["float_calendar_days"] >= 200
     assert by_task["T051"]["float_calendar_days"] == 0 and by_task["T051"]["on_critical_path"]
 
-    worst_c = conditional(hero, X2_PATCH, [{"kind": "hold_after_arrival", "item_id": "P-C", "value": 30}])
+    worst_c = conditional(hero, X2_PATCH, [{"kind": "hold_after_arrival", "item_id": "P-C", "value": 60}])
     assert worst_c["finish_with_reported_change_only"] == "2027-12-21"
-    assert (worst_c["finish_date"], worst_c["added_shift_days_vs_reported_change"]) == ("2028-01-11", 21)
-    assert worst_c["changes"][0]["latest_action_date"] == "2027-03-10"
-    assert worst_c["changes"][0]["not_before"] == "2027-04-25"
-    worst_b = conditional(hero, X2_PATCH, [{"kind": "hold_after_arrival", "item_id": "P-B", "value": 30}])
+    assert (worst_c["finish_date"], worst_c["added_shift_days_vs_reported_change"]) == ("2028-02-11", 52)
+    assert worst_c["changes"][0]["latest_action_date"] == "2027-02-08"
+    assert worst_c["changes"][0]["not_before"] == "2027-05-25"
+    worst_b = conditional(hero, X2_PATCH, [{"kind": "hold_after_arrival", "item_id": "P-B", "value": 60}])
     assert worst_b["finish_date"] == "2027-12-21"
 
 
@@ -73,9 +74,9 @@ def test_x2_links_the_customs_notice_and_x2_control_only_overlaps(hero):
     x2, x2c = LOOP["supplier_messages"]
     linked = inv.related_signals({**x2, "related_task_ids": ["T042"]}, [signal], "V")["signals"]
     assert linked[0]["overlapping_task_ids"] == ["T042"]
-    assert {"통관", "수입 서류"} <= set(linked[0]["reason_terms"])
+    assert {"통관", "수출 허가"} <= set(linked[0]["reason_terms"])
     tempted = inv.related_signals({**x2c, "related_task_ids": ["T054"]}, [signal], "V")["signals"]
-    assert tempted[0]["overlapping_task_ids"] == ["T054"] and "통관" not in tempted[0]["reason_terms"]
+    assert tempted[0]["overlapping_task_ids"] == ["T054"] and tempted[0]["reason_terms"] == []
 
 
 def test_x1a_deadline_and_worst_case_and_x1b_absorbs(hero):

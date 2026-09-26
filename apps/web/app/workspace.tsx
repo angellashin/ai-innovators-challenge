@@ -1109,6 +1109,7 @@ function InvestigationPanel({ external, inactive, signals, runs, agentEnabled, b
   const log = (Array.isArray(agent.tool_log) ? agent.tool_log : []) as Dict[];
   const link = record.cause_link as Dict | undefined;
   const email = agent.email_draft as Dict | undefined;
+  const basis = (Array.isArray(data.real_case_basis) ? data.real_case_basis : []) as Dict[];
   const stop = text(data.status, "");
   const quiet = stop === "M1" || stop === "M2";
   const reasoning = log.length > 0 && <ol className="investigation-checks">{log.map((entry, index) => <li key={index}>
@@ -1127,6 +1128,7 @@ function InvestigationPanel({ external, inactive, signals, runs, agentEnabled, b
       {link && link.supplier_quote ? <p className="cause-link">원인 연결: 통보 <q>{text(link.supplier_quote)}</q> ↔ 공지 <q>{text(link.signal_quote)}</q></p> : null}
       {record.question ? <p className="event-question">확인 요청: {text(record.question)}</p> : null}
       {email && email.body ? <div className="agent-note email-draft"><h4>협력사 메일 초안 · 발송 전</h4><p><b>{text(email.to, "")}{email.to ? " · " : ""}{text(email.subject, "확인 요청")}</b></p><p className="draft-body">{text(email.body)}</p></div> : null}
+      {basis.length > 0 && <p className="real-basis">근거 실제 사례: {basis.map((row, index) => <span key={text(row.risk_id)}>{index ? " · " : ""}<a href={text(row.source_url)} target="_blank" rel="noreferrer">{text(row.title)}</a> ({text(row.source_name)}, 발행 {text(row.published_date)})</span>)}. 일정·날짜는 합성이며 기사 속 지연 기간은 계산에 쓰지 않습니다.</p>}
       {quiet ? <details><summary>영향 없음 · 이유 보기</summary>{reasoning}</details>
         : reasoning && <div className="investigation-log"><h4>판단 기록 · 에이전트가 고른 확인 순서</h4>{reasoning}</div>}
     </div>}

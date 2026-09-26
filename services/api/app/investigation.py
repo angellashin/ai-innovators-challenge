@@ -19,6 +19,7 @@ FLOAT_SEARCH_DAYS = 400
 # Concepts that can tie a supplier's stated reason to a notice, in either language.
 REASON_TERMS = {
     "통관": ("통관", "세관", "customs"),
+    "수출 허가": ("수출 허가", "export licence", "export license"),
     "수입 서류": ("수입 서류", "서류", "documentation", "document", "import"),
     "인허가": ("인허가", "허가", "permit", "approval", "license"),
     "환경 규정": ("환경", "environmental", "due-diligence", "규정", "regulation"),

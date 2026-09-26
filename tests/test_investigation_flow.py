@@ -13,7 +13,7 @@ from app.worker import run_once
 
 ROOT = Path(__file__).resolve().parents[1]
 LOOP = json.loads((ROOT / "data/hero_demo/external_loop_signals.json").read_text(encoding="utf-8"))
-QUOTE = "Authorities may take up to 30 days to review the documentation after submission."
+QUOTE = "Licence review may take up to 60 days after application."
 
 
 @pytest.fixture
@@ -73,26 +73,26 @@ def test_x2_investigation_finds_c_and_leaves_one_request(client, monkeypatch):
 
     requests = enable_agent(monkeypatch, [
         tool("find_procurement_items", reason="통보 사유가 공지와 같다면 같은 협력사·원산지의 이후 통관 품목도 서류가 필요합니다.",
-             supplier_id="Equipment Vendor A", origin_country="South Korea", customs_required=True,
+             supplier_id="Equipment Vendor A", origin_country="China", customs_required=True,
              arriving_after="2026-03-07"),
         tool("check_schedule_slack", reason="찾은 품목이 필요한 작업이 30일 검토를 흡수하는지 봅니다.",
-             task_ids=["T058", "T051"], bound_days=30),
+             task_ids=["T058", "T051"], bound_days=60),
         tool("simulate_conditional", reason="값이 원문에 없는 보류는 거절되는지 확인", changes=[
             {"kind": "hold_after_arrival", "item_id": "P-C", "value": 45, "fact_quote": QUOTE}]),
         tool("simulate_conditional", reason="T051은 여유가 없어 서류가 늦을 때의 완료일과 기한을 계산합니다.", changes=[
-            {"kind": "hold_after_arrival", "item_id": "P-C", "value": 30, "fact_quote": QUOTE}]),
+            {"kind": "hold_after_arrival", "item_id": "P-C", "value": 60, "fact_quote": QUOTE}]),
         tool("compare_responses", reason="대응안을 비교합니다."),
-        {"summary": "통관 서류 요건이 이후 반입될 P-C에도 걸리면 완료일이 2028-01-11로 밀립니다.", "status": "needs_input",
+        {"summary": "선적마다 수출 허가가 필요해 P-C가 늦으면 완료일이 2028-02-11로 밀립니다.", "status": "needs_input",
          "stop_reason": "P-B·P-C 서류 필요 여부 확인 필요",
          "investigation": {"stop": "M4", "cause_link": {"signal_event_id": "x", "supplier_quote": "현지 세관의 수입 서류 보완 요청",
                                                         "signal_quote": "requires additional environmental due-diligence documentation"},
                            "items": [{"item_id": "P-B", "task_id": "T058", "absorbs": True},
                                      {"item_id": "P-C", "task_id": "T051", "absorbs": False,
-                                      "latest_action_date": "2027-03-10", "worst_case_finish": "2028-01-11"}],
-                           "question": "P-B·P-C도 같은 서류가 필요한지, P-C 서류를 2027-03-10까지 낼 수 있는지 확인해 주세요.",
-                           "checks": ["P-B·P-C를 찾음", "T058 여유 245일, T051 여유 0일", "P-C 지연 시 2028-01-11"]},
+                                      "latest_action_date": "2027-02-08", "worst_case_finish": "2028-02-11"}],
+                           "question": "P-C 선적에도 별도 수출 허가가 필요합니까?",
+                           "checks": ["P-B·P-C를 찾음", "T058 여유 245일, T051 여유 0일", "P-C 지연 시 2028-02-11"]},
          "email_draft": {"to": "Equipment Vendor A", "subject": "P-B·P-C 수입 서류 확인 요청",
-                         "body": "P-C 서류를 2027-03-10까지 제출할 수 있는지 알려 주세요."}},
+                         "body": "P-C 수출 허가 신청 일정을 알려 주세요."}},
     ])
     queued = call(client, "post", f"/api/projects/{project_id}/events/{event_id}/investigations")
     assert run_once(Store())
@@ -105,13 +105,18 @@ def test_x2_investigation_finds_c_and_leaves_one_request(client, monkeypatch):
     assert [row["item_id"] for row in log[0]["result"]["items"]] == ["P-B", "P-C"]
     assert log[0]["args"]["reason"].startswith("통보 사유가 공지와 같다면")
     assert log[2]["result"]["status"] == "rejected"
-    assert (log[3]["result"]["finish_date"], log[3]["result"]["changes"][0]["latest_action_date"]) == ("2028-01-11", "2027-03-10")
+    assert (log[3]["result"]["finish_date"], log[3]["result"]["changes"][0]["latest_action_date"]) == ("2028-02-11", "2027-02-08")
     context = json.loads(requests[0]["messages"][1]["content"])["context"]
     assert context["reported_change"]["finish_date"] == "2027-12-21"
     assert [row["item_id"] for row in context["mentioned_items"]] == ["P-A1"]
     assert "narrow_candidates" not in requests[0]["tools"]
     action = Store().get_json("actions", run["data"]["action_ids"][0], project_id)["data"]
-    assert "2027-03-10" in action["request"] and action["source"] == "investigation"
+    # The model left the date out; the question carries the deadline the calculator produced.
+    assert action["request"] == "P-C 선적에도 별도 수출 허가가 필요합니까? (서류 제출 기한: P-C 2027-02-08)"
+    assert action["source"] == "investigation"
+    basis = run["data"]["real_case_basis"]
+    assert [row["risk_id"] for row in basis] == ["RS-019"] and basis[0]["source_url"].startswith("https://")
+    assert basis[0]["published_date"] == "2025-10-15"
     assert run["data"]["agent"]["email_draft"]["to"] == "Equipment Vendor A"
     project = call(client, "get", f"/api/projects/{project_id}")
     assert any(row["data"]["event_type"] == "investigation_ready" for row in project["notifications"])
@@ -167,22 +172,23 @@ def test_x1b_stops_early_without_notification(client, monkeypatch):
 
 def test_x1a_narrows_checks_facts_and_computes_the_deadline(client, monkeypatch):
     project_id, event_id = load_notice(client, "X1-A")
-    sentence = "Competent authorities may take up to 30 days to review."
-    quote = ("operators installing battery cell production equipment imported from outside the EU must submit "
-             "additional environmental due-diligence documentation before site installation and commissioning")
+    sentence = "Authorities may take up to 30 days to verify an application."
+    quote = ("companies bringing technicians from outside the EU to install or commission production equipment "
+             "must obtain a work-permit verification for each technician before site work starts")
     enable_agent(monkeypatch, [
         tool("narrow_candidates", reason="규칙 후보가 39개라 원문 인용으로 줄입니다."),
         {"candidates": [{"task_id": "T046", "quote": quote, "reason": "installation"},
                         {"task_id": "T053", "quote": quote, "reason": "commissioning"},
                         {"task_id": "T047", "quote": quote, "reason": "installation"}]},
-        tool("get_task_facts", reason="역외 수입 설비인지 원산지로 확인합니다.", task_ids=["T046", "T053", "T047"]),
+        tool("get_task_facts", reason="EU 역외 협력사 기술자가 현장 작업을 하는지 협력사 원산지로 확인합니다.",
+             task_ids=["T046", "T053", "T047"]),
         tool("check_schedule_slack", reason="해당 작업이 30일 검토를 흡수하는지 봅니다.", task_ids=["T046", "T053"], bound_days=30),
         tool("simulate_conditional", reason="흡수하지 못하므로 최악 조건과 제출 기한을 계산합니다.", changes=[
             {"kind": "hold_after_start", "task_id": "T046", "value": 30, "fact_quote": sentence}]),
         {"summary": "서류가 늦으면 완료일이 2028-02-01로 밀립니다.", "status": "needs_input", "stop_reason": "과도기 적용 여부 확인",
          "investigation": {"stop": "M4", "applicable_task_ids": ["T046", "T053"],
-                           "excluded": [{"task_id": "T047", "reason": "독일 제작 설비"}],
-                           "question": "셀 설비 서류를 2026-11-05까지 제출할 수 있는지 확인해 주세요.", "checks": []},
+                           "excluded": [{"task_id": "T047", "reason": "독일(EU 역내) 협력사"}],
+                           "question": "Vendor A 기술자의 취업 허가 확인을 신청할 수 있는지 확인해 주세요.", "checks": []},
          "email_draft": {"to": "Equipment Vendor A", "subject": "설비 서류 제출 일정 확인",
                          "body": "2026-11-05까지 제출 가능한지 알려 주세요."}},
     ])
@@ -196,3 +202,5 @@ def test_x1a_narrows_checks_facts_and_computes_the_deadline(client, monkeypatch)
     assert (log[3]["result"]["finish_date"], log[3]["result"]["changes"][0]["latest_action_date"]) == ("2028-02-01", "2026-11-05")
     assert run["data"]["status"] == "M4" and run["data"]["agent"]["investigation"]["applicable_task_ids"] == ["T046", "T053"]
     assert run["data"]["agent"]["usage"]["llm_calls"] == 6
+    assert run["data"]["real_case_basis"][0]["risk_id"] == "RS-001"
+    assert "2026-11-05" in Store().get_json("actions", run["data"]["action_ids"][0], project_id)["data"]["request"]

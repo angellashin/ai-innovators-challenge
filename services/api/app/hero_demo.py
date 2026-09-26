@@ -32,6 +32,21 @@ def hero_fixture(parsed: dict[str, Any]) -> dict[str, Any] | None:
     return fixture
 
 
+def real_case_basis(scenario_ids: list[str]) -> list[dict[str, Any]]:
+    """The real L2 articles a demo scenario is modelled on, for the judgment record (never model input)."""
+    from .risk_signals import _records
+
+    loop = json.loads(LOOP_SIGNALS.read_text(encoding="utf-8"))
+    entries = {str(item.get("signal_id") or item.get("event_id")): item
+               for item in [*loop["notices"], *loop["supplier_messages"]]}
+    risk_ids = list(dict.fromkeys(str(entries[key]["basis_risk_id"]) for key in scenario_ids
+                                  if key in entries and entries[key].get("basis_risk_id")))
+    records = {row["risk_id"]: row for row in _records()}
+    return [{key: records[risk_id].get(key) for key in ("risk_id", "title", "source_name", "source_url",
+                                                         "published_date", "event_summary")}
+            for risk_id in risk_ids if risk_id in records]
+
+
 def loop_notice(signal_id: str) -> dict[str, Any] | None:
     loop = json.loads(LOOP_SIGNALS.read_text(encoding="utf-8"))
     return next((item for item in loop["notices"] if item["signal_id"] == signal_id), None)

@@ -488,6 +488,18 @@ def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
                            for key, value in {**output["usage"], **state["usage"]}.items()} if output.get("usage") else state["usage"]
     record = output.get("investigation") or {"stop": "M5"}
     stop = record["stop"]
+    # A question about an item that cannot absorb the hold must carry the date to act by.
+    deadlines = [row for entry in output.get("tool_log") or [] if entry.get("tool") == "simulate_conditional"
+                 and entry.get("status") == "ok" and (entry.get("result") or {}).get("status") != "rejected"
+                 for row in (entry["result"].get("changes") or []) if row.get("latest_action_date")]
+    if record.get("question") and deadlines and not any(row["latest_action_date"] in record["question"] for row in deadlines):
+        due = ", ".join(f"{row.get('item_id') or row.get('task_id')} {row['latest_action_date']}" for row in deadlines)
+        record["question"] = f"{record['question'].rstrip()} (서류 제출 기한: {due})"
+    from .hero_demo import real_case_basis
+    scenario_ids = [str(event.get("demo_signal_id") or event.get("event_id") or "")] + [
+        str(next((row["data"].get("demo_signal_id") for row in rows if row["id"] == signal["event_id"]), "") or "")
+        for signal in signals]
+    basis = real_case_basis([item for item in scenario_ids if item])
     action_ids = []
     if record.get("question"):
         action_id = digest({"run_id": run["id"], "kind": "investigation"})[:32]
@@ -501,7 +513,7 @@ def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     db.put_json("events", event_row["id"], event, project_id=run["project_id"],
                 fingerprint=event_row["fingerprint"], created_at=event_row["created_at"])
     return {"status": stop, "summary": output.get("summary"), "agent": output, "action_ids": action_ids,
-            "related_signals": signals, "notify": stop not in {"M1", "M2"}}
+            "related_signals": signals, "real_case_basis": basis, "notify": stop not in {"M1", "M2"}}
 
 
 def _rules_only_agent(run_data: dict[str, Any]) -> dict[str, Any]:

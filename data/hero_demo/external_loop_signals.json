@@ -1,20 +1,23 @@
 {
   "label": "SYNTHETIC external-signal investigation scenarios for the hero project",
   "data_origin": "SYNTHETIC",
+  "note": "Schedules, dates and notice wording are synthetic. basis_risk_id names the real L2 case (data/l2_risk_signals) whose cause, delay mechanism and affected item type the scenario follows; article delay lengths are never used as schedule inputs.",
   "notices": [
     {
       "signal_id": "N-X2",
+      "basis_risk_id": "RS-019",
       "published_at": "2026-02-16T08:00:00+00:00",
       "url": "https://environment.ec.europa.eu/news_en#synthetic-nx2",
-      "title": "[합성] Customs documentation for imported battery cell production equipment",
-      "content": "[합성] From 2026-03-01, customs release of battery cell production equipment imported from outside the EU requires additional environmental due-diligence documentation. Authorities may take up to 30 days to review the documentation after submission."
+      "title": "[합성] Export licence for every shipment of rare-earth magnet parts from China",
+      "content": "[합성] From 2026-03-01, every shipment of rare-earth permanent magnets and parts containing them, including magnets built into production equipment, exported from China needs its own export licence, and shipments without a licence cannot clear customs. Licence review may take up to 60 days after application."
     },
     {
       "signal_id": "X1-A",
+      "basis_risk_id": "RS-001",
       "published_at": "2025-08-27T08:00:00+00:00",
       "url": "https://environment.ec.europa.eu/news_en#synthetic-x1a",
-      "title": "[합성] Battery regulation: due-diligence documentation for imported cell production equipment",
-      "content": "[합성] From 2026-11-01, operators installing battery cell production equipment imported from outside the EU must submit additional environmental due-diligence documentation before site installation and commissioning. Competent authorities may take up to 30 days to review. Transitional arrangements are not yet confirmed."
+      "title": "[합성] Work-permit verification for non-EU equipment installation technicians",
+      "content": "[합성] From 2026-11-01, companies bringing technicians from outside the EU to install or commission production equipment must obtain a work-permit verification for each technician before site work starts. Authorities may take up to 30 days to verify an application. Transitional arrangements are not yet confirmed."
     },
     {
       "signal_id": "X1-B",
@@ -27,10 +30,11 @@
   "supplier_messages": [
     {
       "event_id": "X2",
+      "basis_risk_id": "RS-019",
       "published_at": "2026-03-02T09:00:00+01:00",
       "channel": "supplier_message",
       "source_label": "Equipment Vendor A / 가상 메일",
-      "content": "[가상 메시지] 셀 설비 1차 선적(P-A1)이 현지 세관의 수입 서류 보완 요청을 받아 T042 통관 완료일이 2026-03-07에서 2026-03-14로 1주 늦어집니다. 보완 서류를 준비 중입니다.",
+      "content": "[가상 메시지] 셀 설비 1차 선적의 서보 모터 자석 부품(P-A1, 중국 공장 직송)이 중국 수출 허가를 기다리느라 T042 통관 완료일이 2026-03-07에서 2026-03-14로 1주 늦어집니다. 허가 서류를 보완 중입니다.",
       "mode": "SYNTHETIC"
     },
     {

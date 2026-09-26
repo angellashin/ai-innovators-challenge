@@ -656,6 +656,10 @@ def load_demo_signal(project_id: str, signal_id: str) -> dict[str, Any]:
     watch = db.get_json("watch_plans", project_id)
     created = _record_public_risks(db, project_id, watch["data"] if watch else {}, source, snapshot_id,
                                    notice["url"], data_origin="SYNTHETIC")
+    for event_id in created:  # lets the judgment record cite the real case this demo notice follows
+        row = db.get_json("events", event_id, project_id)
+        db.put_json("events", event_id, {**row["data"], "demo_signal_id": signal_id}, project_id=project_id,
+                    fingerprint=row["fingerprint"], created_at=row["created_at"])
     return {"event_ids": created, "duplicate": not created}
 
 
