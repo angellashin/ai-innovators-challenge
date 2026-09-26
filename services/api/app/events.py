@@ -223,7 +223,12 @@ def infer_event_patch(value: dict[str, Any], project: dict[str, Any], tasks: lis
             fat_candidates = test_tasks
             if direct_ids:
                 direct_test = [task for task in tasks if _task_id(task) in direct_ids and task in test_tasks]
-                fat_candidates = direct_test or test_tasks
+                # A named task keeps its ID even when its name misses the test keywords
+                # ("commissioning"). Fall back to keyword matches only when the named task is the
+                # manufacturing task whose finish was already taken and its test task is unnamed.
+                unclaimed = [] if "estimated_finish" in patch else [
+                    task for task in tasks if _task_id(task) in direct_ids]
+                fat_candidates = direct_test or unclaimed or test_tasks
             task_ids = [_task_id(task) for task in fat_candidates if _task_id(task)]
             if task_ids:
                 patch["not_before"] = {task_id: fat_start for task_id in task_ids}

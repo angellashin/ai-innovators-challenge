@@ -13,7 +13,7 @@ from app.main import app, normalize_import_snapshot, ConfirmInput
 from app.scheduling import simulate
 from app.storage import Store
 from app.worker import run_once
-from app.shifted_external import bundled_hu_calendars, recheck_shifted_schedule
+from app.shifted_external import bundled_hero_calendars, bundled_hu_calendars, recheck_shifted_schedule
 from app.supplier_interpreter import interpret_supplier_message
 from scripts.evaluation_mocks import MockEvaluationGateway
 
@@ -76,7 +76,13 @@ def test_hero_import_preserves_operational_fields_and_snapshot(client):
     assert by_id["T036"]["currency"] == "USD"
     assert by_id["T040"]["predecessor_ids"] == ["T038", "T020"]
     assert by_id["T045"]["predecessor_ids"] == ["T044", "T034"]
-    assert len(result["demo_events"]) == 9
+    # Nine hero notices, then the investigation scenarios: two supplier notices and three external notices.
+    assert [item["event_id"] for item in result["demo_events"][9:]] == ["X2", "X2-C", "N-X2", "X1-A", "X1-B"]
+    assert {item["channel"] for item in result["demo_events"][11:]} == {"registered_public_source"}
+    assert by_id["T042"]["origin_country"] == "South Korea" and by_id["T042"]["customs_required"] is True
+    assert by_id["T043"]["customs_required"] is False and by_id["T013"]["permit_required"] is True
+    procurement = {item["item_id"]: item for item in result["version"]["data"]["procurement"]}
+    assert procurement["P-C"]["needed_for_task_id"] == "T051" and procurement["P-C"]["planned_arrival"] == "2027-03-26"
     assert by_id["T021"]["outdoor"] and by_id["T045"]["outdoor"]
     assert by_id["T021"]["outdoor_data_origin"] == "SYNTHETIC"
     assert not by_id["T036"]["outdoor"]
@@ -309,3 +315,90 @@ def test_hero_ambiguous_no_impact_duplicate_and_past_task_guard(client):
                        json={"content": "T001 작업 완료일이 2025-02-05에서 2025-08-30로 변경됩니다.",
                              "published_at": "2025-08-21T09:00:00+02:00", "mode": "REPLAY"})
     assert past.status_code == 422
+
+
+def test_h04_agent_reviews_calculated_scenarios_once(client, monkeypatch):
+    import json as _json
+
+    from app.adapters.llm import ChatResult, OpenAICompatibleLLM
+
+    project_id, _ = hero_baseline(client)
+    h04 = next(item for item in MESSAGES["events"] if item["event_id"] == "H04")
+    event = request(client, "post", f"/api/projects/{project_id}/events", json=input_event(h04))
+    request(client, "patch", f"/api/projects/{project_id}/events/{event['event_id']}/review", json={"confirmed": True})
+    requests = []
+
+    def fake_chat(self, messages, tools=None, response_format=None):
+        requests.append({"messages": messages, "tools": [tool["function"]["name"] for tool in tools or []]})
+        return ChatResult(content=_json.dumps({
+            "summary": "T045 반입 지연으로 무대응 완료일이 늦어지고, 설치팀 추가 투입안이 가장 많이 회복합니다.",
+            "status": "needs_review", "stop_reason": "새 기간 공휴일의 현장 적용 확인",
+            "option_explanations": [{"option_ids": ["HOPT-01"], "text": "HOPT-01은 2028-01-11로 14일 회복합니다."}],
+            "regulatory_assessment": None, "email_draft": None, "unresolved_items": []}, ensure_ascii=False),
+            usage={"prompt_tokens": 100, "completion_tokens": 20})
+
+    for key, value in {"API_KEY": "k", "LLM_MODEL": "m", "LLM_BASE_URL": "https://gateway.invalid/v1",
+                       "REPLAN_PAID_CALLS_ENABLED": "true"}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(OpenAICompatibleLLM, "chat", fake_chat)
+    queued = request(client, "post", f"/api/projects/{project_id}/analyses", json={"event_id": event["event_id"]})
+    assert run_once(Store())
+    result = request(client, "get", f"/api/runs/{queued['run_id']}")
+
+    by_options = {tuple(row["data"]["option_ids"]): row["data"] for row in result["scenarios"]}
+    assert by_options[()]["finish_date"] == "2028-01-25"
+    assert by_options[()]["supplier_finish_shift_days"] == 21
+    assert by_options[()]["external_additional_shift_days"] == 14
+    assert by_options[("HOPT-01",)]["finish_date"] == "2028-01-11"
+
+    assert len(requests) == 1
+    assert not {"recheck_shifted_schedule", "simulate_schedule", "get_project_context",
+                "list_response_options"} & set(requests[0]["tools"])
+    context = _json.loads(requests[0]["messages"][1]["content"])["context"]
+    no_response = next(row for row in context["scenario_summaries"] if row["option_ids"] == [])
+    assert (no_response["finish_date"], no_response["supplier_finish_shift_days"],
+            no_response["external_additional_shift_days"]) == ("2028-01-25", 21, 14)
+    assert len(context["scenario_summaries"]) == 8
+    assert len(requests[0]["messages"][1]["content"]) < 30_000
+    agent = result["run"]["data"]["agent"]
+    assert agent["status"] == "needs_review"
+    assert "2028-01-11" in agent["option_explanations"][0]["text"]
+
+
+def test_named_commissioning_task_is_not_replaced_by_keyword_matches():
+    """X2-control: 'commissioning' is not a test keyword, but the named T054 must still be used."""
+    parsed = parse_upload(HERO.name, HERO.read_bytes())
+    snapshot = normalize_import_snapshot(parsed, {"name": "Hero", "mode": "REPLAY"}, ConfirmInput())
+    project, tasks = snapshot["project"], snapshot["tasks"]
+    published = "2026-03-05T09:00:00+01:00"
+    event = normalize_event({
+        "content": "[가상 메시지] T054 모듈 라인 시운전 착수를 2027-05-24 이후로 늦춥니다. 시험 인력 교대 일정 때문입니다.",
+        "channel": "supplier_message", "published_at": published, "mode": "REPLAY",
+        "data_origin": "SYNTHETIC", "simulation_as_of": published}, project, tasks)
+    assert event["patch"] == {"not_before": {"T054": "2027-05-24"}}
+    assert event["related_task_ids"] == ["T054"]
+    result = recheck_shifted_schedule(project, tasks, {**event, "related_task_ids": ["T054"]}, [], None,
+                                      bundled_hero_calendars(tasks), [], {})
+    assert result["finish_date"] == "2027-12-28"
+
+    # A named manufacturing task whose FAT is not named still moves the matching test task.
+    fat = normalize_event({
+        "content": "[가상 메시지] T036 셀 설비 제작 완료일이 2026-01-15로 변경됩니다. FAT는 2026-01-16부터 가능합니다.",
+        "channel": "supplier_message", "published_at": published, "mode": "REPLAY",
+        "data_origin": "SYNTHETIC", "simulation_as_of": published}, project, tasks)
+    assert fat["patch"]["estimated_finish"] == {"T036": "2026-01-15"}
+    assert "T038" in fat["patch"]["not_before"]
+
+
+def test_demo_external_notice_enters_through_the_scan_path(client):
+    project_id, _ = hero_baseline(client)
+    loaded = request(client, "post", f"/api/projects/{project_id}/demo/external-signals/N-X2")
+    assert len(loaded["event_ids"]) == 1
+    again = request(client, "post", f"/api/projects/{project_id}/demo/external-signals/N-X2")
+    assert again["duplicate"] is True
+    event = Store().get_json("events", loaded["event_ids"][0], project_id)["data"]
+    assert event["channel"] == "registered_public_source" and event["data_origin"] == "SYNTHETIC"
+    assert event["published_at"] == "2026-02-16T08:00:00+00:00"
+    assert "T042" in event["related_task_ids"]
+    runs = [row for row in Store().list_json("runs", project_id) if row["kind"] == "analysis"]
+    assert len(runs) == 1 and runs[0]["data"]["auto_detected"] is True

@@ -246,9 +246,11 @@ def test_hero_variant_llm_fallback_reaches_existing_external_recheck(tmp_path, m
     assert scenario["external_constraints"]
     assert scenario["supplier_finish_shift_days"] > 0
     assert scenario["provisional"]
-    assert gateway.calls >= 4
-    assert [row["tool"] for row in result["run"]["data"]["agent"]["tool_log"][:2]] == [
-        "simulate_schedule", "recheck_shifted_schedule"]
+    # A preview only interprets the notice (one call); the agent loop waits for a confirmed analysis.
+    assert gateway.calls == 1
+    agent = result["run"]["data"]["agent"]
+    assert agent["mode"] == "llm_interpretation" and "T045 2026-12-28" in agent["summary"]
+    assert not agent.get("tool_log")
     past = client.post(f"/api/projects/{project_id}/events", headers=header, json={
         "event_id": "PAST", "channel": "supplier_message", "source_label": "가상 검증",
         "content": "[가상 메시지] T001 조사 납기를 2026-12-28로 재통지합니다.",
@@ -286,7 +288,8 @@ def test_l3_agent_input_excludes_answers_and_identical_l2_event():
 def test_runtime_import_does_not_open_answer_files(monkeypatch):
     original = Path.read_text
     forbidden = {"ground_truth.json", "l3_to_wbs_mapping.json", "supplier_message_ground_truth.json",
-                 "supplier_message_variants_ground_truth.json", "outdoor_tasks.json"}
+                 "supplier_message_variants_ground_truth.json", "outdoor_tasks.json",
+                 "external_loop_ground_truth.json"}
 
     def guarded(path, *args, **kwargs):
         if path.name in forbidden:

@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from openpyxl import Workbook
 from pydantic import BaseModel, Field
 
+from .adapters.llm import agent_enabled, llm_mode
 from .events import normalize_event
 from .storage import Store, digest, identifier, utcnow
 
@@ -153,7 +154,11 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
         option["conditions"] = option.get("conditions") or option.get("condition")
         option["approval_state"] = option.get("approval_state") or option.get("execution_status")
         options.append(option)
+    # Purchase-list rows are facts for agent tools; the calculators never read them.
+    procurement = [{key: value for key, value in item.items() if not str(key).startswith("_")}
+                   for item in parsed.get("procurement", [])]
     return {"project": profile, "tasks": tasks, "options": options, "calendars": calendars,
+            "procurement": procurement,
             "demo_events": hero["events"] if hero else [], "data_origin": profile["data_origin"]}
 
 
@@ -237,6 +242,11 @@ class AnalysisInput(BaseModel):
     version_id: str | None = None
     budget_krw: int | None = Field(default=None, ge=0)
     preview_only: bool = False
+
+
+class ResolveInput(BaseModel):
+    decision: str = Field(pattern="^(applies|not_applicable)$")
+    note: str = Field(default="", max_length=500)
 
 
 class ReplanInput(BaseModel):
@@ -592,9 +602,29 @@ def get_project(project_id: str) -> dict[str, Any]:
         "supplier_calendars": db.list_json("supplier_calendars", project_id),
         "decision_deadlines": [{"id": item["id"], **item["data"]} for item in db.list_json("actions", project_id) if item["data"].get("due_at")],
         "demo_events": version["data"].get("demo_events", []) if version else [],
+        "agent_enabled": agent_enabled(),
+        "llm_mode": llm_mode(),
+        # Supplier notices with a same-period external change on the same tasks can be investigated.
+        "related_signals": _related_signals_by_event(db, project_id, version),
         "versions": [dict(row) for row in version_rows],
         "approvals": [dict(row) for row in approval_rows],
     }
+
+
+def _related_signals_by_event(db: Store, project_id: str, version: dict[str, Any] | None) -> dict[str, Any]:
+    from .investigation import related_signals
+
+    if not version:
+        return {}
+    rows = db.list_json("events", project_id, 1000)
+    found = {}
+    for row in rows:
+        data = row["data"]
+        if data.get("channel") == "supplier_message" and data.get("patch") and data.get("review_status") not in {"REJECTED", "SUPERSEDED"}:
+            signals = related_signals(data, rows, version["id"])["signals"]
+            if signals:
+                found[row["id"]] = signals
+    return found
 
 
 @app.post("/api/projects/{project_id}/demo/hero-baseline", dependencies=[Depends(authorize)])
@@ -609,6 +639,34 @@ async def import_hero_demo_baseline(project_id: str) -> dict[str, Any]:
     workbook = UploadFile(filename=HERO_WORKBOOK.name, file=io.BytesIO(HERO_WORKBOOK.read_bytes()))
     preview = await preview_import(project_id, workbook)
     return confirm_import(project_id, preview["import_id"], ConfirmInput())
+
+
+@app.post("/api/projects/{project_id}/demo/external-signals/{signal_id}", dependencies=[Depends(authorize)])
+def load_demo_signal(project_id: str, signal_id: str) -> dict[str, Any]:
+    """Record a bundled synthetic notice exactly as a registered-source scan would."""
+    from .hero_demo import HERO_PROJECT_ID, loop_notice
+    from .worker import _record_public_risks, _store_source_snapshot
+
+    db = store()
+    project = project_or_404(db, project_id)
+    if not db.current_version(project_id) or project["data"].get("hero_fixture_id") != HERO_PROJECT_ID:
+        raise HTTPException(409, "합성 외부 공지는 hero 데모 기준 일정에서만 불러올 수 있습니다")
+    notice = loop_notice(signal_id)
+    if not notice:
+        raise HTTPException(404, "signal not found")
+    source = {"status": "ok", "source_id": notice["url"].split("#")[0], "provider": "synthetic_demo",
+              "url": notice["url"], "fetched_at": notice["published_at"], "body_hash": digest(notice),
+              "feed_items": [{"id": signal_id, "url": notice["url"], "title": notice["title"],
+                              "content": notice["content"], "published_at": notice["published_at"]}]}
+    snapshot_id, _ = _store_source_snapshot(db, project_id, source)
+    watch = db.get_json("watch_plans", project_id)
+    created = _record_public_risks(db, project_id, watch["data"] if watch else {}, source, snapshot_id,
+                                   notice["url"], data_origin="SYNTHETIC")
+    for event_id in created:  # lets the judgment record cite the real case this demo notice follows
+        row = db.get_json("events", event_id, project_id)
+        db.put_json("events", event_id, {**row["data"], "demo_signal_id": signal_id}, project_id=project_id,
+                    fingerprint=row["fingerprint"], created_at=row["created_at"])
+    return {"event_ids": created, "duplicate": not created}
 
 
 @app.post("/api/projects/{project_id}/imports", dependencies=[Depends(authorize)])
@@ -708,7 +766,7 @@ def confirm_import(project_id: str, import_id: str, value: ConfirmInput) -> dict
     db.put_json("projects", project_id, profile)
     suggestion = suggest_watch_plan(profile, tasks)
     db.put_json("watch_plans", project_id, suggestion)
-    if suggestion["proposal_items"] and all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
+    if suggestion["proposal_items"] and agent_enabled():
         db.create_run(project_id, "watch_plan_enrich", None, version_id,
                       f"watch-plan-enrich:{version_id}", {})
     return {"version_id": version_id, "version_hash": digest(snapshot), "task_count": len(tasks), "watch_plan_suggestion": suggestion}
@@ -832,6 +890,93 @@ def create_event(project_id: str, value: EventInput) -> dict[str, Any]:
                             fingerprint=previous.get("fingerprint"), created_at=previous.get("created_at"))
     notify_project(db, project_id, "event_received", "새 변경 이벤트", f"{event.get('source_label', '입력')} 이벤트가 등록되었습니다.", data={"event_id": event_id})
     return {"event_id": event_id, "event": event, "duplicate": False}
+
+
+@app.post("/api/projects/{project_id}/events/{event_id}/investigations", status_code=202, dependencies=[Depends(authorize)])
+def start_investigation(project_id: str, event_id: str) -> dict[str, Any]:
+    """A person starts an investigation; nothing starts one automatically."""
+    from .investigation import EXTERNAL_CHANNELS, related_signals
+
+    db = store()
+    project_or_404(db, project_id)
+    record = db.get_json("events", event_id, project_id)
+    version = db.current_version(project_id)
+    if not record or not version:
+        raise HTTPException(404, "event not found")
+    if not agent_enabled():
+        raise HTTPException(409, "에이전트가 꺼져 있어 조사를 시작할 수 없습니다")
+    event = record["data"]
+    if event.get("review_status") in {"REJECTED", "SUPERSEDED"}:
+        raise HTTPException(409, "event rejected or superseded")
+    if event.get("channel") == "supplier_message":
+        if not event.get("patch") or not related_signals(event, db.list_json("events", project_id, 1000), version["id"])["signals"]:
+            raise HTTPException(409, "같은 기간·같은 작업의 외부 변화가 없어 조사할 것이 없습니다")
+    elif event.get("channel") not in EXTERNAL_CHANNELS:
+        raise HTTPException(409, "외부 변화 또는 협력사 통보만 조사할 수 있습니다")
+    key = digest({"investigation": event_id, "event_hash": digest(event.get("patch") or event.get("content")),
+                  "version_id": version["id"]})
+    run = db.create_run(project_id, "investigation", event_id, version["id"], key,
+                        {"project_context_snapshot": db.project_context_snapshot(project_id)})
+    return {"run_id": run["id"], "status": run["status"]}
+
+
+@app.post("/api/projects/{project_id}/investigations/{run_id}/resolve", dependencies=[Depends(authorize)])
+def resolve_investigation(project_id: str, run_id: str, value: ResolveInput) -> dict[str, Any]:
+    """A person records whether the investigated items are affected; if so the schedule is recalculated."""
+    from .external_risks import combine_patches
+    from .investigation import conditional_changes
+
+    db = store()
+    project_or_404(db, project_id)
+    run = db.get_json("runs", run_id, project_id)
+    if not run or run["kind"] != "investigation" or run["status"] != "succeeded":
+        raise HTTPException(404, "finished investigation not found")
+    data = run["data"]
+    if data.get("status") not in {"M3", "M4"}:
+        raise HTTPException(409, "이 조사에는 확인할 질문이 없습니다")
+    record = db.get_json("events", run["event_id"], project_id)
+    version = db.current_version(project_id)
+    if not record or not version:
+        raise HTTPException(404, "event not found")
+    event = dict(record["data"])
+    if (event.get("investigation") or {}).get("resolution"):
+        raise HTTPException(409, "이미 확인 결과를 기록했습니다")
+    applies = value.decision == "applies"
+    note = value.note.strip() or ("확인 결과 해당함(지연 반영)" if applies else "확인 결과 해당 없음")
+    changes = []
+    for entry in (data.get("agent") or {}).get("tool_log") or []:
+        if (entry.get("tool") == "simulate_conditional" and entry.get("status") == "ok"
+                and (entry.get("result") or {}).get("status") != "rejected"):
+            changes = (entry.get("args") or {}).get("changes") or []
+    if applies and not changes:
+        raise HTTPException(409, "다시 계산할 조건부 결과가 없습니다")
+    for action_id in data.get("action_ids") or []:
+        action = db.get_json("actions", action_id, project_id)
+        if action:
+            db.put_json("actions", action_id, {**action["data"], "state": "DONE", "note": note, "decision": value.decision},
+                        project_id=project_id, event_id=action.get("event_id"), scenario_id=action.get("scenario_id"))
+    resolution = {"decision": value.decision, "note": note, "at": utcnow(), "run_id": run_id}
+    event["investigation"] = {**(event.get("investigation") or {}), "resolution": resolution}
+    analysis_run = None
+    if applies:
+        # The same deterministic holds the investigation calculated, now confirmed by a person.
+        patch, applied = conditional_changes(version["data"]["tasks"], version["data"].get("procurement") or [], changes)
+        event["patch"] = combine_patches([event.get("patch") or {}, patch])
+        related = list(event.get("related_task_ids") or [])
+        event["related_task_ids"] = related + [row["task_id"] for row in applied if row["task_id"] not in related]
+        event["confirmed_additions"] = [{**row, "note": note} for row in applied]
+        event["review_status"] = "CONFIRMED"
+    db.put_json("events", record["id"], event, project_id=project_id,
+                fingerprint=record.get("fingerprint"), created_at=record.get("created_at"))
+    if applies:
+        analysis_run = db.create_run(project_id, "analysis", record["id"], version["id"],
+                                     digest({"resolved": run_id, "patch": event["patch"]}),
+                                     {"budget_krw": None, "preview_only": False, "resolved_from": run_id,
+                                      "project_context_snapshot": db.project_context_snapshot(project_id)})
+    notify_project(db, project_id, "investigation_resolved", "조사 확인 결과 기록",
+                   "추가 영향을 반영해 일정을 다시 계산합니다." if applies else "해당 없음으로 기록했습니다. 기존 분석을 유지합니다.",
+                   data={"event_id": record["id"], "run_id": run_id})
+    return {"decision": value.decision, "analysis_run_id": analysis_run["id"] if analysis_run else None}
 
 
 @app.patch("/api/projects/{project_id}/events/{event_id}/review", dependencies=[Depends(authorize)])
@@ -1199,5 +1344,6 @@ def usage() -> dict[str, Any]:
         "known_cost_usd": known_cost,
         "cost_unknown": any(item["cost_status"] != "KNOWN" for item in items),
         "paid_calls_enabled": os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true",
+        "llm_mode": llm_mode(),
         "daily_paid_run_limit": int(os.environ.get("REPLAN_MAX_PAID_RUNS_PER_DAY", "20")),
     }

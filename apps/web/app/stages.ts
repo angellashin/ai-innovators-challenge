@@ -75,9 +75,17 @@ export function runScenarioCount(run?: Row) {
 
 export function deriveProgress(state: ProjectRecords): Progress {
   const events = (state.events || []).filter((item) => !INACTIVE.has(String(item.data?.review_status)));
-  const focusEvent = events[0];
+  // Follow the change the person last analysed, unless a newer change arrived since.
+  const userRuns = (state.runs || []).filter((item) => item.kind === "analysis" && !isPreview(item)
+    && !(item.data as Dict | undefined)?.auto_detected)
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  const actedEvent = userRuns.length ? events.find((item) => item.id === userRuns[0].event_id) : undefined;
+  const newestEvent = events[0];
+  const focusEvent = actedEvent && (!newestEvent || String(userRuns[0].created_at || "") >= String(newestEvent.created_at || ""))
+    ? actedEvent : newestEvent;
   const focusData = focusEvent?.data || {};
-  const runs = (state.runs || []).filter((item) => item.kind === "analysis" && focusEvent && item.event_id === focusEvent.id);
+  const runs = (state.runs || []).filter((item) => item.kind === "analysis" && focusEvent && item.event_id === focusEvent.id)
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
   const analysisRun = runs.find((item) => item.status === "succeeded" && !isPreview(item) && runScenarioCount(item) > 0);
   const pendingAnalysis = runs.find((item) => !FINAL.has(String(item.status)) && !isPreview(item));
   const interpreting = runs.find((item) => !FINAL.has(String(item.status)) && isPreview(item));

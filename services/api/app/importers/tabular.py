@@ -29,6 +29,7 @@ EMPTY_RESULT = {
     "options": [],
     "events": [],
     "calendars": [],
+    "procurement": [],
     "mapping": {},
     "warnings": [],
 }
@@ -105,7 +106,21 @@ HEADER_ALIASES = {
     "scope": {"적용범위", "scope"},
     "calendar_type": {"구분", "type", "calendar_type"},
     "description": {"설명", "description"},
+    # Purchase-list fields: link tasks and items to origin, customs and permits.
+    "origin_country": {"origin_country", "원산지", "제조국"},
+    "customs_required": {"customs_required", "통관필요", "역외통관"},
+    "permit_required": {"permit_required", "인허가필요"},
+    "item_id": {"item_id", "품목id", "품목번호"},
+    "item_name": {"item_name", "품목명"},
+    "quantity": {"quantity", "수량"},
+    "incoterms": {"incoterms", "인도조건"},
+    "permit_or_certification": {"permit_or_certification", "필요인증", "인증서류"},
+    "planned_arrival": {"planned_arrival", "도착예정일", "반입예정일"},
+    "needed_for_task_id": {"needed_for_task_id", "필요작업id", "사용작업id"},
 }
+
+YES = {"예", "y", "yes", "true", "1", "o"}
+NO = {"아니오", "n", "no", "false", "0", "x"}
 
 TASK_KEYS = {"task_id", "name", "planned_start", "planned_finish"}
 
@@ -427,6 +442,8 @@ def _merge_table(result: dict[str, Any], source_name: str, table: dict[str, Any]
         result["options"].extend(records)
     elif normalised_name in {"변경이벤트", "event_replay_fixtures", "events"}:
         result["events"].extend(records)
+    elif normalised_name in {"구매목록", "procurement", "purchaselist"}:
+        result["procurement"].extend(_strip_empty_task_fields(record) for record in records if record.get("item_id"))
     elif records and not any([result["tasks"], result["project"], result["options"], result["events"], result["calendars"]]):
         result["tasks"].extend(_strip_empty_task_fields(record) for record in records if record.get("task_id") or record.get("name"))
 
@@ -501,11 +518,14 @@ def _normalise_text(value: Any) -> str:
 
 
 def _coerce_by_key(key: str, value: Any) -> Any:
-    if key in {"planned_start", "planned_finish", "calendar_date"}:
+    if key in {"customs_required", "permit_required"}:
+        text = str(value).strip().lower()
+        return True if text in YES else False if text in NO else None
+    if key in {"planned_start", "planned_finish", "calendar_date", "planned_arrival"}:
         return _coerce_date(value)
     if key == "received_at":
         return _coerce_datetime(value)
-    if key in {"duration_days", "duration_workdays", "demand_teams", "capacity_teams", "extra_cost_krw"}:
+    if key in {"duration_days", "duration_workdays", "demand_teams", "capacity_teams", "extra_cost_krw", "quantity"}:
         return _coerce_int(value)
     if key == "progress":
         return _coerce_float(value)

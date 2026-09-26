@@ -13,6 +13,8 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       REPLAN_PAID_CALLS_ENABLED: ${REPLAN_PAID_CALLS_ENABLED:-false}
       REPLAN_MAX_PAID_RUNS_PER_DAY: ${REPLAN_MAX_PAID_RUNS_PER_DAY:-20}
+      REPLAN_LLM_MODE: ${REPLAN_LLM_MODE:-live}
+      REPLAN_LLM_CASSETTE: /workspace/data/llm_replay/hero_demo.json
     volumes:
       - replan_data:/data
     ports:
@@ -37,6 +39,8 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       REPLAN_PAID_CALLS_ENABLED: ${REPLAN_PAID_CALLS_ENABLED:-false}
       REPLAN_MAX_PAID_RUNS_PER_DAY: ${REPLAN_MAX_PAID_RUNS_PER_DAY:-20}
+      REPLAN_LLM_MODE: ${REPLAN_LLM_MODE:-live}
+      REPLAN_LLM_CASSETTE: /workspace/data/llm_replay/hero_demo.json
     volumes:
       - replan_data:/data
     depends_on:

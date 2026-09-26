@@ -13,6 +13,7 @@ from itertools import combinations
 from typing import Any
 from urllib.parse import urlparse
 
+from .adapters.llm import agent_enabled, llm_mode
 from .events import normalize_event
 from .storage import Store, digest, identifier, utcnow
 
@@ -106,6 +107,8 @@ def _candidate_options(options: list[dict[str, Any]], unavailable: set[str]) -> 
 
 def _reserve_paid_attempt(db: Store, run_id: str) -> str:
     """Reserve before network I/O so crash recovery cannot silently double-charge."""
+    if llm_mode() == "replay":
+        return "reserved"  # recorded responses cost nothing and are not counted
     limit = max(0, int(os.environ.get("REPLAN_MAX_PAID_RUNS_PER_DAY", "20")))
     today = utcnow()[:10]
     with db.transaction() as conn:
@@ -163,63 +166,48 @@ def _supplier_external_sources(db: Store, project_id: str, project: dict, tasks:
     return calendars, weather, plan, missing
 
 
-def _run_supplier_agent(db: Store, run: dict[str, Any], project: dict[str, Any],
-                        tasks: list[dict[str, Any]], options: list[dict[str, Any]],
-                        event: dict[str, Any]) -> dict[str, Any]:
-    """Give the agent read-only, bounded tools before scenario records are built."""
+REGULATORY_TERMS = ("규제", "인허가", "허가", "법령", "법규", "규정", "regulation", "regulatory", "permit", "license")
+
+
+def _scenario_brief(item: dict[str, Any]) -> dict[str, Any]:
+    """What the agent needs from one calculated scenario; the full schedule stays in the record."""
+    constraints = item.get("external_constraints") or []
+    return {
+        "label": item.get("label"), "option_ids": item.get("option_ids") or [],
+        "finish_date": item.get("finish_date"), "finish_shift_days": item.get("finish_shift_days"),
+        "recovery_days_vs_no_response": item.get("recovery_days_vs_no_response"),
+        "supplier_finish_shift_days": item.get("supplier_finish_shift_days"),
+        "external_additional_shift_days": item.get("external_additional_shift_days"),
+        "extra_cost_krw": item.get("extra_cost_krw"), "target_met": item.get("target_met"),
+        "budget_met": item.get("budget_met"), "violations": item.get("violations") or [],
+        "changed_task_count": len(item.get("changed_tasks") or []),
+        "new_calendar_constraint_count": len(constraints),
+        "new_calendar_constraints": [{key: row.get(key) for key in ("task_id", "date", "name", "kind")}
+                                     for row in constraints[:8]],
+        "required_confirmations": item.get("required_confirmations") or [],
+    }
+
+
+def _run_review_agent(db: Store, run: dict[str, Any], project: dict[str, Any], tasks: list[dict[str, Any]],
+                      options: list[dict[str, Any]], event: dict[str, Any],
+                      scenario_results: list[dict[str, Any]], budget: Any) -> dict[str, Any]:
+    """Explain already-calculated scenarios and gather evidence; calculators have run before this."""
     from .adapters.llm import OpenAICompatibleLLM
     from .agent import run_agent
     from .risk_signals import search_risk_signals as lookup_risk_signals
     from .scheduling import simulate
-    from .shifted_external import recheck_shifted_schedule as calculate_recheck
-    from .task_retrieval import retrieve_related_tasks
 
-    budget = (run.get("data") or {}).get("budget_krw")
-    gateway = OpenAICompatibleLLM()
-    source_bundle = None
-    snapshots = db.list_json("source_snapshots", run["project_id"], limit=30)
-    source_calls = {"search": 0, "fetch": 0, "weather": 0}
+    as_of = str(event.get("published_at") or event.get("received_at") or "")[:10]
+    snapshots = [row for row in db.list_json("source_snapshots", run["project_id"], limit=30) if row["status"] == "ok"]
+    source_calls = {"search": 0, "fetch": 0}
 
-    def get_project_context() -> dict[str, Any]:
-        """Return source project and task context, without evaluation answers."""
-        return {"project": project, "tasks": [{"task_id": task["task_id"], "name": task.get("name"),
-                "phase": task.get("phase"), "status": task.get("status")} for task in tasks]}
-
-    def find_task_candidates() -> dict[str, Any]:
-        """Find quoted, ranked work candidates when the notice does not name one clearly."""
-        if event.get("related_task_ids"):
-            return {"status": "resolved", "task_ids": event["related_task_ids"],
-                    "candidates": event.get("task_candidates") or []}
-        return retrieve_related_tasks(str(event.get("content") or ""), tasks, gateway)
-
-    def list_response_options() -> dict[str, Any]:
-        """List registered response options and their human approval conditions."""
-        return {"options": options, "budget_krw": budget}
-
-    def simulate_schedule(option_ids: list[str]) -> dict[str, Any]:
-        """Calculate a supplier-only schedule for registered response options."""
-        if not event.get("patch"):
-            return {"status": "NEEDS_INPUT", "reason": "작업과 변경 날짜가 확인되지 않았습니다."}
-        if not set(option_ids).issubset({str(item.get("option_id")) for item in options}):
-            return {"status": "invalid_input", "reason": "unknown option"}
-        chosen = [item for item in options if item.get("option_id") in option_ids]
-        return simulate(project, tasks, event=event, options=chosen, budget_krw=budget)
-
-    def recheck_shifted_schedule(option_ids: list[str]) -> dict[str, Any]:
-        """Calculate the shifted schedule with calendar and weather constraints."""
-        nonlocal source_bundle
-        if not event.get("patch"):
-            return {"status": "NEEDS_INPUT", "reason": "작업과 변경 날짜가 확인되지 않았습니다."}
-        if source_bundle is None:
-            source_bundle = _supplier_external_sources(db, run["project_id"], project, tasks, event,
-                (run.get("data") or {}).get("project_context_snapshot", {}).get("watch_plan"))
-        if source_bundle[3]:
-            return {"status": "NEEDS_INPUT", "reason": "공휴일 출처가 부족합니다.", "missing": source_bundle[3]}
-        if not set(option_ids).issubset({str(item.get("option_id")) for item in options}):
-            return {"status": "invalid_input", "reason": "unknown option"}
-        chosen = [item for item in options if item.get("option_id") in option_ids]
-        calendars, weather, plan, _ = source_bundle
-        return calculate_recheck(project, tasks, event, chosen, budget, calendars, weather, plan)
+    def search_risk_signals(risk_type: str = "", stage: str = "") -> dict[str, Any]:
+        """Search L2 real-world cases; cases published after the notice are reference only."""
+        result = lookup_risk_signals(risk_type=risk_type, stage=stage, limit=5)
+        for row in result["results"]:
+            later = bool(as_of and str(row.get("published_date") or "") > as_of)
+            row["temporal_status"] = "POST_AS_OF_REFERENCE" if later else "AVAILABLE_AS_OF"
+        return result
 
     def simulate_regulatory_condition(option_ids: list[str]) -> dict[str, Any]:
         """Calculate only an explicitly supplied, unconfirmed regulation scenario."""
@@ -241,65 +229,367 @@ def _run_supplier_agent(db: Store, run: dict[str, Any], project: dict[str, Any],
         result = simulate(project, tasks, event={**event, "patch": combined}, options=chosen, budget_krw=budget)
         return {**result, "conditional": True, "approval_required": True}
 
-    def search_risk_signals(risk_type: str = "", stage: str = "") -> dict[str, Any]:
-        """Search L2 cases; later publications are labelled as reference only."""
-        result = lookup_risk_signals(risk_type=risk_type, stage=stage, limit=5)
-        as_of = str(event.get("published_at") or event.get("received_at") or "")[:10]
-        for row in result["results"]:
-            later = bool(as_of and str(row.get("published_date") or "") > as_of)
-            row["temporal_status"] = "POST_AS_OF_REFERENCE" if later else "AVAILABLE_AS_OF"
-        return result
-
     def search_public_sources(query: str) -> dict[str, Any]:
         """Search previously collected, allowed public source snapshots."""
         source_calls["search"] += 1
         if source_calls["search"] > 2:
             return {"status": "limit_reached", "results": []}
         terms = [part.lower() for part in query.split() if part]
-        matches = [item for item in snapshots if item["status"] == "ok" and all(
+        matches = [item for item in snapshots if all(
             term in str(item["data"].get("title", "") + " " + item["data"].get("summary", "")).lower() for term in terms)]
-        return {"status": "ok", "results": [{"snapshot_id": item["id"], "title": item["data"].get("title")}
-                                           for item in matches[:3]]}
+        return {"status": "ok", "results": [{"snapshot_id": item["id"], "title": item["data"].get("title"),
+                                            "summary": item["data"].get("summary")} for item in matches[:3]]}
 
     def fetch_allowed_source(snapshot_id: str) -> dict[str, Any]:
         """Fetch one already approved source snapshot by ID."""
         source_calls["fetch"] += 1
         if source_calls["fetch"] > 3:
             return {"status": "limit_reached"}
-        match = next((item for item in snapshots if item["id"] == snapshot_id and item["status"] == "ok"), None)
+        match = next((item for item in snapshots if item["id"] == snapshot_id), None)
         return {"status": "ok", "snapshot": match["data"]} if match else {"status": "not_found"}
 
-    def fetch_weather() -> dict[str, Any]:
-        """Fetch one previously collected weather snapshot."""
-        source_calls["weather"] += 1
-        if source_calls["weather"] > 1:
-            return {"status": "limit_reached"}
-        match = next((item for item in snapshots if item["data"].get("provider") == "open_meteo" and item["status"] == "ok"), None)
-        return {"status": "ok", "snapshot": match["data"]} if match else {"status": "not_found"}
+    tools: dict[str, Any] = {"search_risk_signals": search_risk_signals}
+    if any(term in str(event.get("content") or "").lower() for term in REGULATORY_TERMS):
+        tools["simulate_regulatory_condition"] = simulate_regulatory_condition
+    if snapshots:
+        tools.update(search_public_sources=search_public_sources, fetch_allowed_source=fetch_allowed_source)
 
-    def prepare_change_package() -> dict[str, Any]:
-        """Describe the human review gate; never approve or send."""
-        return {"status": "draft_only", "required_confirmations": event.get("verification_required") or []}
-
+    by_id = {str(task["task_id"]): task for task in tasks}
+    no_response = next((item for item in scenario_results if not item.get("option_ids")), {})
+    evidence = event.get("evidence") or {}
+    context = {
+        "_llm_gateway": OpenAICompatibleLLM(),
+        "project": {key: project.get(key) for key in ("project_id", "project_name", "target_finish",
+                                                      "country", "region", "currency") if project.get(key)},
+        "baseline_finish": no_response.get("baseline_finish"),
+        "budget_krw": budget,
+        "related_tasks": [{key: by_id[task_id].get(key) for key in ("task_id", "name", "phase", "baseline_start",
+                                                                   "baseline_finish", "supplier_id")}
+                          for task_id in event.get("related_task_ids") or [] if task_id in by_id],
+        "changed_tasks_without_response": (no_response.get("changed_tasks") or [])[:12],
+        "scenario_summaries": [_scenario_brief(item) for item in scenario_results],
+        "response_options": [{key: option.get(key) for key in ("option_id", "name", "target_ids", "reduction_workdays",
+                                                               "extra_cost_krw", "conditions", "approval_state")}
+                             for option in options],
+        "risk_signal_evidence": [{key: row.get(key) for key in ("risk_id", "title", "published_date", "risk_type",
+                                                                "country", "temporal_status")}
+                                 for row in event.get("risk_signal_evidence") or []],
+        "external_evidence": {key: evidence.get(key) for key in ("kind", "source_url", "published_at", "fetched_at")
+                              if evidence.get(key)} or None,
+    }
+    brief_event = {key: event.get(key) for key in ("event_id", "channel", "source_label", "title", "content",
+                                                   "published_at", "received_at", "patch", "related_task_ids",
+                                                   "verification_required", "corrects_event_id",
+                                                   "conditional_regulatory_patch") if event.get(key)}
     try:
-        return run_agent({"_llm_gateway": gateway, "project": project,
-                          "related_tasks": [task for task in tasks if task.get("task_id") in event.get("related_task_ids", [])],
-                          "task_candidates": event.get("task_candidates") or [],
-                          "risk_signal_evidence": event.get("risk_signal_evidence") or []}, event,
-                         {"get_project_context": get_project_context,
-                          "find_task_candidates": find_task_candidates,
-                          "simulate_schedule": simulate_schedule,
-                          "recheck_shifted_schedule": recheck_shifted_schedule,
-                          "simulate_regulatory_condition": simulate_regulatory_condition,
-                          "search_risk_signals": search_risk_signals,
-                          "list_response_options": list_response_options,
-                          "search_public_sources": search_public_sources,
-                          "fetch_allowed_source": fetch_allowed_source,
-                          "fetch_weather": fetch_weather,
-                          "prepare_change_package": prepare_change_package})
+        return run_agent(context, brief_event, tools)
     except Exception as exc:
-        return {"status": "failed", "summary": "에이전트 판단에 실패해 규칙 결과를 사용했습니다.",
+        return {"status": "failed", "summary": "에이전트 검토에 실패해 계산 결과만 제공합니다.",
                 "stop_reason": type(exc).__name__, "tool_log": []}
+
+
+INVESTIGATION_PROMPT = (
+    "You investigate whether an external change affects a project schedule. Deterministic tools do all date, "
+    "float and schedule work; you decide what to check next and stop as early as the evidence allows. "
+    "Every tool call must include reason: one Korean sentence saying why this check is needed now. "
+    "When context.supplier_notice is present: first decide from the supplier's stated reason and each "
+    "context.related_signals quote whether they share a cause. If not, stop with M1. If they do, look for other "
+    "purchase items the notice's condition also covers (same supplier and origin, customs, arriving later) with "
+    "find_procurement_items; the supplier did not mention them. Take supplier_id and origin_country from "
+    "context.mentioned_items (the named item's supplier, not the owner of a logistics task) and arriving_after from "
+    "that item's planned_arrival. Then check_schedule_slack for the tasks those items "
+    "are needed for, using the notice's duration bound; then simulate_conditional (kind hold_after_arrival, the "
+    "bound as value, the fact quote) only for items whose task cannot absorb the bound. "
+    "When context.notice is present: if context.rule_candidates is long, call narrow_candidates; use get_task_facts "
+    "to decide which candidates the notice's condition applies to (origin, customs, permits, phase); "
+    "check_schedule_slack with the bound; if every applicable task absorbs it stop with M2; otherwise "
+    "simulate_conditional (kind hold_after_start); call search_risk_signals once only if applicability stays unclear. "
+    "Call compare_responses only when the impact is certain and nothing is left for a person to confirm. "
+    "Stops: M1 not related, M2 no finish impact, M3 duration not stated, M4 a person must confirm a fact, "
+    "M5 cannot calculate, done compared responses. "
+    'Return only JSON: {"summary": Korean string, "status": "completed|needs_input|needs_review", '
+    '"stop_reason": Korean string, "investigation": {"stop": "M1|M2|M3|M4|M5|done", '
+    '"cause_link": {"signal_event_id", "supplier_quote", "signal_quote"} or null, '
+    '"items": [{"item_id", "task_id", "absorbs", "latest_action_date", "worst_case_finish"}], '
+    '"applicable_task_ids": [], "excluded": [{"task_id", "reason"}], '
+    '"question": one Korean question for a person or "", "checks": [one short Korean line per tool call: what it showed]}, '
+    '"email_draft": {"to", "subject", "body"} in Korean or null, "unresolved_items": []}. '
+    "Quotes must be exact substrings of the given texts. Use tool values exactly for dates and days. Never name items "
+    "or tasks that no tool returned. Ask at most one question; when you ask, also draft a supplier email that asks "
+    "the same thing. A draft never sends. Never request commit or send actions."
+)
+
+
+def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
+    """A person-started investigation of one external notice or of a supplier notice's cause."""
+    from . import investigation as inv
+    from .adapters.llm import OpenAICompatibleLLM
+    from .agent import run_agent
+    from .external_risks import combine_patches, interpret_notice
+    from .risk_signals import search_risk_signals as lookup_risk_signals
+    from .shifted_external import recheck_shifted_schedule
+
+    if not agent_enabled():
+        return {"status": "disabled", "summary": "에이전트가 꺼져 있어 조사하지 않았습니다."}
+    event_row = db.get_json("events", run["event_id"], run["project_id"])
+    version = db.get_json("versions", run["version_id"], run["project_id"])
+    if not event_row or not version:
+        raise ValueError("event or version was removed")
+    event = event_row["data"]
+    snapshot = version["data"]
+    context_snapshot = (run.get("data") or {}).get("project_context_snapshot") or {}
+    project = dict(context_snapshot.get("project") or snapshot["project"])
+    tasks, procurement = snapshot["tasks"], snapshot.get("procurement") or []
+    options = snapshot.get("options") or []
+    if not options:
+        from .hero_demo import hero_response_options
+        options = hero_response_options(project, tasks)
+    rows = db.list_json("events", run["project_id"], 1000)
+    supplier = event.get("channel") == "supplier_message"
+    base_patch = (event.get("patch") or {}) if supplier else {}
+    baseline_finish = max(str(task["baseline_finish"])[:10] for task in tasks)
+    sources = _supplier_external_sources(db, run["project_id"], project, tasks, event, context_snapshot.get("watch_plan"))
+    calendars, weather, plan, missing = sources
+    if missing:
+        return {"status": "NEEDS_INPUT", "summary": "공휴일 출처가 부족해 조사할 수 없습니다.", "missing_fields": missing}
+
+    def recheck(patch: dict[str, Any], chosen: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        related = sorted({task_id for values in patch.values() if isinstance(values, dict) for task_id in values})
+        return recheck_shifted_schedule(project, tasks, {**event, "patch": patch, "related_task_ids": related},
+                                        chosen or [], None, calendars, weather, plan)
+
+    reported = recheck(base_patch) if base_patch else {"finish_date": baseline_finish}
+    if supplier:
+        signals = inv.related_signals(event, rows, version["id"])["signals"]
+        if not signals:
+            return {"status": "NO_RELATED_SIGNAL", "summary": "같은 기간·같은 작업의 외부 변화가 없어 조사하지 않았습니다."}
+        texts = [str(event.get("content") or "")] + [next((row["data"].get("content") for row in rows if row["id"] == signal["event_id"]), "") or ""
+                                                     for signal in signals]
+    else:
+        signals = []
+        texts = [str(event.get("content") or "")]
+    facts = [fact for text in texts for fact in inv.notice_facts(text)]
+    durations = {fact["value"] for fact in facts if fact["kind"] == "max_duration_days"}
+    literal_dates = {fact["value"] for fact in facts if fact["kind"] == "date"}
+    state: dict[str, Any] = {"slack_checked": set(), "conditional": None, "usage": {}, "risk_searches": 0}
+
+    def find_procurement_items(reason: str, supplier_id: str = "", origin_country: str = "",
+                               customs_required: bool = True, arriving_after: str = "") -> dict[str, Any]:
+        """Purchase-list items by supplier, origin, customs need and arrival after a date."""
+        return inv.procurement_items(tasks, procurement, supplier_id, origin_country, customs_required, arriving_after)
+
+    def get_task_facts(reason: str, task_ids: list[str]) -> dict[str, Any]:
+        """Task origin, customs and permit attributes and the purchase items each task needs."""
+        return inv.task_facts(tasks, procurement, task_ids)
+
+    def check_schedule_slack(reason: str, task_ids: list[str], bound_days: int = 0) -> dict[str, Any]:
+        """Calendar days each task's start can slip before the finish moves; bound_days must be stated in a notice."""
+        if bound_days and bound_days not in durations:
+            return {"status": "rejected", "reason": "기간 상한은 공지 원문에 적힌 값만 쓸 수 있습니다.",
+                    "stated_durations": sorted(durations)}
+        state["slack_checked"].update(task_ids)
+        return inv.schedule_slack(project, tasks, task_ids, base_patch, bound_days or None)
+
+    def simulate_conditional(reason: str, changes: list[dict]) -> dict[str, Any]:
+        """Conditional schedule for stated holds: kind hold_after_arrival (item_id), hold_after_start (task_id) or not_before."""
+        for change in changes:
+            value = change.get("value")
+            stated = value in literal_dates if change.get("kind") == "not_before" else value in durations
+            quote = str(change.get("fact_quote") or "")
+            if not stated or (quote and not any(quote in text for text in texts)):
+                return {"status": "rejected", "reason": "기간·날짜와 인용은 공지·통보 원문에 적힌 값만 쓸 수 있습니다.",
+                        "stated_durations": sorted(durations), "stated_dates": sorted(literal_dates)}
+        try:
+            patch, applied = inv.conditional_changes(tasks, procurement, changes)
+        except ValueError as exc:
+            return {"status": "rejected", "reason": str(exc)}
+        if any(row["task_id"] not in state["slack_checked"] for row in applied):
+            return {"status": "rejected", "reason": "먼저 check_schedule_slack으로 해당 작업의 여유를 확인하세요."}
+        combined = combine_patches([base_patch, patch])
+        state["conditional"], state["applied"] = combined, applied
+        return inv.conditional_summary(recheck(combined), reported["finish_date"], baseline_finish, applied,
+                                       project.get("target_finish"))
+
+    def compare_responses(reason: str) -> dict[str, Any]:
+        """Registered response options on the last conditional schedule."""
+        if not state["conditional"]:
+            return {"status": "rejected", "reason": "먼저 simulate_conditional 결과가 있어야 합니다."}
+        named = {row["item_id"] for row in context.get("mentioned_items") or []}
+        inferred = sorted({row["item_id"] for row in state.get("applied") or [] if row.get("item_id") and row["item_id"] not in named})
+        if supplier and inferred:
+            # The supplier never said these items need the documents; a person confirms before responses are compared.
+            return {"status": "rejected", "inferred_items": inferred,
+                    "reason": f"통보에 없는 품목({', '.join(inferred)})은 서류가 필요한지 사람이 확인하기 전까지 대응안을 비교하지 않습니다. "
+                              "확인 요청 1개와 같은 내용의 협력사 메일 초안을 남기고 M4로 멈추세요."}
+        briefs = []
+        for label, selected in _candidate_options(options, set()):
+            chosen = [item for item in options if item.get("option_id") in selected]
+            result = recheck(state["conditional"], chosen)
+            briefs.append({"label": label, "option_ids": selected, "finish_date": result.get("finish_date"),
+                           "extra_cost_krw": result.get("extra_cost_krw"), "target_met": result.get("target_met")})
+        return {"scenarios": briefs, "conditional": True}
+
+    def search_risk_signals(reason: str, risk_type: str = "", stage: str = "") -> dict[str, Any]:
+        """L2 real-world cases for judging applicability; cases after the notice are reference only."""
+        state["risk_searches"] += 1
+        if state["risk_searches"] > 1:
+            return {"status": "limit_reached"}
+        result = lookup_risk_signals(risk_type=risk_type, stage=stage, limit=5)
+        as_of = str(event.get("published_at") or "")[:10]
+        for row in result["results"]:
+            row["temporal_status"] = ("POST_AS_OF_REFERENCE" if as_of and str(row.get("published_date") or "") > as_of
+                                      else "AVAILABLE_AS_OF")
+            row["summary"] = str(row.get("summary") or "")[:200]
+        return result
+
+    def narrow_candidates(reason: str) -> dict[str, Any]:
+        """Ask the notice interpreter for quoted task candidates when the rule list is long."""
+        result = interpret_notice(event, tasks, OpenAICompatibleLLM())
+        state["usage"] = {**(result.get("usage") or {}), "llm_calls": 1}
+        return {"candidates": result.get("candidates") or [], "status": result.get("status")}
+
+    simulate_conditional.parameters_schema = {  # type: ignore[attr-defined]
+        "type": "object", "required": ["reason", "changes"], "additionalProperties": False,
+        "properties": {"reason": {"type": "string"}, "changes": {"type": "array", "items": {
+            "type": "object", "required": ["kind", "value", "fact_quote"],
+            "properties": {"kind": {"type": "string", "enum": ["hold_after_arrival", "hold_after_start", "not_before"]},
+                           "item_id": {"type": "string"}, "task_id": {"type": "string"},
+                           "value": {"type": ["integer", "string"]}, "fact_quote": {"type": "string"}}}}}}
+    tools: dict[str, Any] = {"get_task_facts": get_task_facts, "check_schedule_slack": check_schedule_slack,
+                             "simulate_conditional": simulate_conditional, "compare_responses": compare_responses,
+                             "search_risk_signals": search_risk_signals, "find_procurement_items": find_procurement_items}
+    by_id = {str(task["task_id"]): task for task in tasks}
+    context: dict[str, Any] = {
+        "_llm_gateway": OpenAICompatibleLLM(),
+        "project": {key: project.get(key) for key in ("project_name", "target_finish", "country") if project.get(key)},
+        "baseline_finish": baseline_finish,
+        "facts": facts,
+    }
+    if supplier:
+        context["supplier_notice"] = {key: event.get(key) for key in ("source_label", "content", "published_at",
+                                                                     "patch", "related_task_ids")}
+        context["reported_change"] = {
+            "finish_date": reported.get("finish_date"),
+            "finish_shift_days": (date.fromisoformat(reported["finish_date"]) - date.fromisoformat(baseline_finish)).days,
+            "tasks": inv.task_facts(tasks, procurement, event.get("related_task_ids") or [])["tasks"]}
+        context["related_signals"] = signals
+        # The purchase item the supplier names carries the supplier and origin; the task owner may be a forwarder.
+        context["mentioned_items"] = inv.mentioned_items(str(event.get("content") or ""), procurement)
+    else:
+        tools["narrow_candidates"] = narrow_candidates
+        context["notice"] = {key: event.get(key) for key in ("title", "content", "published_at", "source_label")}
+        context["rule_candidates"] = [{"task_id": row.get("task_id"), "name": (by_id.get(str(row.get("task_id"))) or {}).get("name"),
+                                       "reasons": row.get("reasons")} for row in (event.get("candidates") or [])][:40]
+    brief_event = {key: event.get(key) for key in ("event_id", "channel", "content", "published_at", "patch",
+                                                   "related_task_ids") if event.get(key)}
+    output = run_agent(context, brief_event, tools, max_steps=6, system_prompt=INVESTIGATION_PROMPT)
+    if state["usage"]:
+        output["usage"] = {key: (output["usage"].get(key, 0) + value if isinstance(value, (int, float)) else value)
+                           for key, value in {**output["usage"], **state["usage"]}.items()} if output.get("usage") else state["usage"]
+    record = output.get("investigation") or {"stop": "M5"}
+    stop = record["stop"]
+    # A question about an item that cannot absorb the hold must carry the date to act by.
+    deadlines = [row for entry in output.get("tool_log") or [] if entry.get("tool") == "simulate_conditional"
+                 and entry.get("status") == "ok" and (entry.get("result") or {}).get("status") != "rejected"
+                 for row in (entry["result"].get("changes") or []) if row.get("latest_action_date")]
+    if record.get("question") and deadlines and not any(row["latest_action_date"] in record["question"] for row in deadlines):
+        due = ", ".join(f"{row.get('item_id') or row.get('task_id')} {row['latest_action_date']}" for row in deadlines)
+        record["question"] = f"{record['question'].rstrip()} (서류 제출 기한: {due})"
+    email = output.get("email_draft")
+    if isinstance(email, dict) and email.get("body") and deadlines and not any(
+            row["latest_action_date"] in email["body"] for row in deadlines):
+        due = ", ".join(f"{row.get('item_id') or row.get('task_id')} {row['latest_action_date']}" for row in deadlines)
+        email["body"] = (f"{email['body'].rstrip()}\n\n서류 제출 기한: {due}. "
+                         "이 날짜까지 제출해야 해당 작업 착수 전에 검토를 마칠 수 있습니다.")
+    found_cases = _agent_found_cases(output)
+    if supplier:
+        rules_only = {"finish_date": reported.get("finish_date"),
+                      "finish_shift_days": (date.fromisoformat(reported["finish_date"]) - date.fromisoformat(baseline_finish)).days,
+                      "scope": "통보에 적힌 작업만 계산", "items_checked": 0}
+    else:
+        rules_only = {"candidate_count": len(event.get("candidates") or []),
+                      "scope": "작업 이름·위험 태그로 찾은 후보만 표시, 효력일·기간이 정해지기 전에는 계산하지 않음"}
+    from .hero_demo import real_case_basis
+    scenario_ids = [str(event.get("demo_signal_id") or event.get("event_id") or "")] + [
+        str(next((row["data"].get("demo_signal_id") for row in rows if row["id"] == signal["event_id"]), "") or "")
+        for signal in signals]
+    basis = real_case_basis([item for item in scenario_ids if item])
+    action_ids = []
+    if record.get("question"):
+        action_id = digest({"run_id": run["id"], "kind": "investigation"})[:32]
+        db.put_json("actions", action_id, {
+            "owner": "프로젝트 운영팀", "state": "OPEN", "request": record["question"], "due_at": None,
+            "event_id": event_row["id"], "mode": event.get("mode"), "source": "investigation"},
+            project_id=run["project_id"], event_id=event_row["id"], scenario_id=None)
+        action_ids.append(action_id)
+    event["investigation"] = {"run_id": run["id"], "stop": stop, "summary": output.get("summary"),
+                              "question": record.get("question"), "at": utcnow()}
+    db.put_json("events", event_row["id"], event, project_id=run["project_id"],
+                fingerprint=event_row["fingerprint"], created_at=event_row["created_at"])
+    return {"status": stop, "summary": output.get("summary"), "agent": output, "action_ids": action_ids,
+            "related_signals": signals, "real_case_basis": basis, "agent_found_cases": found_cases,
+            "rules_only": rules_only, "linked_notices": [
+                {key: (next((row["data"] for row in rows if row["id"] == signal["event_id"]), {}) or {}).get(key)
+                 for key in ("title", "content", "published_at")} | {"event_id": signal["event_id"]}
+                for signal in signals],
+            "notify": stop not in {"M1", "M2"}}
+
+
+def _agent_found_cases(output: dict[str, Any]) -> list[dict[str, Any]]:
+    """Real L2 cases the agent retrieved, marked cited when its answer names them; delays are never inputs."""
+    from .risk_signals import _records
+
+    records = {row["risk_id"]: row for row in _records()}
+    answer = json.dumps({key: output.get(key) for key in ("summary", "stop_reason", "investigation", "email_draft")},
+                        ensure_ascii=False)
+    found: dict[str, dict[str, Any]] = {}
+    for entry in output.get("tool_log") or []:
+        if entry.get("tool") != "search_risk_signals" or entry.get("status") != "ok":
+            continue
+        for row in (entry.get("result") or {}).get("results") or []:
+            record = records.get(row.get("risk_id"), {})
+            found.setdefault(row["risk_id"], {
+                "risk_id": row["risk_id"], "title": record.get("title") or row.get("title"),
+                "source_name": record.get("source_name"), "source_url": record.get("source_url") or row.get("source_url"),
+                "published_date": record.get("published_date") or row.get("published_date"),
+                "temporal_status": row.get("temporal_status"),
+                "cited": row["risk_id"] in answer or bool(record.get("title") and record["title"] in answer),
+                "search_reason": (entry.get("args") or {}).get("reason")})
+    return sorted(found.values(), key=lambda row: (not row["cited"], row["risk_id"]))
+
+
+def _rules_only_agent(run_data: dict[str, Any]) -> dict[str, Any]:
+    """Describe why no agent ran, so the screen never presents rule output as agent reasoning."""
+    if run_data.get("auto_detected"):
+        status, summary = "waiting_review", "외부 변화를 감지해 통보 내용과 계산기로만 정리했습니다. 근거를 확인한 뒤 분석을 시작하면 에이전트가 검토합니다."
+    elif run_data.get("preview_only"):
+        status, summary = "skipped_preview", "잠정 분석은 통보 내용과 계산기로만 합니다. 해석을 확인한 뒤 정식 분석에서 에이전트가 검토합니다."
+    elif os.environ.get("REPLAN_LLM_MODE", "live").lower() != "replay" and not all(
+            os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")):
+        status, summary = "llm_unavailable", "LLM 연결 정보가 없어 통보 내용과 계산기로만 분석했습니다."
+    else:
+        status, summary = "disabled", "에이전트가 꺼져 있어 통보 내용과 계산기로만 분석했습니다."
+    return {"status": status, "mode": "rules_only", "summary": summary}
+
+
+def _interpretation_agent(result: dict[str, Any], source: str) -> dict[str, Any]:
+    """Credit a one-shot LLM interpretation to the LLM, not to the rules."""
+    usage = {**(result.get("usage") or {}), "llm_calls": 1}
+    if result.get("status") == "interpretation_failed" or result.get("error"):
+        return {"status": "failed", "mode": "llm_interpretation", "usage": usage,
+                "summary": f"LLM이 {source}를 해석하지 못해 통보 내용에서 찾은 결과만 보여줍니다."}
+    candidates = result.get("candidates") or result.get("task_candidates") or []
+    facts = result.get("facts") or []
+    if result.get("patch"):
+        changes = ", ".join(f"{row['task_id']} {row['date']}" for row in facts) or "작업·날짜"
+        summary = f"LLM이 {source}에서 변경({changes})을 원문 인용과 함께 찾았습니다."
+    elif candidates:
+        ids = ", ".join(str(row.get("task_id")) for row in candidates)
+        summary = f"LLM이 {source}를 해석해 영향 작업 후보 {len(candidates)}개({ids})를 원문 인용과 함께 찾았습니다."
+    else:
+        summary = f"LLM이 {source}를 해석했지만 근거가 있는 작업 후보를 찾지 못했습니다."
+    return {"status": "needs_input" if not result.get("patch") else "completed", "mode": "llm_interpretation",
+            "summary": summary, "candidates": candidates, "usage": usage}
 
 
 def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
@@ -326,7 +616,12 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         options = hero_response_options(project, tasks)
         if options:
             snapshot["options"] = options
-    supplier_agent: dict[str, Any] = {"status": "llm_unavailable", "mode": "rules_only", "summary": "규칙 기반 분석"}
+    run_data = run.get("data") or {}
+    # Interpreting a notice without a task or date may use the LLM once. The agent loop runs only
+    # in a person-started, confirmed analysis: never for a preview or an automatically detected change.
+    interpret_llm = agent_enabled() and not run_data.get("auto_detected")
+    agent_llm = interpret_llm and not run_data.get("preview_only")
+    supplier_agent: dict[str, Any] = _rules_only_agent(run_data)
     paid_reserved = False
     if event.get("review_status") in {"REJECTED", "SUPERSEDED"}:
         return {"status": "SUPERSEDED", "summary": "보류되었거나 최신 근거로 대체된 변경입니다.", "scenario_ids": []}
@@ -334,13 +629,15 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         return {"status": "STALE", "summary": "기준 일정이 바뀌었습니다. 외부 소스를 다시 확인하세요.", "scenario_ids": []}
     if not event.get("patch") and event.get("channel") == "registered_public_source":
         # Interpret source evidence before the early NEEDS_INPUT return.
-        if all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
+        if interpret_llm:
             paid_state = _reserve_paid_attempt(db, run["id"])
             if paid_state == "reserved":
                 from .external_risks import interpret_notice
                 from .adapters.llm import OpenAICompatibleLLM
                 result = interpret_notice(event, tasks, OpenAICompatibleLLM())
                 _record_usage(db, run["id"], result)
+                paid_reserved = True
+                supplier_agent = _interpretation_agent(result, "공지")
                 event["interpretation"] = result
                 if result.get("candidates"):
                     event["candidates"] = result["candidates"]
@@ -351,7 +648,7 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     if event.get("channel") == "supplier_message":
         from .risk_signals import evidence_for_supplier
         if not event.get("patch") and event.get("classification_status") != "NO_SCHEDULE_IMPACT":
-            if all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
+            if interpret_llm:
                 paid_state = _reserve_paid_attempt(db, run["id"])
                 if paid_state == "reserved":
                     paid_reserved = True
@@ -359,6 +656,7 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
                     from .supplier_interpreter import interpret_supplier_message
                     interpreted = interpret_supplier_message(event, project, tasks, OpenAICompatibleLLM())
                     _record_usage(db, run["id"], interpreted)
+                    supplier_agent = _interpretation_agent(interpreted, "통보")
                     event["interpretation"] = interpreted
                     if interpreted.get("patch"):
                         completed = {str(task["task_id"]) for task in tasks if task.get("status") == "completed"}
@@ -389,13 +687,6 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         db.put_json("events", event_row["id"], event, project_id=run["project_id"],
                     fingerprint=event_row["fingerprint"], created_at=event_row["created_at"])
 
-        if all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
-            if paid_reserved or _reserve_paid_attempt(db, run["id"]) == "reserved":
-                supplier_agent = _run_supplier_agent(db, run, project, tasks, options, event)
-                _record_usage(db, run["id"], supplier_agent)
-            else:
-                supplier_agent = {"status": "paid_limit", "summary": "유료 호출 한도에 따라 규칙 결과를 사용했습니다."}
-
     budget = run["data"].get("budget_krw")
     if event.get("classification_status") == "NO_SCHEDULE_IMPACT":
         return {"status": "NO_IMPACT", "summary": "일정에 영향을 주는 변경이 아닙니다.", "scenario_ids": [], "agent_status": "not_needed"}
@@ -411,7 +702,8 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
                 "action_ids": [action_id], "scenario_ids": [], "candidates": event.get("candidates", []),
                 "evidence": event.get("evidence"), "risk_signal_evidence": event.get("risk_signal_evidence", []), "missing_fields": missing,
                 "agent_status": supplier_agent.get("status", event.get("interpretation", {}).get("status", "rules_only")),
-                "agent": {**supplier_agent, "stop_reason": supplier_agent.get("stop_reason") or ", ".join(missing)}}
+                "agent": {**supplier_agent, "stop_reason": supplier_agent.get("stop_reason")
+                          or "사람 확인 대기: " + ", ".join(missing)}}
 
     if event.get("evidence"):
         from .external_risks import combine_patches
@@ -442,7 +734,9 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     if supplier_sources and supplier_sources[3]:
         return {"status": "NEEDS_INPUT", "summary": "공휴일 출처를 확인할 수 없어 재계획을 멈췄습니다.",
                 "missing_fields": supplier_sources[3], "scenario_ids": []}
-    for label, selected in candidates:
+    def run_candidate(label: str, selected: list[str]) -> dict[str, Any] | None:
+        """Calculate one response set; returns an early NEEDS_INPUT result if the recheck cannot converge."""
+        nonlocal no_response_finish
         chosen = [item for item in options if item.get("option_id") in selected]
         if supplier_sources:
             from .shifted_external import recheck_shifted_schedule
@@ -473,94 +767,46 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         result["recovery_days_vs_no_response"] = (
             calendar_shift_days(result["finish_date"], no_response_finish)
             if result.get("finish_date") and no_response_finish else None)
-        if supplier_agent.get("mode") == "rules_only":
-            supplier_agent.setdefault("tool_log", []).append({
-                "tool": "recheck_shifted_schedule" if supplier_sources else "simulate_schedule",
-                "args": {"option_ids": selected}, "status": "ok", "source": "rules_fallback",
-                "result": {"finish_date": result.get("finish_date"),
-                           "finish_shift_days": result.get("finish_shift_days"),
-                           "extra_cost_krw": result.get("extra_cost_krw"),
-                           "recheck_status": result.get("recheck_status")}})
         record = _scenario_record(run, event, version, label, selected, result)
         scenario_id = digest({"run_id": run["id"], "option_ids": selected})[:32]
         db.put_json("scenarios", scenario_id, record, project_id=run["project_id"], run_id=run["id"], version_id=version["id"])
         scenario_ids.append(scenario_id)
         scenario_results.append({"id": scenario_id, **record})
+        return None
 
-    agent_output: dict[str, Any] = supplier_agent if event.get("channel") == "supplier_message" else {"status": "llm_unavailable", "summary": "LLM 설정이 없어 계산 결과만 제공합니다."}
-    if event.get("channel") != "supplier_message" and os.environ.get("API_KEY") and os.environ.get("LLM_MODEL") and os.environ.get("LLM_BASE_URL") and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
-        paid_state = _reserve_paid_attempt(db, run["id"])
-        if paid_state != "reserved":
-            agent_output = {"status": paid_state, "summary": "유료 호출 한도 또는 중복 실행 방지로 계산 결과만 제공합니다."}
-        else:
-          try:
-            from .agent import run_agent
+    # Singles first; the pair then combines the two singles that recover most (declaration order breaks ties),
+    # falling back to the default pair when fewer than two singles recover anything.
+    singles = [(label, selected) for label, selected in candidates if len(selected) <= 1]
+    for label, selected in singles:
+        stop = run_candidate(label, selected)
+        if stop:
+            return stop
+    order = {str(option.get("option_id")): index for index, option in enumerate(options)}
+    recovering = sorted([row for row in scenario_results if len(row["option_ids"]) == 1
+                         and (row.get("recovery_days_vs_no_response") or 0) > 0],
+                        key=lambda row: (-(row.get("recovery_days_vs_no_response") or 0), order.get(row["option_ids"][0], 99)))
+    pairs = [(label, selected) for label, selected in candidates if len(selected) > 1]
+    by_option = {str(option.get("option_id")): option for option in options}
+    if len(recovering) >= 2:
+        first, second = (by_option[row["option_ids"][0]] for row in recovering[:2])
+        if _can_combine(first, second):
+            ids = sorted([str(first["option_id"]), str(second["option_id"])], key=lambda item: order.get(item, 99))
+            pairs = [(" + ".join(str(by_option[item].get("name") or item) for item in ids), ids)] + [
+                pair for pair in pairs if pair[1] != ids]
+    for label, selected in pairs[:max(0, 8 - len(singles))]:
+        stop = run_candidate(label, selected)
+        if stop:
+            return stop
 
-            def get_project_context() -> dict[str, Any]:
-                return {"project": project, "related_tasks": [task for task in tasks if task.get("task_id") in event.get("related_task_ids", [])], "version_id": version["id"]}
-
-            def list_response_options() -> dict[str, Any]:
-                return {"options": options, "budget_krw": budget}
-
-            def simulate_schedule(option_ids: list[str]) -> dict[str, Any]:
-                selected = set(option_ids)
-                if not selected.issubset({item.get("option_id") for item in options}):
-                    return {"status": "invalid_input", "error": "unknown option"}
-                chosen = [item for item in options if item.get("option_id") in selected]
-                return simulate(project, tasks, event=event, options=chosen, budget_krw=budget)
-
-            source_calls = {"search": 0, "fetch": 0, "weather": 0}
-            snapshots = db.list_json("source_snapshots", run["project_id"], limit=30)
-
-            def search_public_sources(query: str) -> dict[str, Any]:
-                source_calls["search"] += 1
-                if source_calls["search"] > 2:
-                    return {"status": "limit_reached", "results": []}
-                terms = [part.lower() for part in query.split() if part]
-                matches = [item for item in snapshots if item["status"] == "ok" and all(
-                    term in str(item["data"].get("title", "") + " " + item["data"].get("summary", "")).lower() for term in terms
-                )]
-                return {"status": "ok", "results": [{"snapshot_id": item["id"], "source_id": item["source_id"], "title": item["data"].get("title"), "summary": item["data"].get("summary")} for item in matches[:3]]}
-
-            def fetch_allowed_source(snapshot_id: str) -> dict[str, Any]:
-                source_calls["fetch"] += 1
-                if source_calls["fetch"] > 3:
-                    return {"status": "limit_reached"}
-                match = next((item for item in snapshots if item["id"] == snapshot_id and item["status"] == "ok"), None)
-                return {"status": "ok", "snapshot": match["data"]} if match else {"status": "not_found"}
-
-            def fetch_weather() -> dict[str, Any]:
-                source_calls["weather"] += 1
-                if source_calls["weather"] > 1:
-                    return {"status": "limit_reached"}
-                match = next((item for item in snapshots if item["data"].get("provider") == "open_meteo" and item["status"] == "ok"), None)
-                return {"status": "ok", "snapshot": match["data"]} if match else {"status": "not_found"}
-
-            def prepare_change_package(scenario_id: str) -> dict[str, Any]:
-                match = next((item for item in scenario_results if item["id"] == scenario_id), None)
-                if not match:
-                    return {"status": "invalid_scenario"}
-                return {"status": "draft_only", "scenario_id": scenario_id, "required_confirmations": match.get("required_confirmations", []), "budget_met": match.get("budget_met"), "target_met": match.get("target_met")}
-
-            from .risk_signals import search_risk_signals
-
-            agent_output = run_agent(
-                {"project": project, "version_id": version["id"], "scenario_results": [{k: v for k, v in item.items() if k != "schedule"} for item in scenario_results]},
-                event,
-                {
-                    "get_project_context": get_project_context,
-                    "list_response_options": list_response_options,
-                    "simulate_schedule": simulate_schedule,
-                    "search_public_sources": search_public_sources,
-                    "search_risk_signals": search_risk_signals,
-                    "fetch_allowed_source": fetch_allowed_source,
-                    "fetch_weather": fetch_weather,
-                    "prepare_change_package": prepare_change_package,
-                },
-            )
+    # The agent reviews calculated scenarios; it never replaces the calculators.
+    agent_output: dict[str, Any] = supplier_agent
+    if agent_llm and scenario_results:
+        if paid_reserved or _reserve_paid_attempt(db, run["id"]) == "reserved":
+            agent_output = _run_review_agent(db, run, project, tasks, options, event, scenario_results, budget)
             _record_usage(db, run["id"], agent_output)
-          except Exception as exc:
-            agent_output = {"status": "error", "error": type(exc).__name__, "summary": "LLM 분석에 실패해 계산 결과만 제공합니다."}
+        else:
+            agent_output = {"status": "paid_limit", "mode": "rules_only",
+                            "summary": "유료 호출 한도 또는 중복 실행 방지로 계산 결과만 제공합니다."}
 
     meeting = [item for item in scenario_results if item.get("target_met") and item.get("budget_met") and not item.get("violations")]
     if not meeting:
@@ -648,7 +894,8 @@ def _store_source_snapshot(db: Store, project_id: str, result: dict[str, Any]) -
     return snapshot_id, changed
 
 
-def _save_external_event(db: Store, project_id: str, version: dict, identity: str, event: dict | None) -> list[str]:
+def _save_external_event(db: Store, project_id: str, version: dict, identity: str, event: dict | None,
+                         data_origin: str = "PUBLIC") -> list[str]:
     """Deduplicate by content and replace obsolete proposals, never mutate a baseline."""
     source_key = digest({"identity": identity, "version": version["id"]})
     observation_hash = digest({key: value for key, value in (event or {}).items()
@@ -669,11 +916,12 @@ def _save_external_event(db: Store, project_id: str, version: dict, identity: st
         return []
     event_id = identifier()
     event = {**event, "id": event_id, "event_id": event_id, "source_key": source_key,
-             "version_id": version["id"], "observation_hash": observation_hash, "mode": "LIVE", "data_origin": "PUBLIC",
+             "version_id": version["id"], "observation_hash": observation_hash, "mode": "LIVE", "data_origin": data_origin,
              "review_status": "PENDING"}
     db.put_json("events", event_id, event, project_id=project_id, fingerprint=fingerprint)
+    # Rules-only calculation so the card shows its impact; paid analysis waits for a person.
     db.create_run(project_id, "analysis", event_id, version["id"], f"external:{event_id}",
-                  {"project_context_snapshot": db.project_context_snapshot(project_id)})
+                  {"project_context_snapshot": db.project_context_snapshot(project_id), "auto_detected": True})
     from .main import notify_project
     notify_project(db, project_id, "external_change", "외부 변화 검토", event["title"],
                    data={"event_id": event_id})
@@ -724,7 +972,8 @@ def _record_holiday_risks(db: Store, project_id: str, config: dict, source: dict
     return _save_external_event(db, project_id, version, identity, event)
 
 
-def _record_public_risks(db: Store, project_id: str, plan: dict, result: dict, snapshot_id: str, url: str) -> list[str]:
+def _record_public_risks(db: Store, project_id: str, plan: dict, result: dict, snapshot_id: str, url: str,
+                         data_origin: str = "PUBLIC") -> list[str]:
     from .external_risks import evidence, match_notice
     version = db.current_version(project_id)
     if not version:
@@ -744,7 +993,9 @@ def _record_public_risks(db: Store, project_id: str, plan: dict, result: dict, s
             "evidence": evidence(source, snapshot_id, "PUBLIC_NOTICE"),
             **match_notice(source, version["data"]["tasks"], plan.get("source_rules", [])),
         }
-        created.extend(_save_external_event(db, project_id, version, f"notice:{url}:{identity}", event))
+        if row.get("published_at"):
+            event["published_at"] = row["published_at"]
+        created.extend(_save_external_event(db, project_id, version, f"notice:{url}:{identity}", event, data_origin))
     return created
 
 
@@ -836,8 +1087,8 @@ def enqueue_due_scans(db: Store, now: datetime | None = None) -> int:
 
 
 def _run_watch_plan_enrichment(db: Store, run: dict[str, Any]) -> dict[str, Any]:
-    if not all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) or os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() != "true":
-        return {"status": "rules_only", "summary": "LLM 보강이 꺼져 있어 규칙 제안을 유지합니다."}
+    if not agent_enabled():
+        return {"status": "rules_only", "summary": "LLM 보강이 꺼져 있어 기본 제안을 유지합니다."}
     version = db.get_json("versions", run["version_id"], run["project_id"])
     watch = db.get_json("watch_plans", run["project_id"])
     if not version or not watch:
@@ -846,7 +1097,7 @@ def _run_watch_plan_enrichment(db: Store, run: dict[str, Any]) -> dict[str, Any]
         return {"status": "stale", "summary": "새 기준 일정이 등록되어 보강을 건너뜁니다."}
     paid_state = _reserve_paid_attempt(db, run["id"])
     if paid_state != "reserved":
-        return {"status": paid_state, "summary": "유료 호출 한도로 규칙 제안을 유지합니다."}
+        return {"status": paid_state, "summary": "유료 호출 한도로 기본 제안을 유지합니다."}
     from .adapters.llm import OpenAICompatibleLLM
     from .watch_suggestions import enrich_watch_plan
     plan = dict(watch["data"])
@@ -872,6 +1123,11 @@ def run_once(db: Store | None = None) -> bool:
             result = _run_document_ingest(db, run)
         elif run["kind"] == "watch_plan_enrich":
             result = _run_watch_plan_enrichment(db, run)
+        elif run["kind"] == "investigation":
+            paid_state = _reserve_paid_attempt(db, run["id"]) if agent_enabled() else "disabled"
+            result = (_run_investigation(db, run) if paid_state in {"reserved", "disabled"}
+                      else {"status": paid_state, "summary": "유료 호출 한도로 조사하지 않았습니다."})
+            _record_usage(db, run["id"], result.get("agent") or {})
         else:
             raise ValueError("unsupported run kind")
         db.update_run(run["id"], "succeeded", result)
@@ -879,6 +1135,11 @@ def run_once(db: Store | None = None) -> bool:
             from .main import notify_project
             notify_project(db, run["project_id"], "analysis_ready", "영향 분석 결과",
                            result.get("summary", "분석을 완료했습니다."), data={"run_id": run["id"], "event_id": run["event_id"]})
+        elif run["kind"] == "investigation" and result.get("notify"):
+            # No-impact results (M1, M2) are recorded without a notification.
+            from .main import notify_project
+            notify_project(db, run["project_id"], "investigation_ready", "조사 결과: 확인 요청",
+                           result.get("summary") or "조사를 마쳤습니다.", data={"run_id": run["id"], "event_id": run["event_id"]})
     except Exception as exc:
         db.update_run(run["id"], "failed", {"status": "failed", "error": type(exc).__name__, "detail": str(exc)[:500]})
     return True

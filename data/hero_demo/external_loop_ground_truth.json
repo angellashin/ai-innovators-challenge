@@ -1,0 +1,17 @@
+{
+  "label": "Expected investigation paths for external_loop_signals.json; evaluation only, never read at runtime",
+  "data_origin": "SYNTHETIC",
+  "cases": {
+    "X2": {"stop": "M4", "cause_link": "N-X2", "basis_risk_id": "RS-019", "rules_only_finish": "2027-12-21",
+           "found_items": ["P-B", "P-C"], "absorbing_items": ["P-B"], "critical_items": ["P-C"],
+           "worst_case_finish": "2028-02-11", "latest_action_date": {"P-C": "2027-02-08"},
+           "questions": 1, "question_mentions": "2027-02-08", "email_draft_to": "Equipment Vendor A"},
+    "X1-A": {"stop": "M4", "basis_risk_id": "RS-001", "applicable_task_ids": ["T046", "T048", "T051", "T053"],
+             "must_not_include": ["T047", "T054"], "latest_action_date": "2026-11-05",
+             "worst_case_finish": "2028-02-01", "questions": 1},
+    "X1-B": {"stop": "M2", "applicable_task_ids": ["T013"], "finish_shift_days": 0, "questions": 0,
+             "notification": false},
+    "X2-C": {"stop": "M1", "cause_link": null, "found_items": [], "rules_only_finish": "2027-12-28",
+             "questions": 0}
+  }
+}
