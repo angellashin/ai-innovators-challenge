@@ -1,9 +1,18 @@
 # External change workflow
 
 ## Product scope
-The primary loop is Excel baseline → monitor external evidence → match affected tasks →
-calculate provisional impacts and alternatives → verify applicability and execution conditions →
-approve → revised Excel with evidence. Supplier email is an optional input, not a prerequisite.
+Supplier notices and periodic external monitoring are parallel change triggers. The shared loop is
+Excel upload → agent-proposed monitoring plan and human acceptance → supplier notice on receipt
+or newly detected external change → interpret and confirm affected tasks (ask if ambiguous) →
+calculate the schedule → recheck holidays and weather across the shifted period → link relevant
+L2 real-case evidence → compare responses → confirm conditions → human approval → revised Excel
+with evidence → continued monitoring. The demo supplier notices are synthetic, but notices are a
+core trigger. Automatic email ingestion is not yet connected; the MVP accepts pasted notices.
+
+The initial collection plan follows `REPLAN_PROJECT_MASTER.md` section 8.2: process supplier
+messages immediately on receipt, propose weather checks every 6 hours, and propose registered
+official notices and public-company news checks every 12 hours. These intervals are adjustable
+team-approved settings, not a guarantee that a source has published new data.
 
 ## Implemented sources and limits
 - Open-Meteo daily forecasts for explicitly configured coordinates, outdoor tasks and thresholds.
@@ -21,10 +30,17 @@ approve → revised Excel with evidence. Supplier email is an optional input, no
 ## Review and calculation
 Configure source keywords and related tasks in the workspace. Match reasons are candidates,
 not legal applicability judgments. Publication dates are never converted automatically to delays.
-The operator can record a supported start constraint, unavailable date or finish estimate.
-Weather and calendar proposals can be simulated before confirmation; all evidence included in a
-scenario must be confirmed before approval or commit. Concurrent external calendar constraints
-are unioned, avoiding double-counting, and conflicting finish claims stop for review.
+The agent interprets notices and evidence, connects affected-task candidates, asks for missing
+facts and drafts a response. Deterministic tools calculate dates, costs and schedules; people
+confirm tasks and conditions, approve changes and send external messages. If the task or changed
+date is ambiguous, ask before schedule calculation. The operator can record a supported start
+constraint, unavailable date or finish estimate. Weather and calendar proposals with sufficiently
+specified inputs can be simulated as conditional scenarios before applicability confirmation;
+all evidence included in a scenario must be confirmed before approval or commit. Recheck public
+holidays and weather over the newly shifted period, not only the original task dates. L2 article
+delay durations are reference context, never schedule-calculation inputs. Concurrent external
+calendar constraints are unioned, avoiding double-counting, and conflicting finish claims stop
+for review.
 Forecast updates supersede earlier proposals; successful scans below the limit retire them.
 A failed fetch leaves previous evidence intact and is explicitly shown as a collection failure.
 Changing evidence, the input version or operating calendars invalidates relevant approval.
@@ -48,12 +64,14 @@ planned_cost/currency preservation does not implement total cost forecasting or 
 
 ## Setup
 1. Import and confirm a schedule with task IDs, dates, dependencies and outdoor flags.
-2. In 외부 변화 감시, configure coordinates/timezone/thresholds and select outdoor tasks.
-3. Add country/year holiday calendars and select tasks for that location.
-4. Register approved public URLs; connect keywords and task candidates where helpful.
-5. Enable monitoring and keep the API and worker running. Use 외부 변화 지금 확인 for a scan.
-6. Inspect evidence and automatically refreshed analysis. Confirm applicability, prepare actions,
-   record each condition's reply, approve, then commit and download Excel.
+2. Review the agent-proposed monitoring plan; accept, edit or exclude its sources and conditions.
+3. In 외부 변화 감시, configure coordinates/timezone/thresholds, outdoor tasks and country/year
+   holiday calendars. Register approved public URLs and connect keywords and task candidates.
+4. Enable monitoring and keep the API and worker running. Use 외부 변화 지금 확인 for a manual scan.
+5. Receive a supplier notice by pasting it into the workspace, or review a change detected by a
+   periodic scan. Both join the same impact-analysis and response flow.
+6. Confirm ambiguous tasks or dates, inspect calculated impact and shifted-period constraints,
+   compare responses, record each condition's reply, approve, then commit and download Excel.
 
 Automatic email OAuth ingestion and external notification delivery remain unimplemented and are
 labeled accordingly. No production credentials, account permissions or deployments are changed.
