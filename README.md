@@ -12,11 +12,13 @@
 2. 구매 목록에서 통보에 없던 같은 협력사·원산지 품목 **P-B**(교육 시뮬레이터 구동부 → T058)와 **P-C**(정밀 서보 스테이지 → T051)를 찾고,
 3. 계산기로 T058은 여유 245일로 흡수, **T051은 여유 0일**임을 확인하고,
 4. P-C 허가가 늦으면 **완료 2028-02-11(+52일)**, 영향을 피하려면 **2027-02-08까지 서류 제출**이 필요하다고 계산한 뒤,
-5. 통보에 없던 품목이라 대응안 비교 대신 **확인 요청 1개와 협력사 메일 초안**을 남기고 멈춥니다("확인이 필요합니다").
+5. 통보에 없던 품목이라 대응안 비교 대신 **확인 요청과 협력사 메일 초안**(제출 기한 포함)을 남기고 멈춥니다("확인이 필요합니다").
+6. 사람이 "P-C도 해당함"을 기록하면 P-C 지연을 반영해 일정을 **다시 계산**하고(완료 2028-02-11), 가장 많이 회복하는 **추천 조합**(제어 통합·교정 집중 투입 + 시운전·통합시험 병행 준비, **2028-01-25**, 17일 회복)을 먼저 보여줍니다. 승인하면 새 일정 버전과 Excel에 반영됩니다.
 
-화면에는 규칙만 대 에이전트 비교, 에이전트가 인용한 원문 문장 강조, 판단 기록(확인마다 '왜'), 판단별 LLM 호출 수·비용, 시나리오의 근거가 된 실제 기사(RS-019, CNBC 2025-10-15)가 함께 보입니다. 일정·날짜는 합성이며 기사 속 지연 기간은 계산에 쓰지 않습니다.
+화면에는 "통보 내용만 반영" 대 "에이전트 조사 후" 비교와 다음 행동 하나가 먼저 보이고, 원문 문장 강조·근거 기사(RS-019, CNBC 2025-10-15)·판단 기록(확인마다 '왜', LLM 호출 수·비용)·메일 초안은 접어 둡니다. 일정·날짜는 합성이며 기사 속 지연 기간은 계산에 쓰지 않습니다.
 
-![X2 조사 결과](docs/demo/X2_04_investigation.png)
+![X2 조사 결과](docs/demo/x2_3_investigation_result.png)
+![X2 확인 후 재계산](docs/demo/x2_4_after_recalculation.png)
 
 ### H04 — 결정적 계산과 비용 효율
 
@@ -30,10 +32,10 @@ T045 설비 반입 완료일이 2026-12-05 → 2026-12-28로 늦어지는 통보
 
 ```sh
 cp .env.example .env          # REPLAN_DEMO_TOKEN을 로컬 값으로
-REPLAN_LLM_MODE=replay docker compose up -d --build
+scripts\demo.cmd              # Windows cmd (macOS·Linux: scripts/demo.sh)
 ```
 
-`http://localhost:3000` → **데모 보기 → 워크스페이스 열기 → 프로젝트 만들기**. `REPLAN_LLM_MODE=replay`는 녹화된 응답(`data/llm_replay/hero_demo.json`)으로 에이전트를 돌려 **키·네트워크·비용 없이** 두 장면을 끝까지 보여줍니다. 키 없이 기본 모드로 띄우면 규칙과 계산기만 동작합니다. 실제 LLM은 서버 환경에 `API_KEY`·`LLM_MODEL`·`LLM_BASE_URL`과 `REPLAN_PAID_CALLS_ENABLED=true`를 둘 때만 호출합니다. **키가 있는 `.env`와 프로젝트 데이터는 커밋하지 않습니다.**
+`http://localhost:3000` → **데모 보기 → 워크스페이스 열기 → 프로젝트 만들기**. 데모 스크립트는 평소 스택을 멈추고(데이터 유지) 별도의 깨끗한 데이터로 `REPLAN_LLM_MODE=replay` 스택을 띄웁니다. 재생 모드는 녹화된 응답(`data/llm_replay/hero_demo.json`)으로 에이전트를 돌려 **키·네트워크·비용 없이** 두 장면을 끝까지 보여줍니다. 키 없이 기본 모드로 띄우면 규칙과 계산기만 동작합니다. 실제 LLM은 서버 환경에 `API_KEY`·`LLM_MODEL`·`LLM_BASE_URL`과 `REPLAN_PAID_CALLS_ENABLED=true`를 둘 때만 호출합니다. **키가 있는 `.env`와 프로젝트 데이터는 커밋하지 않습니다.**
 
 Docker 없이 실행하려면 API(`uvicorn app.main:app --app-dir services/api`), worker(`PYTHONPATH=services/api python -m app.worker`), 웹(`apps/web`에서 `npm run dev`)을 같은 `REPLAN_DATA_DIR`·`REPLAN_DEMO_TOKEN`으로 띄웁니다(웹에는 `REPLAN_BACKEND_URL`). API 문서는 `http://localhost:8000/docs`.
 
