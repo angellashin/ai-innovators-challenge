@@ -13,7 +13,7 @@ from app.main import app, normalize_import_snapshot, ConfirmInput
 from app.scheduling import simulate
 from app.storage import Store
 from app.worker import run_once
-from app.shifted_external import bundled_hu_calendars, recheck_shifted_schedule
+from app.shifted_external import bundled_hero_calendars, bundled_hu_calendars, recheck_shifted_schedule
 from app.supplier_interpreter import interpret_supplier_message
 from scripts.evaluation_mocks import MockEvaluationGateway
 
@@ -357,3 +357,28 @@ def test_h04_agent_reviews_calculated_scenarios_once(client, monkeypatch):
     agent = result["run"]["data"]["agent"]
     assert agent["status"] == "needs_review"
     assert "2028-01-11" in agent["option_explanations"][0]["text"]
+
+
+def test_named_commissioning_task_is_not_replaced_by_keyword_matches():
+    """X2-control: 'commissioning' is not a test keyword, but the named T054 must still be used."""
+    parsed = parse_upload(HERO.name, HERO.read_bytes())
+    snapshot = normalize_import_snapshot(parsed, {"name": "Hero", "mode": "REPLAY"}, ConfirmInput())
+    project, tasks = snapshot["project"], snapshot["tasks"]
+    published = "2026-03-05T09:00:00+01:00"
+    event = normalize_event({
+        "content": "[가상 메시지] T054 모듈 라인 시운전 착수를 2027-05-24 이후로 늦춥니다. 시험 인력 교대 일정 때문입니다.",
+        "channel": "supplier_message", "published_at": published, "mode": "REPLAY",
+        "data_origin": "SYNTHETIC", "simulation_as_of": published}, project, tasks)
+    assert event["patch"] == {"not_before": {"T054": "2027-05-24"}}
+    assert event["related_task_ids"] == ["T054"]
+    result = recheck_shifted_schedule(project, tasks, {**event, "related_task_ids": ["T054"]}, [], None,
+                                      bundled_hero_calendars(tasks), [], {})
+    assert result["finish_date"] == "2027-12-28"
+
+    # A named manufacturing task whose FAT is not named still moves the matching test task.
+    fat = normalize_event({
+        "content": "[가상 메시지] T036 셀 설비 제작 완료일이 2026-01-15로 변경됩니다. FAT는 2026-01-16부터 가능합니다.",
+        "channel": "supplier_message", "published_at": published, "mode": "REPLAY",
+        "data_origin": "SYNTHETIC", "simulation_as_of": published}, project, tasks)
+    assert fat["patch"]["estimated_finish"] == {"T036": "2026-01-15"}
+    assert "T038" in fat["patch"]["not_before"]
