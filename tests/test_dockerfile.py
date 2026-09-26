@@ -24,7 +24,8 @@ def copied_data_files() -> set[Path]:
 
 def test_api_image_copies_runtime_data():
     runtime = {
-        hero_demo._FIXTURE, hero_demo._OPTIONS, hero_demo.HERO_WORKBOOK, risk_signals.CORPUS,
+        hero_demo._FIXTURE, hero_demo._OPTIONS, hero_demo.HERO_WORKBOOK, hero_demo.LOOP_SIGNALS, risk_signals.CORPUS,
+        ROOT / "data" / "llm_replay" / "hero_demo.json",
         *(shifted_external.ROOT / "data" / "external").glob("*-holidays.json"),
     }
     missing = {path.resolve() for path in runtime} - copied_data_files()
@@ -32,4 +33,5 @@ def test_api_image_copies_runtime_data():
 
 
 def test_api_image_excludes_ground_truth():
-    assert not any("l3_ground_truth" in path.parts or "evaluation" in path.parts for path in copied_data_files())
+    assert not any("l3_ground_truth" in path.parts or "evaluation" in path.parts or "ground_truth" in path.name
+                   for path in copied_data_files())

@@ -1,0 +1,45 @@
+{
+  "label": "SYNTHETIC external-signal investigation scenarios for the hero project",
+  "data_origin": "SYNTHETIC",
+  "notices": [
+    {
+      "signal_id": "N-X2",
+      "published_at": "2026-02-16T08:00:00+00:00",
+      "url": "https://environment.ec.europa.eu/news_en#synthetic-nx2",
+      "title": "[합성] Customs documentation for imported battery cell production equipment",
+      "content": "[합성] From 2026-03-01, customs release of battery cell production equipment imported from outside the EU requires additional environmental due-diligence documentation. Authorities may take up to 30 days to review the documentation after submission."
+    },
+    {
+      "signal_id": "X1-A",
+      "published_at": "2025-08-27T08:00:00+00:00",
+      "url": "https://environment.ec.europa.eu/news_en#synthetic-x1a",
+      "title": "[합성] Battery regulation: due-diligence documentation for imported cell production equipment",
+      "content": "[합성] From 2026-11-01, operators installing battery cell production equipment imported from outside the EU must submit additional environmental due-diligence documentation before site installation and commissioning. Competent authorities may take up to 30 days to review. Transitional arrangements are not yet confirmed."
+    },
+    {
+      "signal_id": "X1-B",
+      "published_at": "2025-09-01T08:00:00+00:00",
+      "url": "https://environment.ec.europa.eu/news_en#synthetic-x1b",
+      "title": "[합성] Local regulatory approval backlog in Hungary",
+      "content": "[합성] 헝가리 지방정부 인허가 접수분의 처리 기간이 2025-10-01부터 최대 45일 늘어날 수 있습니다. Local regulatory approval backlog."
+    }
+  ],
+  "supplier_messages": [
+    {
+      "event_id": "X2",
+      "published_at": "2026-03-02T09:00:00+01:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor A / 가상 메일",
+      "content": "[가상 메시지] 셀 설비 1차 선적(P-A1)이 현지 세관의 수입 서류 보완 요청을 받아 T042 통관 완료일이 2026-03-07에서 2026-03-14로 1주 늦어집니다. 보완 서류를 준비 중입니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "X2-C",
+      "published_at": "2026-03-05T09:00:00+01:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor B / 가상 메일",
+      "content": "[가상 메시지] T054 모듈 라인 시운전 착수를 2027-05-24 이후로 늦춥니다. 시험 인력 교대 일정 때문입니다.",
+      "mode": "SYNTHETIC"
+    }
+  ]
+}

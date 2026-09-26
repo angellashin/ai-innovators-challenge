@@ -597,7 +597,8 @@ def _store_source_snapshot(db: Store, project_id: str, result: dict[str, Any]) -
     return snapshot_id, changed
 
 
-def _save_external_event(db: Store, project_id: str, version: dict, identity: str, event: dict | None) -> list[str]:
+def _save_external_event(db: Store, project_id: str, version: dict, identity: str, event: dict | None,
+                         data_origin: str = "PUBLIC") -> list[str]:
     """Deduplicate by content and replace obsolete proposals, never mutate a baseline."""
     source_key = digest({"identity": identity, "version": version["id"]})
     observation_hash = digest({key: value for key, value in (event or {}).items()
@@ -618,7 +619,7 @@ def _save_external_event(db: Store, project_id: str, version: dict, identity: st
         return []
     event_id = identifier()
     event = {**event, "id": event_id, "event_id": event_id, "source_key": source_key,
-             "version_id": version["id"], "observation_hash": observation_hash, "mode": "LIVE", "data_origin": "PUBLIC",
+             "version_id": version["id"], "observation_hash": observation_hash, "mode": "LIVE", "data_origin": data_origin,
              "review_status": "PENDING"}
     db.put_json("events", event_id, event, project_id=project_id, fingerprint=fingerprint)
     # Rules-only calculation so the card shows its impact; paid analysis waits for a person.
@@ -674,7 +675,8 @@ def _record_holiday_risks(db: Store, project_id: str, config: dict, source: dict
     return _save_external_event(db, project_id, version, identity, event)
 
 
-def _record_public_risks(db: Store, project_id: str, plan: dict, result: dict, snapshot_id: str, url: str) -> list[str]:
+def _record_public_risks(db: Store, project_id: str, plan: dict, result: dict, snapshot_id: str, url: str,
+                         data_origin: str = "PUBLIC") -> list[str]:
     from .external_risks import evidence, match_notice
     version = db.current_version(project_id)
     if not version:
@@ -694,7 +696,9 @@ def _record_public_risks(db: Store, project_id: str, plan: dict, result: dict, s
             "evidence": evidence(source, snapshot_id, "PUBLIC_NOTICE"),
             **match_notice(source, version["data"]["tasks"], plan.get("source_rules", [])),
         }
-        created.extend(_save_external_event(db, project_id, version, f"notice:{url}:{identity}", event))
+        if row.get("published_at"):
+            event["published_at"] = row["published_at"]
+        created.extend(_save_external_event(db, project_id, version, f"notice:{url}:{identity}", event, data_origin))
     return created
 
 

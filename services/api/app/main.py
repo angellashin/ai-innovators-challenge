@@ -154,7 +154,11 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
         option["conditions"] = option.get("conditions") or option.get("condition")
         option["approval_state"] = option.get("approval_state") or option.get("execution_status")
         options.append(option)
+    # Purchase-list rows are facts for agent tools; the calculators never read them.
+    procurement = [{key: value for key, value in item.items() if not str(key).startswith("_")}
+                   for item in parsed.get("procurement", [])]
     return {"project": profile, "tasks": tasks, "options": options, "calendars": calendars,
+            "procurement": procurement,
             "demo_events": hero["events"] if hero else [], "data_origin": profile["data_origin"]}
 
 
@@ -610,6 +614,30 @@ async def import_hero_demo_baseline(project_id: str) -> dict[str, Any]:
     workbook = UploadFile(filename=HERO_WORKBOOK.name, file=io.BytesIO(HERO_WORKBOOK.read_bytes()))
     preview = await preview_import(project_id, workbook)
     return confirm_import(project_id, preview["import_id"], ConfirmInput())
+
+
+@app.post("/api/projects/{project_id}/demo/external-signals/{signal_id}", dependencies=[Depends(authorize)])
+def load_demo_signal(project_id: str, signal_id: str) -> dict[str, Any]:
+    """Record a bundled synthetic notice exactly as a registered-source scan would."""
+    from .hero_demo import HERO_PROJECT_ID, loop_notice
+    from .worker import _record_public_risks, _store_source_snapshot
+
+    db = store()
+    project = project_or_404(db, project_id)
+    if not db.current_version(project_id) or project["data"].get("hero_fixture_id") != HERO_PROJECT_ID:
+        raise HTTPException(409, "합성 외부 공지는 hero 데모 기준 일정에서만 불러올 수 있습니다")
+    notice = loop_notice(signal_id)
+    if not notice:
+        raise HTTPException(404, "signal not found")
+    source = {"status": "ok", "source_id": notice["url"].split("#")[0], "provider": "synthetic_demo",
+              "url": notice["url"], "fetched_at": notice["published_at"], "body_hash": digest(notice),
+              "feed_items": [{"id": signal_id, "url": notice["url"], "title": notice["title"],
+                              "content": notice["content"], "published_at": notice["published_at"]}]}
+    snapshot_id, _ = _store_source_snapshot(db, project_id, source)
+    watch = db.get_json("watch_plans", project_id)
+    created = _record_public_risks(db, project_id, watch["data"] if watch else {}, source, snapshot_id,
+                                   notice["url"], data_origin="SYNTHETIC")
+    return {"event_ids": created, "duplicate": not created}
 
 
 @app.post("/api/projects/{project_id}/imports", dependencies=[Depends(authorize)])

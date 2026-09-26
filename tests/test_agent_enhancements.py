@@ -288,7 +288,8 @@ def test_l3_agent_input_excludes_answers_and_identical_l2_event():
 def test_runtime_import_does_not_open_answer_files(monkeypatch):
     original = Path.read_text
     forbidden = {"ground_truth.json", "l3_to_wbs_mapping.json", "supplier_message_ground_truth.json",
-                 "supplier_message_variants_ground_truth.json", "outdoor_tasks.json"}
+                 "supplier_message_variants_ground_truth.json", "outdoor_tasks.json",
+                 "external_loop_ground_truth.json"}
 
     def guarded(path, *args, **kwargs):
         if path.name in forbidden:

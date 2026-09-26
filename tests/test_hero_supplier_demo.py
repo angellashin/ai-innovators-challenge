@@ -76,7 +76,13 @@ def test_hero_import_preserves_operational_fields_and_snapshot(client):
     assert by_id["T036"]["currency"] == "USD"
     assert by_id["T040"]["predecessor_ids"] == ["T038", "T020"]
     assert by_id["T045"]["predecessor_ids"] == ["T044", "T034"]
-    assert len(result["demo_events"]) == 9
+    # Nine hero notices, then the investigation scenarios: two supplier notices and three external notices.
+    assert [item["event_id"] for item in result["demo_events"][9:]] == ["X2", "X2-C", "N-X2", "X1-A", "X1-B"]
+    assert {item["channel"] for item in result["demo_events"][11:]} == {"registered_public_source"}
+    assert by_id["T042"]["origin_country"] == "South Korea" and by_id["T042"]["customs_required"] is True
+    assert by_id["T043"]["customs_required"] is False and by_id["T013"]["permit_required"] is True
+    procurement = {item["item_id"]: item for item in result["version"]["data"]["procurement"]}
+    assert procurement["P-C"]["needed_for_task_id"] == "T051" and procurement["P-C"]["planned_arrival"] == "2027-03-26"
     assert by_id["T021"]["outdoor"] and by_id["T045"]["outdoor"]
     assert by_id["T021"]["outdoor_data_origin"] == "SYNTHETIC"
     assert not by_id["T036"]["outdoor"]
@@ -382,3 +388,17 @@ def test_named_commissioning_task_is_not_replaced_by_keyword_matches():
         "data_origin": "SYNTHETIC", "simulation_as_of": published}, project, tasks)
     assert fat["patch"]["estimated_finish"] == {"T036": "2026-01-15"}
     assert "T038" in fat["patch"]["not_before"]
+
+
+def test_demo_external_notice_enters_through_the_scan_path(client):
+    project_id, _ = hero_baseline(client)
+    loaded = request(client, "post", f"/api/projects/{project_id}/demo/external-signals/N-X2")
+    assert len(loaded["event_ids"]) == 1
+    again = request(client, "post", f"/api/projects/{project_id}/demo/external-signals/N-X2")
+    assert again["duplicate"] is True
+    event = Store().get_json("events", loaded["event_ids"][0], project_id)["data"]
+    assert event["channel"] == "registered_public_source" and event["data_origin"] == "SYNTHETIC"
+    assert event["published_at"] == "2026-02-16T08:00:00+00:00"
+    assert "T042" in event["related_task_ids"]
+    runs = [row for row in Store().list_json("runs", project_id) if row["kind"] == "analysis"]
+    assert len(runs) == 1 and runs[0]["data"]["auto_detected"] is True
