@@ -2738,3 +2738,16 @@ main {
 .investigation-checks li { margin: 6px 0; }
 .investigation-checks .why { display: block; }
 .investigation-checks small { display: block; color: #4a565c; }
+.status-chip.confirm { background: #e3eef4; color: #2f5d73; }
+.agent-confirm { color: #2f5d73; }
+.usage-line { font-size: 12px; color: #4a565c; }
+.compare-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+.compare-pair > div { padding: 10px 12px; border-radius: 9px; background: #fff; border: 1px solid #d3dde2; }
+.compare-pair > div.agent-side { border-color: #467f9d; }
+.compare-pair b { display: block; margin: 4px 0; }
+.compare-pair small { display: block; color: #4a565c; }
+.evidence-block { margin: 10px 0; padding: 10px 12px; border-radius: 9px; background: #fff; }
+.evidence-block h4 { margin: 0 0 6px; }
+.evidence-block p small { display: block; color: #4a565c; margin-bottom: 2px; }
+.evidence-block mark { background: #fff1b8; padding: 0 2px; }
+@media (max-width: 720px) { .compare-pair { grid-template-columns: 1fr; } }

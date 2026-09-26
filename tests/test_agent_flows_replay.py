@@ -41,6 +41,7 @@ def test_every_recorded_flow_replays_in_any_project(tmp_path, monkeypatch):
     assert "2027-02-08" in x2["agent"]["investigation"]["question"]
     assert all(row["args"].get("reason") for row in log)
     assert x2["agent"]["email_draft"]["to"] == "Equipment Vendor A"
+    assert "2027-02-08" in x2["agent"]["email_draft"]["body"]
 
     assert runs["X2-C"]["investigation"]["status"] == "M1" and runs["X2-C"]["investigation"]["action_ids"] == []
     assert runs["X1-B"]["investigation"]["status"] == "M2"

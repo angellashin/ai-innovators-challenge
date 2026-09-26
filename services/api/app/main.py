@@ -598,6 +598,7 @@ def get_project(project_id: str) -> dict[str, Any]:
         "decision_deadlines": [{"id": item["id"], **item["data"]} for item in db.list_json("actions", project_id) if item["data"].get("due_at")],
         "demo_events": version["data"].get("demo_events", []) if version else [],
         "agent_enabled": agent_enabled(),
+        "llm_mode": llm_mode(),
         # Supplier notices with a same-period external change on the same tasks can be investigated.
         "related_signals": _related_signals_by_event(db, project_id, version),
         "versions": [dict(row) for row in version_rows],

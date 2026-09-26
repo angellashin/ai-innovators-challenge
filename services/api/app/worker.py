@@ -495,6 +495,20 @@ def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     if record.get("question") and deadlines and not any(row["latest_action_date"] in record["question"] for row in deadlines):
         due = ", ".join(f"{row.get('item_id') or row.get('task_id')} {row['latest_action_date']}" for row in deadlines)
         record["question"] = f"{record['question'].rstrip()} (서류 제출 기한: {due})"
+    email = output.get("email_draft")
+    if isinstance(email, dict) and email.get("body") and deadlines and not any(
+            row["latest_action_date"] in email["body"] for row in deadlines):
+        due = ", ".join(f"{row.get('item_id') or row.get('task_id')} {row['latest_action_date']}" for row in deadlines)
+        email["body"] = (f"{email['body'].rstrip()}\n\n서류 제출 기한: {due}. "
+                         "이 날짜까지 제출해야 해당 작업 착수 전에 검토를 마칠 수 있습니다.")
+    found_cases = _agent_found_cases(output)
+    if supplier:
+        rules_only = {"finish_date": reported.get("finish_date"),
+                      "finish_shift_days": (date.fromisoformat(reported["finish_date"]) - date.fromisoformat(baseline_finish)).days,
+                      "scope": "통보에 적힌 작업만 반영", "items_checked": 0}
+    else:
+        rules_only = {"candidate_count": len(event.get("candidates") or []),
+                      "scope": "위험 태그·작업명 일치 후보만 표시, 효력일·기간 입력 전에는 계산하지 않음"}
     from .hero_demo import real_case_basis
     scenario_ids = [str(event.get("demo_signal_id") or event.get("event_id") or "")] + [
         str(next((row["data"].get("demo_signal_id") for row in rows if row["id"] == signal["event_id"]), "") or "")
@@ -513,7 +527,35 @@ def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     db.put_json("events", event_row["id"], event, project_id=run["project_id"],
                 fingerprint=event_row["fingerprint"], created_at=event_row["created_at"])
     return {"status": stop, "summary": output.get("summary"), "agent": output, "action_ids": action_ids,
-            "related_signals": signals, "real_case_basis": basis, "notify": stop not in {"M1", "M2"}}
+            "related_signals": signals, "real_case_basis": basis, "agent_found_cases": found_cases,
+            "rules_only": rules_only, "linked_notices": [
+                {key: (next((row["data"] for row in rows if row["id"] == signal["event_id"]), {}) or {}).get(key)
+                 for key in ("title", "content", "published_at")} | {"event_id": signal["event_id"]}
+                for signal in signals],
+            "notify": stop not in {"M1", "M2"}}
+
+
+def _agent_found_cases(output: dict[str, Any]) -> list[dict[str, Any]]:
+    """Real L2 cases the agent retrieved, marked cited when its answer names them; delays are never inputs."""
+    from .risk_signals import _records
+
+    records = {row["risk_id"]: row for row in _records()}
+    answer = json.dumps({key: output.get(key) for key in ("summary", "stop_reason", "investigation", "email_draft")},
+                        ensure_ascii=False)
+    found: dict[str, dict[str, Any]] = {}
+    for entry in output.get("tool_log") or []:
+        if entry.get("tool") != "search_risk_signals" or entry.get("status") != "ok":
+            continue
+        for row in (entry.get("result") or {}).get("results") or []:
+            record = records.get(row.get("risk_id"), {})
+            found.setdefault(row["risk_id"], {
+                "risk_id": row["risk_id"], "title": record.get("title") or row.get("title"),
+                "source_name": record.get("source_name"), "source_url": record.get("source_url") or row.get("source_url"),
+                "published_date": record.get("published_date") or row.get("published_date"),
+                "temporal_status": row.get("temporal_status"),
+                "cited": row["risk_id"] in answer or bool(record.get("title") and record["title"] in answer),
+                "search_reason": (entry.get("args") or {}).get("reason")})
+    return sorted(found.values(), key=lambda row: (not row["cited"], row["risk_id"]))
 
 
 def _rules_only_agent(run_data: dict[str, Any]) -> dict[str, Any]:

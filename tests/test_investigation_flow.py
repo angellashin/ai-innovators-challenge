@@ -117,6 +117,9 @@ def test_x2_investigation_finds_c_and_leaves_one_request(client, monkeypatch):
     basis = run["data"]["real_case_basis"]
     assert [row["risk_id"] for row in basis] == ["RS-019"] and basis[0]["source_url"].startswith("https://")
     assert basis[0]["published_date"] == "2025-10-15"
+    assert "서류 제출 기한: P-C 2027-02-08" in run["data"]["agent"]["email_draft"]["body"]
+    assert run["data"]["rules_only"]["finish_date"] == "2027-12-21" and run["data"]["rules_only"]["finish_shift_days"] == 0
+    assert "Licence review may take up to 60 days" in run["data"]["linked_notices"][0]["content"]
     assert run["data"]["agent"]["email_draft"]["to"] == "Equipment Vendor A"
     project = call(client, "get", f"/api/projects/{project_id}")
     assert any(row["data"]["event_type"] == "investigation_ready" for row in project["notifications"])

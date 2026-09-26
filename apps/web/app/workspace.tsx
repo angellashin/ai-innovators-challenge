@@ -32,6 +32,7 @@ type ProjectState = {
   supplier_calendars?: Row[];
   demo_events?: Dict[];
   agent_enabled?: boolean;
+  llm_mode?: string;
   related_signals?: Record<string, Dict[]>;
   versions?: Row[];
   approvals?: Row[];
@@ -779,6 +780,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
                 runs={(project.runs || []).filter((item) => item.kind === "analysis" && item.event_id === event.id)}
                 investigations={(project.runs || []).filter((item) => item.kind === "investigation" && item.event_id === event.id)}
                 relatedSignals={(project.related_signals || {})[text(event.id)] || []} agentEnabled={Boolean(project.agent_enabled)}
+                llmMode={text(project.llm_mode, "live")}
                 onInvestigate={startInvestigation}
                 onConfirm={confirmEvent} onAnalyze={startAnalysis} onReviewExternal={reviewExternalEvent}
                 onOpenResult={() => go("scenarios")} />
@@ -848,7 +850,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           <div className="focus-card"><div className="panel-heading"><div><h3>비교할 대응안</h3><p>무대응 대비 회복 일수와 추가 비용을 비교해 한 안을 고르세요.</p></div></div><ScenarioList scenarios={run.scenarios || []} selected={selectedScenarioId} approvedId={approvedScenarioId} onSelect={setSelectedScenarioId} /></div>
           <div className="scenario-side">{approvalPanel}{impactDetail}</div>
         </div>}
-        <AgentDecisionPanel agent={run.run.data?.agent as Dict | undefined} eventContent={text(events.find((item) => item.id === run.run?.event_id)?.data?.content, "")} />
+        <AgentDecisionPanel agent={run.run.data?.agent as Dict | undefined} eventContent={text(events.find((item) => item.id === run.run?.event_id)?.data?.content, "")} llmMode={text(project.llm_mode, "live")} />
         <details className="focus-card fold">
           <summary>비용 한도로 다시 계산 (선택)</summary>
           <p className="muted">최초 분석은 비용 한도 없이 계산합니다. 한도를 넣으면 같은 변경으로 다시 계산해 예산 초과 안을 표시합니다.</p>
@@ -1000,8 +1002,8 @@ function firstIsoDate(value: string) {
   return /(20\d{2}-\d{2}-\d{2})/.exec(value)?.[1] || "";
 }
 
-function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, investigations, relatedSignals, agentEnabled, onInvestigate, onConfirm, onAnalyze, onReviewExternal, onOpenResult }: {
-  event: Row; tasks: Dict[]; taskNames: Record<string, string>; busy: boolean; isFocus: boolean; runs: Row[]; investigations: Row[]; relatedSignals: Dict[]; agentEnabled: boolean; onInvestigate: (eventId: string) => void;
+function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, investigations, relatedSignals, agentEnabled, llmMode, onInvestigate, onConfirm, onAnalyze, onReviewExternal, onOpenResult }: {
+  event: Row; tasks: Dict[]; taskNames: Record<string, string>; busy: boolean; isFocus: boolean; runs: Row[]; investigations: Row[]; relatedSignals: Dict[]; agentEnabled: boolean; llmMode: string; onInvestigate: (eventId: string) => void;
   onConfirm: (eventId: string, payload?: Dict) => Promise<void>; onAnalyze: (eventId: string) => Promise<void>;
   onReviewExternal: (eventId: string, payload: Dict) => Promise<void>; onOpenResult: () => void;
 }) {
@@ -1039,6 +1041,7 @@ function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, investigatio
       {Array.isArray(data.risk_signal_evidence) && data.risk_signal_evidence.length > 0 && <details className="event-evidence"><summary>유사 위험 실제 사례 {(data.risk_signal_evidence as Dict[]).length}건 · 지연 일수는 계산에 쓰지 않음</summary>{(data.risk_signal_evidence as Dict[]).map((caseRow) => <p key={text(caseRow.risk_id)}><a href={text(caseRow.source_url)} target="_blank" rel="noreferrer">{text(caseRow.title)}</a><small>발행 {text(caseRow.published_date)} · {text(caseRow.country)} · {text(caseRow.risk_type)}{caseRow.temporal_status === "POST_AS_OF_REFERENCE" ? " · 통보 이후 발행: 후향적 참고만 가능" : ""}</small></p>)}</details>}
 
       <InvestigationPanel external={Boolean(data.evidence)} inactive={inactive} signals={relatedSignals}
+        content={text(data.content, "")} llmMode={llmMode}
         runs={investigations} agentEnabled={agentEnabled} busy={busy} onStart={() => onInvestigate(eventId)} />
 
       {data.evidence ? <EvidenceReview event={data} tasks={tasks} disabled={busy} onReview={(payload) => onReviewExternal(eventId, payload)} onAnalyze={() => onAnalyze(eventId)} />
@@ -1062,7 +1065,7 @@ function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, investigatio
 }
 
 const STOP_LABEL: Record<string, string> = {
-  M1: "관련 없음 · 기록만", M2: "완료일 영향 없음 · 기록만", M3: "사람 확인 대기 · 기간 확인", M4: "사람 확인 대기",
+  M1: "관련 없음 · 기록만", M2: "완료일 영향 없음 · 기록만", M3: "확인이 필요합니다 · 기간", M4: "확인이 필요합니다",
   M5: "계산할 수 없음", done: "대응안 비교 완료",
 };
 const CHECK_LABEL: Record<string, string> = {
@@ -1097,8 +1100,39 @@ function checkResult(entry: Dict) {
   }
 }
 
-function InvestigationPanel({ external, inactive, signals, runs, agentEnabled, busy, onStart }: {
+/** Marks the exact sentences the agent quoted inside the source text. */
+function Highlighted({ body, marks }: { body: string; marks: unknown[] }) {
+  const quotes = Array.from(new Set(marks.map((mark) => text(mark, "")).filter((mark) => mark.length > 3 && body.includes(mark))));
+  const parts: ReactNode[] = [];
+  let rest = body;
+  while (rest) {
+    const hits = quotes.map((quote) => [rest.indexOf(quote), quote] as const).filter(([index]) => index >= 0)
+      .sort((a, b) => a[0] - b[0] || b[1].length - a[1].length);
+    if (!hits.length) { parts.push(rest); break; }
+    const [index, quote] = hits[0];
+    if (index > 0) parts.push(rest.slice(0, index));
+    parts.push(<mark key={parts.length}>{quote}</mark>);
+    rest = rest.slice(index + quote.length);
+  }
+  return <>{parts}</>;
+}
+
+function usageLine(usage: Dict | undefined, llmMode: string) {
+  const row = usage || {};
+  const calls = Number(row.llm_calls || 0);
+  if (!calls) return "";
+  const cost = typeof row.cost_usd === "number" ? `$${(row.cost_usd as number).toFixed(3)}` : "비용 미기록";
+  const tokens = `토큰 입력 ${Number(row.prompt_tokens || 0).toLocaleString()} · 출력 ${Number(row.completion_tokens || 0).toLocaleString()}`;
+  return `LLM 호출 ${calls}회 · ${tokens} · ${llmMode === "replay" ? `녹화 당시 비용 ${cost} (재생이라 이번 실행 비용 0)` : `비용 ${cost}`}`;
+}
+
+function CaseLink({ row }: { row: Dict }) {
+  return <><a href={text(row.source_url)} target="_blank" rel="noreferrer">{text(row.title)}</a> ({text(row.source_name, "출처")}, 발행 {text(row.published_date)})</>;
+}
+
+function InvestigationPanel({ external, inactive, signals, runs, agentEnabled, busy, onStart, content, llmMode }: {
   external: boolean; inactive: boolean; signals: Dict[]; runs: Row[]; agentEnabled: boolean; busy: boolean; onStart: () => void;
+  content: string; llmMode: string;
 }) {
   const latest = runs.slice().sort((a, b) => text(b.created_at, "").localeCompare(text(a.created_at, "")))[0];
   if ((!external && !signals.length) || (inactive && !latest)) return null;
@@ -1110,7 +1144,27 @@ function InvestigationPanel({ external, inactive, signals, runs, agentEnabled, b
   const link = record.cause_link as Dict | undefined;
   const email = agent.email_draft as Dict | undefined;
   const basis = (Array.isArray(data.real_case_basis) ? data.real_case_basis : []) as Dict[];
+  const found = (Array.isArray(data.agent_found_cases) ? data.agent_found_cases : []) as Dict[];
+  const notices = (Array.isArray(data.linked_notices) ? data.linked_notices : []) as Dict[];
+  const rules = (data.rules_only || {}) as Dict;
   const stop = text(data.status, "");
+  const results = (tool: string) => log.filter((entry) => entry.tool === tool && entry.status === "ok").map((entry) => (entry.result || {}) as Dict);
+  const worst = results("simulate_conditional").filter((row) => row.status !== "rejected").pop();
+  const factQuotes = log.flatMap((entry) => ((((entry.args || {}) as Dict).changes || []) as Dict[]).map((change) => change.fact_quote));
+  const candidateQuotes = results("narrow_candidates").flatMap((row) => ((row.candidates || []) as Dict[]).map((item) => item.quote));
+  const foundItems = results("find_procurement_items").flatMap((row) => (row.items || []) as Dict[]);
+  const absorbed = new Set(results("check_schedule_slack").flatMap((row) => ((row.tasks || []) as Dict[]).filter((task) => task.absorbs_bound).map((task) => text(task.task_id))));
+  const atRisk = ((worst?.changes || []) as Dict[]);
+  const rulesHeadline = rules.finish_date !== undefined
+    ? (Number(rules.finish_shift_days) === 0 ? `영향 없음 · 완료 ${text(rules.finish_date)} (변화 0일)` : `완료 ${text(rules.finish_date)} (+${text(rules.finish_shift_days)}일)`)
+    : `후보 ${text(rules.candidate_count, "0")}개 · 계산 없음`;
+  const agentHeadline = worst
+    ? `${atRisk.map((row) => text(row.item_id || row.task_id)).join("·")} +${text(worst.added_shift_days_vs_reported_change)}일 위험 (최악 완료 ${text(worst.finish_date)})`
+    : STOP_LABEL[stop] || text(data.summary, "");
+  const agentDetail = [
+    atRisk.filter((row) => row.latest_action_date).map((row) => `제출 기한 ${text(row.item_id || row.task_id)} ${text(row.latest_action_date)}`).join(" · "),
+    foundItems.length ? `통보에 없던 품목 ${foundItems.map((item) => text(item.item_id)).join("·")} 확인${foundItems.some((item) => absorbed.has(text(item.needed_for_task_id))) ? `, ${foundItems.filter((item) => absorbed.has(text(item.needed_for_task_id))).map((item) => text(item.item_id)).join("·")}는 여유로 흡수` : ""}` : "",
+  ].filter(Boolean).join(" · ");
   const quiet = stop === "M1" || stop === "M2";
   const reasoning = log.length > 0 && <ol className="investigation-checks">{log.map((entry, index) => <li key={index}>
     <b>{CHECK_LABEL[text(entry.tool)] || text(entry.tool)}</b>
@@ -1124,11 +1178,23 @@ function InvestigationPanel({ external, inactive, signals, runs, agentEnabled, b
       : !inactive && <button className="secondary" onClick={onStart} disabled={busy}>{latest ? "다시 조사" : "조사 시작"}</button>}
     {latest && !running && latest.status === "failed" && <p className="event-question">조사가 실패했습니다. 이력에서 실행 기록을 확인하세요.</p>}
     {latest && latest.status === "succeeded" && <div className="investigation-result">
-      <p><span className="status-chip">{STOP_LABEL[stop] || text(data.summary)}</span> {text(data.summary, "")}</p>
+      <p><span className={`status-chip${stop === "M3" || stop === "M4" ? " confirm" : ""}`}>{STOP_LABEL[stop] || text(data.summary)}</span> {text(data.summary, "")}</p>
+      {usageLine(agent.usage as Dict | undefined, llmMode) && <p className="usage-line">{usageLine(agent.usage as Dict | undefined, llmMode)}</p>}
+      <div className="compare-pair" aria-label="규칙만과 에이전트 비교">
+        <div><span className="eyebrow">규칙만</span><b>{rulesHeadline}</b><small>{text(rules.scope, "")}</small></div>
+        <div className="agent-side"><span className="eyebrow">에이전트</span><b>{agentHeadline}</b><small>{agentDetail || text(data.summary, "")}</small></div>
+      </div>
+      <div className="evidence-block">
+        <h4>근거 문장 · 에이전트가 인용한 원문</h4>
+        <p><small>{external ? "외부 공지" : "협력사 통보"}</small><Highlighted body={content} marks={[link?.supplier_quote, ...(external ? [...factQuotes, ...candidateQuotes] : [])]} /></p>
+        {notices.map((notice) => <p key={text(notice.event_id)}><small>연결된 외부 공지 · {text(notice.title)} · 발행 {text(notice.published_at).slice(0, 10)}</small><Highlighted body={text(notice.content, "")} marks={[link?.signal_quote, ...factQuotes]} /></p>)}
+        {found.length > 0 && <p className="real-basis">에이전트가 찾은 실제 사례: {found.map((row, index) => <span key={text(row.risk_id)}>{index ? " · " : ""}<CaseLink row={row} />{row.cited ? " · 근거로 인용" : ""}</span>)}</p>}
+        {basis.filter((row) => !found.some((item) => item.risk_id === row.risk_id)).length > 0 && <p className="real-basis">시나리오 설계 근거 실제 사례: {basis.map((row, index) => <span key={text(row.risk_id)}>{index ? " · " : ""}<CaseLink row={row} /></span>)}</p>}
+        {(found.length > 0 || basis.length > 0) && <small>일정·날짜는 합성이며, 기사 속 지연 기간은 계산에 쓰지 않습니다(조건부 계산의 기간은 공지 원문 값만 허용).</small>}
+      </div>
       {link && link.supplier_quote ? <p className="cause-link">원인 연결: 통보 <q>{text(link.supplier_quote)}</q> ↔ 공지 <q>{text(link.signal_quote)}</q></p> : null}
-      {record.question ? <p className="event-question">확인 요청: {text(record.question)}</p> : null}
+      {record.question ? <p className="agent-confirm"><b>확인 요청:</b> {text(record.question)}</p> : null}
       {email && email.body ? <div className="agent-note email-draft"><h4>협력사 메일 초안 · 발송 전</h4><p><b>{text(email.to, "")}{email.to ? " · " : ""}{text(email.subject, "확인 요청")}</b></p><p className="draft-body">{text(email.body)}</p></div> : null}
-      {basis.length > 0 && <p className="real-basis">근거 실제 사례: {basis.map((row, index) => <span key={text(row.risk_id)}>{index ? " · " : ""}<a href={text(row.source_url)} target="_blank" rel="noreferrer">{text(row.title)}</a> ({text(row.source_name)}, 발행 {text(row.published_date)})</span>)}. 일정·날짜는 합성이며 기사 속 지연 기간은 계산에 쓰지 않습니다.</p>}
       {quiet ? <details><summary>영향 없음 · 이유 보기</summary>{reasoning}</details>
         : reasoning && <div className="investigation-log"><h4>판단 기록 · 에이전트가 고른 확인 순서</h4>{reasoning}</div>}
     </div>}
@@ -1207,7 +1273,7 @@ function explanationText(item: unknown) {
   return ids.length ? `${ids.join(" + ")} · ${body}` : body;
 }
 
-function AgentDecisionPanel({ agent, eventContent }: { agent?: Dict; eventContent: string }) {
+function AgentDecisionPanel({ agent, eventContent, llmMode }: { agent?: Dict; eventContent: string; llmMode: string }) {
   if (!agent) return null;
   if (isRulesOnly(agent)) {
     return <section className="agent-decision rules-only" aria-label="분석 방식">
@@ -1225,8 +1291,11 @@ function AgentDecisionPanel({ agent, eventContent }: { agent?: Dict; eventConten
     <span className="eyebrow">{interpretation ? "LLM INTERPRETATION · 원문 해석" : "AGENT REASONING · 설명과 초안"}</span>
     <h3>{interpretation ? "에이전트 해석" : "에이전트 판단 과정"}</h3>
     <p>{agentSummary(agent)}</p>
-    {agent.stop_reason ? <p className="agent-stop">멈춘 이유: {text(agent.stop_reason)}</p> : null}
-    {Array.isArray(agent.unresolved_items) && agent.unresolved_items.length ? <p className="agent-stop">확인 질문: {(agent.unresolved_items as unknown[]).map((item) => text(item)).join(" · ")}</p> : null}
+    {usageLine(agent.usage as Dict | undefined, llmMode) && <p className="usage-line">{usageLine(agent.usage as Dict | undefined, llmMode)}</p>}
+    {agent.stop_reason ? (["needs_input", "needs_review", "completed"].includes(text(agent.status))
+      ? <p className="agent-confirm">확인이 필요합니다: {text(agent.stop_reason).replace(/^사람 확인 대기:\s*/, "")}</p>
+      : <p className="agent-stop">멈춘 이유: {text(agent.stop_reason)}</p>) : null}
+    {Array.isArray(agent.unresolved_items) && agent.unresolved_items.length ? <p className="agent-confirm">확인할 내용: {(agent.unresolved_items as unknown[]).map((item) => text(item)).join(" · ")}</p> : null}
     {regulation && /(규제|인허가|허가|법령|법규|규정|regulation|regulatory|permit|license)/i.test(eventContent) ? <div className="agent-note"><h4>규제·인허가 적용 가능성: {text(regulation.likelihood, "불확실")}</h4>{regulation.reason ? <p>{text(regulation.reason)}</p> : null}{regulation.human_check ? <p>사람 확인: {text(regulation.human_check)}</p> : null}{Array.isArray(regulation.evidence_risk_ids) && regulation.evidence_risk_ids.length ? <small>당시 이용 가능한 L2 근거: {(regulation.evidence_risk_ids as unknown[]).join(", ")}</small> : null}{Array.isArray(regulation.reference_only_risk_ids) && regulation.reference_only_risk_ids.length ? <small>통보 이후 발행된 참고 사례: {(regulation.reference_only_risk_ids as unknown[]).join(", ")}</small> : null}</div> : null}
     {conditional ? <div className="agent-note"><h4>규제 적용 시 조건부 일정 · 계산 도구</h4><p>{conditional.finish_date ? `계산된 완료 예정일 ${text(conditional.finish_date)}` : text(conditional.reason, "추가 일정 입력이 필요합니다.")}</p><small>적용 확인 전에는 확정 일정에 반영되지 않습니다.</small></div> : null}
     {explanations.length ? <div className="agent-note"><h4>대응안별 설명</h4>{explanations.map((item, index) => <p key={index}>{explanationText(item)}</p>)}</div> : null}

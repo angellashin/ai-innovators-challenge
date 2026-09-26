@@ -126,7 +126,7 @@ export function EvidenceReview({ event, tasks, disabled, onReview, onAnalyze }: 
     {url && <a href={url} target="_blank" rel="noreferrer">원문 근거 열기 ↗</a>}
     <small>수집 {proof.fetched_at || "미확인"} · 발행 {proof.published_at || "미확인"}</small>
     <small>기준 버전 {event.version_id} · {event.review_status}</small>
-    {(event.candidates || []).map((candidate: Row) => <p key={candidate.task_id}>{candidate.task_id}: {(candidate.reasons || []).join(" · ")}{candidate.quote && <q>{candidate.quote}</q>}</p>)}
+    {(event.candidates || []).map((candidate: Row) => <p key={candidate.task_id}>{candidate.task_id}: {(candidate.reasons || []).join(" · ")}{candidate.quote && <><br /><small>원문 인용: <q>{candidate.quote}</q></small></>}</p>)}
     {event.missing_fields?.length > 0 && <p>확인할 내용: {event.missing_fields.join(", ")}</p>}
     {hasPatch && <ul>{Object.entries(event.patch).flatMap(([kind, values]) => Object.entries(values as Row).map(([id, value]) => <li key={`${kind}-${id}`}>{id} · {kind === "blocked_dates" ? "작업 제외일" : kind === "not_before" ? "착수 가능일" : "완료 예정일"}: {Array.isArray(value) ? value.join(", ") : String(value)}</li>))}</ul>}
     {!hasPatch && !invalid && <details><summary>적용 작업·날짜 확인</summary>
