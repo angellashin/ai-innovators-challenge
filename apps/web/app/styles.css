@@ -2566,6 +2566,26 @@ main {
 .analysis-receipt h3 { margin: 7px 0 0; color: var(--human-ink); font-size: 18px; letter-spacing: -.04em; }
 .analysis-receipt p { margin: 7px 0 0; color: #6a7273; font-size: 12px; }
 .analysis-receipt strong { display: block; margin-top: 10px; color: #3c5148; font-size: 13px; }
+.agent-decision { margin-bottom: 12px; padding: 20px; border: 1px solid #b8cbd4; border-left: 3px solid #467f9d; border-radius: 14px; background: #f1f6f8; color: #253f4c; }
+.agent-decision h3 { margin: 7px 0; }
+.agent-decision p { margin: 8px 0; }
+.agent-stop { color: #855744; }
+.agent-tool-list { padding-left: 22px; }
+.agent-tool-list li { margin: 8px 0; }
+.agent-tool-result { margin: 6px 0; line-height: 1.5; color: #284a5b; }
+.agent-tool-list summary { cursor: pointer; }
+.agent-tool-list pre { overflow: auto; max-height: 280px; padding: 12px; background: #e7eef1; border-radius: 8px; font-size: 11px; white-space: pre-wrap; }
+.agent-note { margin-top: 12px; padding: 12px; background: #fff; border-radius: 9px; }
+.agent-note h4 { margin: 0 0 8px; }
+.agent-note small { display: block; margin-top: 6px; }
+.review-guidance { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0; padding: 14px 18px; border: 1px solid #b8cbd4; border-radius: 12px; background: #f1f6f8; color: #253f4c; }
+.review-guidance button { flex: 0 0 auto; }
+.option-catalog { margin: 12px 0; }
+.option-catalog-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 10px; margin-top: 12px; }
+.option-catalog-grid article { padding: 12px; border: 1px solid #dce4df; border-radius: 9px; background: #fafbf8; }
+.option-catalog-grid small { display: block; margin-top: 6px; color: #5b6b70; line-height: 1.5; }
+.option-catalog-grid p { margin: 8px 0; line-height: 1.5; }
+.draft-body { white-space: pre-wrap; }
 .scenario-layout { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 12px; }
 .approval-focus { border-top: 3px solid var(--human-mint); }
 .approval-focus > p { color: #53615e; }

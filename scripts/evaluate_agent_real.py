@@ -34,8 +34,14 @@ def main() -> int:
     result = evaluate("real")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    workflow = result["agent_workflow"]
     print(json.dumps({"model": result["model"], "executed_at": result["executed_at"],
-                      "llm_call_count": result["llm_call_count"], "output": str(args.output)}, ensure_ascii=False))
+                      "llm_call_count": result["llm_call_count"],
+                      "tool_selection_rate": workflow["required_tool_rate"],
+                      "ambiguous_stop_rate": workflow["ambiguous_stop_rate"],
+                      "unsupported_draft_numeric_rate": workflow["unsupported_draft_numeric_rate"],
+                      "unconfirmed_regulation_as_confirmed_delay_rate": workflow["unconfirmed_regulation_as_confirmed_delay_rate"],
+                      "output": str(args.output)}, ensure_ascii=False))
     return 0
 
 

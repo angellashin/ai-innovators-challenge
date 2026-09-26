@@ -11,9 +11,10 @@ from app.main import ConfirmInput, app, normalize_import_snapshot, suggest_watch
 from app.risk_signals import evidence_for_supplier, search_risk_signals
 from app.storage import Store
 from app.supplier_interpreter import interpret_supplier_message
+from app.task_retrieval import retrieve_related_tasks
 from app.watch_suggestions import outdoor_candidate
 from app.worker import run_once
-from scripts.evaluate_agent import evaluate_l3
+from scripts.evaluate_agent import evaluate, evaluate_l3
 from scripts.evaluation_mocks import MockEvaluationGateway
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,6 +54,44 @@ def test_l2_search_excludes_same_source_case_and_keeps_citation():
     evidence = evidence_for_supplier(h02["content"], tasks, ["T037"], h02["published_at"])
     assert evidence and all("delay_days" not in row for row in evidence)
     assert all(row["temporal_status"] == "POST_AS_OF_REFERENCE" for row in evidence)
+
+
+def test_task_retrieval_keeps_citations_and_excludes_weak_candidates():
+    narrative = "설비가 현장에 도착한 뒤 반입 작업을 재검토합니다."
+
+    class Gateway:
+        def chat(self, *_args, **_kwargs):
+            return ChatResult(content=json.dumps({"candidates": [
+                {"task_id": "T045", "quote": "설비가 현장에 도착", "relevance": "high", "reason": "설비 반입 단계"},
+                {"task_id": "T047", "quote": "반입 작업을 재검토", "relevance": "low", "reason": "설치 작업은 간접 관련"},
+            ]}))
+
+    result = retrieve_related_tasks(narrative, [
+        {"task_id": "T045", "name": "Equipment delivery to site"},
+        {"task_id": "T047", "name": "Module installation"},
+    ], Gateway())
+    assert result["task_ids"] == ["T045"]
+    assert result["candidates"][0]["quote"] in narrative
+    assert result["candidates"][0]["reason"]
+    assert result["candidates"][1]["relevance"] == "low"
+
+
+def test_mock_agent_workflow_metrics_cover_hero_and_variants():
+    report = evaluate("mock")
+    workflow = report["agent_workflow"]
+    assert workflow["cases"] == 19
+    assert workflow["required_tool_rate"] == 1
+    assert workflow["ambiguous_stop_rate"] == 1
+    assert workflow["unsupported_draft_numeric_rate"] == 0
+    assert workflow["unconfirmed_regulation_as_confirmed_delay_rate"] == 0
+    by_id = {row["case_id"]: row for row in workflow["rows"]}
+    assert by_id["H02"]["tool_order"] == ["simulate_schedule", "recheck_shifted_schedule",
+                                           "search_risk_signals", "simulate_regulatory_condition", "list_response_options"]
+    assert by_id["H04"]["tool_order"] == ["simulate_schedule", "recheck_shifted_schedule",
+                                           "list_response_options"]
+    retrieval = report["l3_affected_task_retrieval"]["agent_included"]
+    assert retrieval["precision"] > 0.32
+    assert retrieval["recall"] >= 0.75
 
 
 def test_generic_outdoor_suggestions_and_review_gate(tmp_path, monkeypatch):
@@ -115,7 +154,9 @@ def test_hero_variant_llm_fallback_reaches_existing_external_recheck(tmp_path, m
     assert scenario["external_constraints"]
     assert scenario["supplier_finish_shift_days"] > 0
     assert scenario["provisional"]
-    assert gateway.calls == 1
+    assert gateway.calls >= 4
+    assert [row["tool"] for row in result["run"]["data"]["agent"]["tool_log"][:2]] == [
+        "simulate_schedule", "recheck_shifted_schedule"]
     past = client.post(f"/api/projects/{project_id}/events", headers=header, json={
         "event_id": "PAST", "channel": "supplier_message", "source_label": "가상 검증",
         "content": "[가상 메시지] T001 조사 납기를 2026-12-28로 재통지합니다.",

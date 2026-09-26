@@ -14,10 +14,12 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "services" / "api"))
 
 from app.adapters.llm import OpenAICompatibleLLM  # noqa: E402
+from app.agent import run_agent  # noqa: E402
 from app.events import _dates_for_range, _extract_dates, normalize_event  # noqa: E402
 from app.importers import parse_upload  # noqa: E402
 from app.main import ConfirmInput, normalize_import_snapshot  # noqa: E402
 from app.scheduling import simulate  # noqa: E402
+from app.shifted_external import bundled_hero_calendars, recheck_shifted_schedule  # noqa: E402
 from app.supplier_interpreter import interpret_supplier_message  # noqa: E402
 from app.task_retrieval import retrieve_related_tasks  # noqa: E402
 from app.risk_signals import mentioned_risk_types, search_risk_signals  # noqa: E402
@@ -166,6 +168,111 @@ def evaluate_l3(project: dict, tasks: list[dict], gateway: object | None) -> dic
             "f1": _rate(2 * precision * recall, precision + recall), "rows": rows}
 
 
+def evaluate_workflow(project: dict, tasks: list[dict], options: list[dict], gateway: object) -> dict:
+    """Exercise H01-H08 and V01-V11 with mockable calculator tools."""
+    from app.risk_signals import evidence_for_supplier
+
+    rows = []
+    calendars = bundled_hero_calendars(tasks)
+    for corpus, answer in (("supplier_messages.json", "supplier_message_ground_truth.json"),
+                           ("supplier_message_variants.json", "supplier_message_variants_ground_truth.json")):
+        messages = _load(ROOT / "data" / "hero_demo" / corpus)["events"]
+        truths = _load(ROOT / "data" / "hero_demo" / answer)["cases"]
+        for raw, truth in zip(messages, truths):
+            case_id = str(raw.get("event_id") or "")
+            if case_id not in {f"H{index:02d}" for index in range(1, 9)} | {f"V{index:02d}" for index in range(1, 12)}:
+                continue
+            if case_id == "H01" and any(row["case_id"] == "H01" for row in rows):
+                continue
+            event = normalize_event(raw, project, tasks)
+            if not event.get("patch") and event.get("classification_status") != "NO_SCHEDULE_IMPACT":
+                interpreted = interpret_supplier_message(event, project, tasks, gateway)
+                if interpreted.get("patch"):
+                    event["patch"] = interpreted["patch"]
+                    event["related_task_ids"] = interpreted["related_task_ids"]
+                else:
+                    event["task_candidates"] = interpreted.get("task_candidates") or []
+            event["risk_signal_evidence"] = evidence_for_supplier(
+                event.get("content", ""), tasks, event.get("related_task_ids") or [], raw.get("published_at") or "")
+
+            def find_task_candidates() -> dict:
+                """Return ranked, quoted work candidates."""
+                return retrieve_related_tasks(event.get("content", ""), tasks, gateway)
+
+            def simulate_schedule(option_ids: list[str]) -> dict:
+                """Calculate a supplier-only schedule."""
+                if not event.get("patch"):
+                    return {"status": "NEEDS_INPUT"}
+                if option_ids:
+                    return {"status": "invalid_option"}
+                return simulate(project, tasks, event=event)
+
+            def recheck_shifted_schedule_tool(option_ids: list[str]) -> dict:
+                """Calculate shifted calendar constraints."""
+                if not event.get("patch"):
+                    return {"status": "NEEDS_INPUT"}
+                if option_ids:
+                    return {"status": "invalid_option"}
+                return recheck_shifted_schedule(project, tasks, event, [], None, calendars, [], {})
+
+            def search_risk_signals_tool(risk_type: str = "") -> dict:
+                """Return L2 examples with publication timing."""
+                result = search_risk_signals(risk_type=risk_type, limit=5)
+                as_of = str(raw.get("published_at") or "")[:10]
+                for item in result["results"]:
+                    item["temporal_status"] = ("POST_AS_OF_REFERENCE" if item["published_date"] > as_of
+                                                else "AVAILABLE_AS_OF")
+                return result
+
+            def simulate_regulatory_condition(option_ids: list[str]) -> dict:
+                """Calculate an explicit conditional regulation patch only."""
+                conditional = event.get("conditional_regulatory_patch") or {}
+                if not conditional or option_ids:
+                    return {"status": "NEEDS_INPUT", "conditional": True,
+                            "reason": "규제 적용 시 추가 날짜와 기간 확인 필요"}
+                from app.external_risks import combine_patches
+                return {**simulate(project, tasks,
+                                   event={**event, "patch": combine_patches([event.get("patch") or {}, conditional])}),
+                        "conditional": True, "approval_required": True}
+
+            output = run_agent({"_llm_gateway": gateway, "related_tasks": [task for task in tasks
+                                if task["task_id"] in event.get("related_task_ids", [])],
+                                "task_candidates": event.get("task_candidates") or []}, event,
+                               {"find_task_candidates": find_task_candidates,
+                                "simulate_schedule": simulate_schedule,
+                                "recheck_shifted_schedule": recheck_shifted_schedule_tool,
+                                "simulate_regulatory_condition": simulate_regulatory_condition,
+                                "search_risk_signals": search_risk_signals_tool,
+                                "list_response_options": lambda: {"options": options}}, max_steps=8)
+            tools = [entry["tool"] for entry in output.get("tool_log") or []]
+            needs_calculation = truth["expected_outcome"] == "IMPACT" and bool(event.get("patch"))
+            ambiguous = not event.get("patch") and event.get("classification_status") != "NO_SCHEDULE_IMPACT"
+            draft = output.get("email_draft") or {}
+            calculator_text = json.dumps([entry.get("result") for entry in output.get("tool_log") or []
+                                          if entry["tool"] in {"simulate_schedule", "recheck_shifted_schedule", "simulate_regulatory_condition"}],
+                                         ensure_ascii=False)
+            numeric = __import__("re").findall(r"(?<![A-Za-z])\d{4}-\d{2}-\d{2}|(?<![A-Za-z\d])\d[\d,]*", json.dumps(draft, ensure_ascii=False))
+            unsupported = [token for token in numeric if token not in calculator_text]
+            unconfirmed = "확인되지" in str(raw.get("content") or "")
+            assessment = output.get("regulatory_assessment") or {}
+            rows.append({"case_id": case_id, "tool_order": tools,
+                         "required_tools_called": not needs_calculation or all(name in tools for name in
+                                                   ("simulate_schedule", "recheck_shifted_schedule")),
+                         "ambiguous_stopped": not ambiguous or not any(name in tools for name in
+                                               ("simulate_schedule", "recheck_shifted_schedule")),
+                         "draft_numeric_claims": len(numeric), "unsupported_draft_numeric_claims": len(unsupported),
+                         "unconfirmed_regulation": unconfirmed,
+                         "unconfirmed_as_confirmed_delay": bool(unconfirmed and assessment.get("confirmed_delay_days")),
+                         "status": output.get("status")})
+    return {"cases": len(rows), "required_tool_rate": _rate(sum(row["required_tools_called"] for row in rows), len(rows)),
+            "ambiguous_stop_rate": _rate(sum(row["ambiguous_stopped"] for row in rows), len(rows)),
+            "unsupported_draft_numeric_rate": _rate(sum(row["unsupported_draft_numeric_claims"] for row in rows),
+                                                    sum(row["draft_numeric_claims"] for row in rows)),
+            "unconfirmed_regulation_as_confirmed_delay_rate": _rate(sum(row["unconfirmed_as_confirmed_delay"] for row in rows),
+                                                                    sum(row["unconfirmed_regulation"] for row in rows)),
+            "rows": rows}
+
+
 def evaluate(mode: str) -> dict:
     project_file = ROOT / "data" / "l1_project" / "hero_battery_factory_project.xlsx"
     parsed = parse_upload(project_file.name, project_file.read_bytes())
@@ -181,6 +288,7 @@ def evaluate(mode: str) -> dict:
         preview_gateway = MockEvaluationGateway()
         evaluate_supplier(project, tasks, preview_gateway)
         evaluate_l3(project, tasks, preview_gateway)
+        evaluate_workflow(project, tasks, snapshot.get("options", []), preview_gateway)
         expected_calls = preview_gateway.calls
         if expected_calls > int(os.environ.get("REPLAN_MAX_PAID_RUNS_PER_DAY", "20")):
             raise RuntimeError("Expected paid calls exceed REPLAN_MAX_PAID_RUNS_PER_DAY")
@@ -200,8 +308,10 @@ def evaluate(mode: str) -> dict:
     counting = Counter(gateway)
     agent = evaluate_supplier(project, tasks, counting)
     l3_agent = evaluate_l3(project, tasks, counting)
+    workflow = evaluate_workflow(project, tasks, snapshot.get("options", []), counting)
     if mode == "real" and (any(row["agent_error"] for corpus in agent.values() for row in corpus["cases"])
-                           or any(row["agent_error"] for row in l3_agent["rows"])):
+                           or any(row["agent_error"] for row in l3_agent["rows"])
+                           or any(row["status"] in {"failed", "llm_unavailable"} for row in workflow["rows"])):
         raise RuntimeError("One or more paid LLM calls failed; no evaluation result was written")
     return {"mode": mode, "model": os.environ.get("LLM_MODEL") if mode == "real" else "offline-semantic-fixture",
             "executed_at": datetime.now(timezone.utc).isoformat(), "llm_call_count": counting.calls if mode == "real" else 0,
@@ -210,6 +320,7 @@ def evaluate(mode: str) -> dict:
             "note": "Mock scores validate wiring and fixtures, not actual model quality." if mode == "mock" else "Actual model run; no ground truth was sent to the model.",
             "supplier": {"rules_only": rules, "agent_included": agent},
             "l3_affected_task_retrieval": {"rules_only": l3_rules, "agent_included": l3_agent},
+            "agent_workflow": workflow,
             "outdoor_classification": evaluate_outdoor(parsed["tasks"])}
 
 

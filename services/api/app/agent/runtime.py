@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from ..adapters.llm import ChatResult, LLMUnavailable, OpenAICompatibleLLM
@@ -17,7 +18,7 @@ def run_agent(
     context: Dict[str, Any],
     event: Dict[str, Any],
     tools: Dict[str, Callable[..., Any]],
-    max_steps: int = 6,
+    max_steps: int = 8,
 ) -> Dict[str, Any]:
     """Run a bounded LLM loop and return a normalized agent result."""
 
@@ -58,7 +59,7 @@ def run_agent(
         usage = _merge_usage(usage, reply.usage)
         action = _next_action(reply)
         if action:
-            outcome = _execute_action(action, allowed_tools, seen_calls, tool_log, max_calls)
+            outcome = _execute_action(action, allowed_tools, seen_calls, tool_log, max_calls, context)
             if outcome:
                 return _result(tool_log=tool_log, usage=usage, **outcome)
             messages.extend(_tool_result_messages(action, tool_log[-1]))
@@ -68,6 +69,7 @@ def run_agent(
         final["tool_log"] = tool_log
         final["usage"] = usage
         final.setdefault("status", "completed")
+        final = _ground_final(final, event, tool_log)
         return _normalize_result(final)
 
     return _result(
@@ -94,9 +96,17 @@ def _initial_messages(
     tool_names = sorted(tools)
     system = (
         "You are a schedule replanning assistant. Return only JSON. "
-        "Allowed final keys: summary, impacted_tasks, options, required_actions, unresolved_items, status. "
+        "Allowed final keys: summary, impacted_tasks, options, option_explanations, "
+        "regulatory_assessment, email_draft, required_actions, unresolved_items, stop_reason, status. "
         "You may request exactly one tool call at a time using native tool calls or "
         '{"action":"tool","tool":"name","args":{...}}. '
+        "Choose tools in the order needed. If the task is ambiguous or the changed date is missing, "
+        "ask a concrete question and stop before schedule tools. Use calculator tool results exclusively "
+        "for all dates, durations and costs; do not alter them. L2 cases show analogies, not legal "
+        "applicability or project delay. POST_AS_OF_REFERENCE is reference only, never reasoning evidence. "
+        "Unconfirmed regulation is a conditional scenario only; call simulate_regulatory_condition "
+        "when available and report NEEDS_INPUT if its date or duration is missing. Explain option tradeoffs and draft a supplier negotiation "
+        "email only after schedule calculation. A draft never sends or confirms a plan. "
         "Never request commit or send actions."
     )
     user = {
@@ -218,6 +228,7 @@ def _execute_action(
     seen_calls: set,
     tool_log: List[Dict[str, Any]],
     max_calls: int,
+    context: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
     name = str(action.get("tool") or "")
     args = action.get("args") or {}
@@ -233,6 +244,24 @@ def _execute_action(
             "summary": "Agent requested a disallowed tool.",
             "unresolved_items": ["tool '%s' is not allowed" % name],
         }
+    # These closures are already scoped to the active project. Some gateways
+    # echo its ID even though it is absent from the advertised tool schema.
+    if isinstance(args, dict) and "project_id" in args:
+        try:
+            accepts_project_id = "project_id" in inspect.signature(tools[name]).parameters
+        except (TypeError, ValueError):
+            accepts_project_id = True
+        if not accepts_project_id:
+            project = context.get("project") or {}
+            expected = str(project.get("project_id") or "") if isinstance(project, dict) else ""
+            if not expected or str(args["project_id"]) != expected:
+                return {
+                    "status": "invalid_tool_args",
+                    "summary": "Agent requested a tool with invalid arguments.",
+                    "unresolved_items": ["project_id does not match the active project"],
+                }
+            args = {key: value for key, value in args.items() if key != "project_id"}
+            action["args"] = args
     ok, reason = _validate_args(tools[name], args)
     if not ok:
         return {
@@ -299,15 +328,102 @@ def _parse_final(content: str) -> Dict[str, Any]:
 
 def _normalize_result(value: Dict[str, Any]) -> Dict[str, Any]:
     return {
-        "summary": str(value.get("summary") or ""),
+        "summary": _summary_sentence(value.get("summary"), _list(value.get("tool_log"))),
         "impacted_tasks": _list(value.get("impacted_tasks")),
         "options": _list(value.get("options")),
+        "option_explanations": _list(value.get("option_explanations")),
+        "regulatory_assessment": value.get("regulatory_assessment") if isinstance(value.get("regulatory_assessment"), dict) else None,
+        "conditional_scenario": value.get("conditional_scenario") if isinstance(value.get("conditional_scenario"), dict) else None,
+        "email_draft": value.get("email_draft") if isinstance(value.get("email_draft"), dict) else None,
+        "stop_reason": str(value.get("stop_reason") or ""),
         "required_actions": _list(value.get("required_actions")),
         "unresolved_items": _list(value.get("unresolved_items")),
         "tool_log": _list(value.get("tool_log")),
         "status": str(value.get("status") or "completed"),
         "usage": dict(value.get("usage") or {}),
     }
+
+
+def _summary_sentence(summary: Any, tool_log: List[Any]) -> str:
+    if not isinstance(summary, dict):
+        return str(summary or "")
+    calculator = next((entry.get("result") for entry in reversed(tool_log)
+                       if isinstance(entry, dict) and entry.get("status") == "ok"
+                       and entry.get("tool") in {"recheck_shifted_schedule", "simulate_schedule"}
+                       and isinstance(entry.get("result"), dict)), None)
+    if calculator and calculator.get("finish_date"):
+        target = "목표일을 충족합니다." if calculator.get("target_met") else "목표일을 충족하지 못합니다."
+        return f"통보의 일정 영향을 검토했습니다. 계산된 완료 예정일은 {calculator['finish_date']}이며, {target}"
+    return "통보 내용을 검토했습니다. 일정 계산에 필요한 조건을 추가로 확인해야 합니다."
+
+
+_NUMBER_OR_DATE = re.compile(r"(?<![A-Za-z0-9])(?:\d{4}-\d{2}-\d{2}|\d[\d,]*(?:\.\d+)?)(?![A-Za-z0-9])")
+
+
+def _ground_final(value: Dict[str, Any], event: Dict[str, Any], tool_log: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Treat model prose as untrusted; numeric claims need calculator provenance."""
+    calculator = [row["result"] for row in tool_log if row.get("status") == "ok"
+                  and row.get("tool") in {"simulate_schedule", "recheck_shifted_schedule", "simulate_regulatory_condition"}]
+    allowed: set[str] = set()
+
+    def collect(item: Any) -> None:
+        if isinstance(item, dict):
+            for child in item.values():
+                collect(child)
+        elif isinstance(item, list):
+            for child in item:
+                collect(child)
+        elif isinstance(item, (int, float)) and not isinstance(item, bool):
+            allowed.add(str(item))
+            if isinstance(item, int):
+                allowed.add(f"{item:,}")
+        elif isinstance(item, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", item):
+            allowed.add(item)
+
+    for result in calculator:
+        collect(result)
+    for entry in tool_log:
+        if entry.get("tool") == "simulate_regulatory_condition" and entry.get("status") == "ok":
+            value["conditional_scenario"] = entry.get("result")
+
+    def clean(item: Any) -> Any:
+        if isinstance(item, str):
+            return _NUMBER_OR_DATE.sub(lambda match: match.group() if match.group() in allowed else "", item)
+        if isinstance(item, list):
+            return [clean(child) for child in item]
+        if isinstance(item, dict):
+            return {key: clean(child) for key, child in item.items()}
+        return item
+
+    for key in ("email_draft", "option_explanations"):
+        if key in value:
+            value[key] = clean(value[key])
+
+    assessment = value.get("regulatory_assessment")
+    notice = str(event.get("content") or "").lower()
+    regulatory_terms = ("규제", "인허가", "허가", "법령", "법규", "규정", "regulation", "regulatory", "permit", "license")
+    if isinstance(assessment, dict) and not any(term in notice for term in regulatory_terms):
+        value["regulatory_assessment"] = None
+        assessment = None
+    if isinstance(assessment, dict):
+        as_of = str(event.get("published_at") or event.get("received_at") or "")[:10]
+        referenced = {row["risk_id"]: row for entry in tool_log
+                      if entry.get("tool") == "search_risk_signals" and entry.get("status") == "ok"
+                      for row in (entry.get("result") or {}).get("results", [])
+                      if isinstance(row, dict) and row.get("risk_id")}
+        cited = [str(identifier) for identifier in assessment.get("evidence_risk_ids") or []]
+        assessment["evidence_risk_ids"] = [identifier for identifier in cited
+                                           if identifier in referenced and
+                                           (not as_of or str(referenced[identifier].get("published_date") or "") <= as_of)]
+        assessment["reference_only_risk_ids"] = [identifier for identifier in cited if identifier in referenced
+                                                  and identifier not in assessment["evidence_risk_ids"]]
+        if not assessment["evidence_risk_ids"] and assessment.get("likelihood") == "높음":
+            assessment["likelihood"] = "불확실"
+        if any(term in notice for term in ("확인되지", "미확정", "불확실", "unconfirmed", "not confirmed", "unknown")) and assessment.get("likelihood") == "높음":
+            assessment["likelihood"] = "불확실"
+        for field in ("confirmed_delay_days", "confirmed_finish_date"):
+            assessment.pop(field, None)
+    return value
 
 
 def _result(

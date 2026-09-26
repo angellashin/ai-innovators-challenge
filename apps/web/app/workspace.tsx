@@ -110,6 +110,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const [notice, setNotice] = useState("프로젝트를 생성하거나 불러오세요.");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  const [reviewRequiredEventId, setReviewRequiredEventId] = useState("");
   const [activeSection, setActiveSection] = useState("overview");
 
   useEffect(() => {
@@ -215,6 +216,11 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       return value;
     } catch (caught) {
       const apiError = caught as ApiError;
+      if (label === "영향 분석 시작" && apiError.status === 409 && apiError.message.includes("review the proposed change")) {
+        setReviewRequiredEventId(selectedEventId || project.events?.[0]?.id || "pending");
+        setNotice("변경 내용을 먼저 확인해야 분석할 수 있습니다.");
+        return null;
+      }
       setError(apiError.status ? apiError : { status: 0, message: String(caught) });
       setNotice(`${label} 실패`);
       return null;
@@ -410,7 +416,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ confirmed: true }),
       }),
-    async () => { await refreshProject(projectId); await analyzeEvent(eventId); });
+    async () => { setReviewRequiredEventId(""); await refreshProject(projectId); await analyzeEvent(eventId, false, true); });
   }
 
   async function createManualEvent() {
@@ -424,8 +430,16 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     }, true);
   }
 
-  async function analyzeEvent(eventId: string, previewOnly = false) {
+  async function analyzeEvent(eventId: string, previewOnly = false, justReviewed = false) {
     setSelectedEventId(eventId); setPendingRunId(""); setRun(null); setSelectedScenarioId("");
+    const selected = project.events?.find((item) => item.id === eventId)?.data;
+    if (!previewOnly && !justReviewed && selected && Object.keys((selected.patch || {}) as Dict).length > 0 && selected.review_status !== "CONFIRMED" && !selected.evidence) {
+      setReviewRequiredEventId(eventId);
+      setError(null);
+      setNotice("변경 내용을 먼저 확인해야 분석할 수 있습니다.");
+      return;
+    }
+    setReviewRequiredEventId("");
     await guarded("영향 분석 시작", () =>
       callApi<{ run_id: string; status: string }>(`/api/projects/${projectId}/analyses`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -553,7 +567,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     const data = event.data || event;
     const eventId = text(event.id || data.id, "");
     return (
-      <article key={eventId} className="focus-event-card">
+      <article key={eventId} id={`review-${eventId}`} className="focus-event-card">
         <div className="focus-event-topline"><span className="status-chip">{data.review_status === "CONFIRMED" ? "해석 확인됨" : "확인 필요"}</span><small>{text(data.source_label, "외부 입력")} · {text(data.mode, "수동")}</small></div>
         <h3>{text(data.title, "변경 메시지")}</h3>
         <p>{text(data.content || data.title)}</p>
@@ -601,6 +615,8 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       <div className="view-heading"><div><p className="eyebrow">SCENARIOS</p><h2 id="scenarios-title">대응안 비교</h2><p>일정, 비용, 제약 조건을 같은 기준으로 비교하고 승인 가능한 안을 고릅니다.</p></div><span className="view-context">{run?.run ? text(run.run.status) : "분석 대기"}</span></div>
       <div className="scenario-toolbar"><button onClick={() => fetchRun()} disabled={!project.runs?.length || busy}>분석 결과 보기</button><label>대응안 비용 한도(선택)<input className="budget" type="number" min="0" step="100000" value={budget} onChange={(event) => setBudget(event.target.value === "" ? "" : Number(event.target.value))} /></label><button className="secondary" onClick={replan} disabled={!run?.run || budget === "" || busy}>비용 한도 반영</button></div>
       {run?.run && <div className="analysis-receipt"><span className="eyebrow">ANALYSIS RESULT</span><h3>{text(run.run.data?.summary, run.run.status === "failed" ? "분석 실패: 입력을 확인하세요." : "분석 결과를 불러오는 중입니다.")}</h3><p>{text(run.run.status)} · 이벤트 {shortId(run.run.event_id)}</p>{selectedScenario && <strong>기준 완료 {text(selectedScenario.data?.baseline_finish)} → 예상 완료 {text(selectedScenario.data?.finish_date)} · 완료일 변화 {text(selectedScenario.data?.finish_shift_days)}일</strong>}</div>}
+      <AgentDecisionPanel agent={run?.run?.data?.agent as Dict | undefined} eventContent={text(project.events?.find((item) => item.id === run?.run?.event_id)?.data?.content, "")} />
+      <OptionCatalog options={((project.version?.data?.options || []) as Dict[])} />
       <div className="scenario-layout"><div className="focus-card"><div className="panel-heading"><div><h3>비교할 대응안</h3><p>조건부 표시는 추가 확인 후 승인할 수 있다는 뜻입니다.</p></div></div><ScenarioList scenarios={run?.scenarios || []} selected={selectedScenarioId} onSelect={setSelectedScenarioId} /></div>{selectedScenario ? <div className="focus-card approval-focus"><div className="panel-heading"><div><h3>{text(selectedScenario.data?.label)}</h3><p>{scenarioScore(selectedScenario.data || {})} · 완료 예정 {text(selectedScenario.data?.finish_date)} · 추가 비용 {costLabel(selectedScenario.data || {})}</p></div></div><p>확인이 필요한 조건 {((selectedScenario.data?.required_confirmations as unknown[]) || []).length}건</p>{(project.actions || []).filter((item) => item.scenario_id === selectedScenarioId).map((action) => <div key={text(action.id)} className="condition-review"><p>{text(action.data?.request)} · {text(action.data?.state)}</p><label>회신·확인 근거<input value={conditionNotes[text(action.id)] || ""} onChange={(event) => setConditionNotes({ ...conditionNotes, [text(action.id)]: event.target.value })} /></label><button className="secondary" disabled={busy || !conditionNotes[text(action.id)]?.trim()} onClick={() => acceptCondition(text(action.id))}>확인 기록</button></div>)}<div className="button-row wrap"><button onClick={prepareScenario} disabled={busy}>확인 요청 만들기</button><button className="secondary" onClick={approveScenario} disabled={busy}>승인</button><button onClick={commitScenario} disabled={busy}>일정 확정</button></div></div> : <div className="focus-card scenario-empty"><h3>대응안을 선택하세요.</h3><p>분석을 실행하면 일정과 비용을 비교할 수 있는 후보가 표시됩니다.</p></div>}</div>
     </section>
   );
@@ -664,6 +680,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           <span>{error.message}</span>
         </aside>
       )}
+      {reviewRequiredEventId && <aside className="review-guidance" role="status"><span>변경 내용을 먼저 확인해야 정식 분석을 시작할 수 있습니다.</span><button onClick={() => { window.location.hash = "changes"; window.setTimeout(() => document.getElementById(`review-${reviewRequiredEventId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0); }}>변경 내용 확인하기</button></aside>}
 
       {activeSection === "overview" && overviewView}
       {activeSection === "changes" && changesView}
@@ -964,6 +981,62 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   );
 }
 
+function agentSummary(agent: Dict) {
+  const value = agent.summary;
+  if (typeof value === "string" && !value.trim().startsWith("{'")) return value || "판단 기록이 없습니다.";
+  const result = ((Array.isArray(agent.tool_log) ? agent.tool_log : []) as Dict[])
+    .slice().reverse().find((entry) => entry.tool === "recheck_shifted_schedule" && entry.status === "ok")?.result as Dict | undefined;
+  if (result?.finish_date) return `통보의 일정 영향을 검토했습니다. 계산된 완료 예정일은 ${text(result.finish_date)}이며, ${result.target_met ? "목표일을 충족합니다." : "목표일을 충족하지 못합니다."}`;
+  return "통보 내용을 검토했습니다. 일정 계산에 필요한 조건을 추가로 확인해야 합니다.";
+}
+
+function toolResultSummary(entry: Dict) {
+  if (entry.status === "error") return `도구 오류: ${text(entry.error)}`;
+  const result = (entry.result || {}) as Dict;
+  const tool = text(entry.tool);
+  if (result.status === "NEEDS_INPUT") return `추가 확인 필요: ${text(result.reason)}`;
+  if (tool === "get_project_context") return `프로젝트 작업 ${Array.isArray(result.tasks) ? result.tasks.length : 0}개를 확인했습니다.`;
+  if (tool === "find_task_candidates") return `관련 작업 후보: ${Array.isArray(result.task_ids) ? result.task_ids.join(", ") : text(result.status)}`;
+  if (tool === "list_response_options") return `등록된 대응안 ${Array.isArray(result.options) ? result.options.length : 0}개를 확인했습니다.`;
+  if (tool === "simulate_schedule") return `계산 완료일 ${text(result.finish_date)} · 추가 비용 ${money(result.extra_cost_krw)}`;
+  if (tool === "recheck_shifted_schedule") {
+    const constraints = (Array.isArray(result.external_constraints) ? result.external_constraints : []) as Dict[];
+    const holidays = constraints.filter((item) => item.kind === "public_holiday").map((item) => `${text(item.date)} (${text(item.task_id)})`);
+    return `통보 지연 ${text(result.supplier_finish_shift_days)}일 · 외부 제약 추가 ${text(result.external_additional_shift_days)}일 · 계산 완료일 ${text(result.finish_date)}${holidays.length ? ` · 새로 걸린 공휴일: ${holidays.join(", ")}` : ""}`;
+  }
+  if (tool === "simulate_regulatory_condition") return result.finish_date ? `규제 적용 시 조건부 완료일 ${text(result.finish_date)}` : `조건부 계산 보류: ${text(result.reason)}`;
+  if (tool === "search_risk_signals" || tool === "search_public_sources") return `찾은 근거 ${Array.isArray(result.results) ? result.results.length : 0}건`;
+  if (tool === "prepare_change_package") return "검토용 초안만 준비했습니다. 확정·발송은 하지 않았습니다.";
+  if (result.status) return `도구 상태: ${text(result.status)}`;
+  return "도구 결과를 받았습니다. 세부 응답을 펼쳐 확인할 수 있습니다.";
+}
+
+function AgentDecisionPanel({ agent, eventContent }: { agent?: Dict; eventContent: string }) {
+  if (!agent) return null;
+  const log = (Array.isArray(agent.tool_log) ? agent.tool_log : []) as Dict[];
+  const regulation = agent.regulatory_assessment as Dict | undefined;
+  const conditional = agent.conditional_scenario as Dict | undefined;
+  const email = agent.email_draft as Dict | undefined;
+  const explanations = (Array.isArray(agent.option_explanations) ? agent.option_explanations : []) as unknown[];
+  return <section className="agent-decision" aria-label="에이전트 판단 과정">
+    <span className="eyebrow">AGENT REASONING · 설명과 초안</span>
+    <h3>에이전트 판단 과정</h3>
+    <p>{agentSummary(agent)}</p>
+    {agent.stop_reason ? <p className="agent-stop">멈춘 이유: {text(agent.stop_reason)}</p> : null}
+    {Array.isArray(agent.unresolved_items) && agent.unresolved_items.length ? <p className="agent-stop">확인 질문: {(agent.unresolved_items as unknown[]).map((item) => text(item)).join(" · ")}</p> : null}
+    <ol className="agent-tool-list">{log.map((entry, index) => <li key={`${text(entry.tool)}-${index}`}><b>{text(entry.tool)}</b> · {text(entry.status)}<p className="agent-tool-result">{toolResultSummary(entry)}</p><details><summary>전체 도구 응답 보기</summary><pre>{JSON.stringify(entry.result ?? entry.error ?? {}, null, 2)}</pre></details></li>)}</ol>
+    {regulation && /(규제|인허가|허가|법령|법규|규정|regulation|regulatory|permit|license)/i.test(eventContent) ? <div className="agent-note"><h4>규제·인허가 적용 가능성: {text(regulation.likelihood, "불확실")}</h4><p>{text(regulation.reason)}</p><p>사람 확인: {text(regulation.human_check)}</p>{Array.isArray(regulation.evidence_risk_ids) && regulation.evidence_risk_ids.length ? <small>당시 이용 가능한 L2 근거: {(regulation.evidence_risk_ids as unknown[]).join(", ")}</small> : null}{Array.isArray(regulation.reference_only_risk_ids) && regulation.reference_only_risk_ids.length ? <small>통보 이후 발행된 참고 사례: {(regulation.reference_only_risk_ids as unknown[]).join(", ")}</small> : null}</div> : null}
+    {conditional ? <div className="agent-note"><h4>규제 적용 시 조건부 일정 · 계산 도구</h4><p>{conditional.finish_date ? `계산된 완료 예정일 ${text(conditional.finish_date)}` : text(conditional.reason, "추가 일정 입력이 필요합니다.")}</p><small>적용 확인 전에는 확정 일정에 반영되지 않습니다.</small></div> : null}
+    {explanations.length ? <div className="agent-note"><h4>대응안별 설명</h4>{explanations.map((item, index) => <p key={index}>{typeof item === "string" ? item : JSON.stringify(item)}</p>)}</div> : null}
+    {email ? <div className="agent-note email-draft"><h4>협력사 협의 메일 · 발송 전 초안</h4><p><b>{text(email.subject, "협의 요청")}</b></p><p className="draft-body">{text(email.body)}</p></div> : null}
+  </section>;
+}
+
+function OptionCatalog({ options }: { options: Dict[] }) {
+  if (!options.length) return null;
+  return <div className="focus-card option-catalog"><h3>등록된 대응안 카탈로그</h3><p>합성 가정의 단축 일수는 보장된 회복 일수가 아닙니다. 실제 회복 일수는 아래 계산 결과로 비교하세요.</p><div className="option-catalog-grid">{options.map((option) => <article key={text(option.option_id)}><b>{text(option.name)}</b><small>적용 작업 {(option.target_ids as string[] || []).join(", ")} · 최대 가정 {text(option.reduction_workdays)}작업일 단축 · 추가 비용 {money(option.extra_cost_krw)} ({text(option.currency, "KRW")})</small><p>{text(option.conditions)}</p><small>결정 기한 {text(option.decision_deadline)} · {text(option.approval_state)} · {text(option.data_origin)}</small></article>)}</div></div>;
+}
+
 function ScenarioList({ scenarios, selected, onSelect }: { scenarios: Array<Dict & { id?: string; data?: Dict }>; selected: string; onSelect: (id: string) => void }) {
   if (!scenarios.length) {
     return <div className="empty">worker가 analysis run을 처리하면 시나리오가 여기에 표시됩니다.</div>;
@@ -976,7 +1049,7 @@ function ScenarioList({ scenarios, selected, onSelect }: { scenarios: Array<Dict
           <button key={text(scenario.id)} className={selected === scenario.id ? "scenario active" : "scenario"} onClick={() => onSelect(text(scenario.id))}>
             <span>{text(data.label)}</span>
             <b>{text(data.finish_date)}</b>
-            <small>{scenarioScore(data)} · {costLabel(data)}</small>
+            <small>{scenarioScore(data)} · 무대응 대비 회복 {text(data.recovery_days_vs_no_response, "-")}일 · {costLabel(data)}</small>
           </button>
         );
       })}
