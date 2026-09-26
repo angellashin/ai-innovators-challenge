@@ -246,9 +246,11 @@ def test_hero_variant_llm_fallback_reaches_existing_external_recheck(tmp_path, m
     assert scenario["external_constraints"]
     assert scenario["supplier_finish_shift_days"] > 0
     assert scenario["provisional"]
-    assert gateway.calls >= 4
-    assert [row["tool"] for row in result["run"]["data"]["agent"]["tool_log"][:2]] == [
-        "simulate_schedule", "recheck_shifted_schedule"]
+    # A preview only interprets the notice (one call); the agent loop waits for a confirmed analysis.
+    assert gateway.calls == 1
+    agent = result["run"]["data"]["agent"]
+    assert agent["status"] == "skipped_preview" and agent["mode"] == "rules_only"
+    assert not agent.get("tool_log")
     past = client.post(f"/api/projects/{project_id}/events", headers=header, json={
         "event_id": "PAST", "channel": "supplier_message", "source_label": "가상 검증",
         "content": "[가상 메시지] T001 조사 납기를 2026-12-28로 재통지합니다.",

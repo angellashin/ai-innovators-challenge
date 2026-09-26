@@ -103,3 +103,35 @@ def test_registered_source_change_is_deduplicated(tmp_path, monkeypatch):
     assert first["new_or_changed_count"] == 1 and len(first["new_event_ids"]) == 1
     assert second["new_or_changed_count"] == 0 and not second["new_event_ids"]
     assert len(db.list_json("events", "P")) == 1
+
+
+def test_detected_change_waits_for_person_before_any_llm_call(tmp_path, monkeypatch):
+    from app.adapters.llm import OpenAICompatibleLLM
+
+    db = Store(tmp_path)
+    project = {"mode": "LIVE", "data_origin": "USER"}
+    snapshot = {"project": project, "tasks": [{"task_id": "T01", "name": "Environmental permit"}]}
+    db.put_json("projects", "P", project)
+    db.put_json("versions", "V", snapshot, project_id="P", parent_id=None, status="baseline", content_hash=digest(snapshot))
+    url = "https://example.org/news"
+    db.put_json("watch_plans", "P", {"enabled": True, "source_allowlist": [url]})
+    monkeypatch.setattr("app.adapters.sources.fetch_registered_source", lambda *args: {
+        "status": "ok", "source_id": "official", "body_hash": "h1", "title": "Environmental permit rule",
+        "summary": "Environmental permit reviews may take longer.", "fetched_at": "2026-09-23T00:00:00+00:00"})
+    for key, value in {"API_KEY": "k", "LLM_MODEL": "m", "LLM_BASE_URL": "https://gateway.invalid/v1",
+                       "REPLAN_PAID_CALLS_ENABLED": "true"}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("REPLAN_LLM_MODE", raising=False)
+
+    def no_llm(*_args, **_kwargs):
+        raise AssertionError("an automatically detected change must not call the LLM")
+
+    monkeypatch.setattr(OpenAICompatibleLLM, "chat", no_llm)
+    db.create_run("P", "scan", None, None, "scan", {"scope": "notices"})
+    assert run_once(db)
+    analysis = next(item for item in db.list_json("runs", "P") if item["kind"] == "analysis")
+    assert analysis["data"]["auto_detected"] is True
+    assert run_once(db)
+    finished = db.get_json("runs", analysis["id"])
+    assert finished["status"] == "succeeded", finished["data"]
+    assert finished["data"]["agent"]["status"] == "waiting_review"

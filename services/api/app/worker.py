@@ -305,6 +305,20 @@ def _run_supplier_agent(db: Store, run: dict[str, Any], project: dict[str, Any],
                 "stop_reason": type(exc).__name__, "tool_log": []}
 
 
+def _rules_only_agent(run_data: dict[str, Any]) -> dict[str, Any]:
+    """Describe why no agent ran, so the screen never presents rule output as agent reasoning."""
+    if run_data.get("auto_detected"):
+        status, summary = "waiting_review", "외부 변화를 감지해 규칙과 계산기로만 정리했습니다. 근거를 확인한 뒤 분석을 시작하면 에이전트가 검토합니다."
+    elif run_data.get("preview_only"):
+        status, summary = "skipped_preview", "잠정 분석은 규칙과 계산기로만 합니다. 해석을 확인한 뒤 정식 분석에서 에이전트가 검토합니다."
+    elif os.environ.get("REPLAN_LLM_MODE", "live").lower() != "replay" and not all(
+            os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")):
+        status, summary = "llm_unavailable", "LLM 연결 정보가 없어 규칙과 계산기로만 분석했습니다."
+    else:
+        status, summary = "disabled", "에이전트가 꺼져 있어 규칙과 계산기로만 분석했습니다."
+    return {"status": status, "mode": "rules_only", "summary": summary}
+
+
 def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     from .scheduling import calendar_shift_days, simulate
 
@@ -329,7 +343,12 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         options = hero_response_options(project, tasks)
         if options:
             snapshot["options"] = options
-    supplier_agent: dict[str, Any] = {"status": "llm_unavailable", "mode": "rules_only", "summary": "규칙 기반 분석"}
+    run_data = run.get("data") or {}
+    # Interpreting a notice without a task or date may use the LLM once. The agent loop runs only
+    # in a person-started, confirmed analysis: never for a preview or an automatically detected change.
+    interpret_llm = agent_enabled() and not run_data.get("auto_detected")
+    agent_llm = interpret_llm and not run_data.get("preview_only")
+    supplier_agent: dict[str, Any] = _rules_only_agent(run_data)
     paid_reserved = False
     if event.get("review_status") in {"REJECTED", "SUPERSEDED"}:
         return {"status": "SUPERSEDED", "summary": "보류되었거나 최신 근거로 대체된 변경입니다.", "scenario_ids": []}
@@ -337,7 +356,7 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         return {"status": "STALE", "summary": "기준 일정이 바뀌었습니다. 외부 소스를 다시 확인하세요.", "scenario_ids": []}
     if not event.get("patch") and event.get("channel") == "registered_public_source":
         # Interpret source evidence before the early NEEDS_INPUT return.
-        if agent_enabled():
+        if interpret_llm:
             paid_state = _reserve_paid_attempt(db, run["id"])
             if paid_state == "reserved":
                 from .external_risks import interpret_notice
@@ -354,7 +373,7 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     if event.get("channel") == "supplier_message":
         from .risk_signals import evidence_for_supplier
         if not event.get("patch") and event.get("classification_status") != "NO_SCHEDULE_IMPACT":
-            if agent_enabled():
+            if interpret_llm:
                 paid_state = _reserve_paid_attempt(db, run["id"])
                 if paid_state == "reserved":
                     paid_reserved = True
@@ -392,7 +411,7 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         db.put_json("events", event_row["id"], event, project_id=run["project_id"],
                     fingerprint=event_row["fingerprint"], created_at=event_row["created_at"])
 
-        if agent_enabled():
+        if agent_llm:
             if paid_reserved or _reserve_paid_attempt(db, run["id"]) == "reserved":
                 supplier_agent = _run_supplier_agent(db, run, project, tasks, options, event)
                 _record_usage(db, run["id"], supplier_agent)
@@ -476,22 +495,14 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         result["recovery_days_vs_no_response"] = (
             calendar_shift_days(result["finish_date"], no_response_finish)
             if result.get("finish_date") and no_response_finish else None)
-        if supplier_agent.get("mode") == "rules_only":
-            supplier_agent.setdefault("tool_log", []).append({
-                "tool": "recheck_shifted_schedule" if supplier_sources else "simulate_schedule",
-                "args": {"option_ids": selected}, "status": "ok", "source": "rules_fallback",
-                "result": {"finish_date": result.get("finish_date"),
-                           "finish_shift_days": result.get("finish_shift_days"),
-                           "extra_cost_krw": result.get("extra_cost_krw"),
-                           "recheck_status": result.get("recheck_status")}})
         record = _scenario_record(run, event, version, label, selected, result)
         scenario_id = digest({"run_id": run["id"], "option_ids": selected})[:32]
         db.put_json("scenarios", scenario_id, record, project_id=run["project_id"], run_id=run["id"], version_id=version["id"])
         scenario_ids.append(scenario_id)
         scenario_results.append({"id": scenario_id, **record})
 
-    agent_output: dict[str, Any] = supplier_agent if event.get("channel") == "supplier_message" else {"status": "llm_unavailable", "summary": "LLM 설정이 없어 계산 결과만 제공합니다."}
-    if event.get("channel") != "supplier_message" and agent_enabled():
+    agent_output: dict[str, Any] = supplier_agent
+    if event.get("channel") != "supplier_message" and agent_llm:
         paid_state = _reserve_paid_attempt(db, run["id"])
         if paid_state != "reserved":
             agent_output = {"status": paid_state, "summary": "유료 호출 한도 또는 중복 실행 방지로 계산 결과만 제공합니다."}
@@ -675,8 +686,9 @@ def _save_external_event(db: Store, project_id: str, version: dict, identity: st
              "version_id": version["id"], "observation_hash": observation_hash, "mode": "LIVE", "data_origin": "PUBLIC",
              "review_status": "PENDING"}
     db.put_json("events", event_id, event, project_id=project_id, fingerprint=fingerprint)
+    # Rules-only calculation so the card shows its impact; paid analysis waits for a person.
     db.create_run(project_id, "analysis", event_id, version["id"], f"external:{event_id}",
-                  {"project_context_snapshot": db.project_context_snapshot(project_id)})
+                  {"project_context_snapshot": db.project_context_snapshot(project_id), "auto_detected": True})
     from .main import notify_project
     notify_project(db, project_id, "external_change", "외부 변화 검토", event["title"],
                    data={"event_id": event_id})
