@@ -1,0 +1,160 @@
+{
+  "label": "검토자가 작성한 합성 정답 - 표현 변형 통보",
+  "data_origin": "SYNTHETIC",
+  "source_fixture": "data/hero_demo/supplier_message_variants.json",
+  "cases": [
+    {
+      "case_id": "V01",
+      "direct_task_ids": [
+        "T036"
+      ],
+      "expected_patch": {
+        "estimated_finish": {
+          "T036": "2026-01-15"
+        }
+      },
+      "changed_task_ids": [
+        "T036",
+        "T038",
+        "T040",
+        "T042",
+        "T044"
+      ],
+      "expected_outcome": "IMPACT"
+    },
+    {
+      "case_id": "V02",
+      "direct_task_ids": [
+        "T037"
+      ],
+      "expected_patch": {
+        "estimated_finish": {
+          "T037": "2026-01-08"
+        }
+      },
+      "changed_task_ids": [
+        "T037",
+        "T039",
+        "T041",
+        "T043"
+      ],
+      "expected_outcome": "IMPACT"
+    },
+    {
+      "case_id": "V03",
+      "direct_task_ids": [
+        "T038"
+      ],
+      "expected_patch": {
+        "not_before": {
+          "T038": "2026-02-02"
+        }
+      },
+      "changed_task_ids": [
+        "T038",
+        "T040",
+        "T042",
+        "T044"
+      ],
+      "expected_outcome": "IMPACT"
+    },
+    {
+      "case_id": "V04",
+      "direct_task_ids": [
+        "T045"
+      ],
+      "expected_patch": {
+        "estimated_finish": {
+          "T045": "2026-12-28"
+        }
+      },
+      "changed_task_ids": [
+        "T045",
+        "T046",
+        "T047",
+        "T048",
+        "T049",
+        "T050",
+        "T051",
+        "T052",
+        "T053",
+        "T054",
+        "T055",
+        "T056",
+        "T057",
+        "T059",
+        "T060",
+        "T061",
+        "T062",
+        "T063",
+        "T064"
+      ],
+      "expected_outcome": "IMPACT"
+    },
+    {
+      "case_id": "V05",
+      "direct_task_ids": [
+        "T053"
+      ],
+      "expected_patch": {},
+      "changed_task_ids": [],
+      "expected_outcome": "NEEDS_INPUT"
+    },
+    {
+      "case_id": "V06",
+      "direct_task_ids": [
+        "T054"
+      ],
+      "expected_patch": {},
+      "changed_task_ids": [],
+      "expected_outcome": "NO_IMPACT"
+    },
+    {
+      "case_id": "V07",
+      "direct_task_ids": [],
+      "expected_patch": {},
+      "changed_task_ids": [],
+      "expected_outcome": "NEEDS_INPUT"
+    },
+    {
+      "case_id": "V08",
+      "direct_task_ids": [
+        "T036"
+      ],
+      "expected_patch": {},
+      "changed_task_ids": [],
+      "expected_outcome": "NEEDS_INPUT",
+      "expected_task_confirmation": true
+    },
+    {
+      "case_id": "V09",
+      "direct_task_ids": [
+        "T037"
+      ],
+      "expected_patch": {},
+      "changed_task_ids": [],
+      "expected_outcome": "NEEDS_INPUT",
+      "expected_task_confirmation": true
+    },
+    {
+      "case_id": "V10",
+      "direct_task_ids": [
+        "T038"
+      ],
+      "expected_patch": {},
+      "changed_task_ids": [],
+      "expected_outcome": "NEEDS_INPUT",
+      "expected_task_confirmation": true
+    },
+    {
+      "case_id": "V11",
+      "direct_task_ids": [
+        "T045"
+      ],
+      "expected_patch": {},
+      "changed_task_ids": [],
+      "expected_outcome": "NEEDS_INPUT",
+      "expected_task_confirmation": true
+    }
+  ]
+}

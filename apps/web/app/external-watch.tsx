@@ -15,6 +15,8 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan }: Props) 
   const rules: Row[] = draft.source_rules || [];
   const holidays: Row[] = draft.holiday_calendars || [];
   const limits = draft.weather_limits || {};
+  const proposals: Row[] = draft.proposal_items || [];
+  const outdoorCandidates = new Set(proposals.filter((item) => item.kind === "outdoor" && item.decision !== "excluded").flatMap((item) => item.task_ids || []));
   async function save(enabled: boolean) {
     setMessage("");
     try {
@@ -27,7 +29,7 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan }: Props) 
   }
   function taskSelect(value: string[], change: (ids: string[]) => void, label: string, outdoor = false) {
     return <label>{label}<select multiple aria-label={label} value={value} onChange={(event) => change(Array.from(event.target.selectedOptions, (option) => option.value))}>
-      {tasks.filter((task) => !outdoor || task.outdoor).map((task) => <option key={task.task_id} value={task.task_id}>{task.task_id} · {task.name}</option>)}
+      {tasks.filter((task) => !outdoor || task.outdoor || outdoorCandidates.has(task.task_id)).map((task) => <option key={task.task_id} value={task.task_id}>{task.task_id} · {task.name}</option>)}
     </select><small>Ctrl 또는 Command 키로 여러 작업을 선택할 수 있습니다.</small></label>;
   }
   return <div className="watch-card external-watch">
@@ -35,6 +37,19 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan }: Props) 
     <p>날씨·공휴일은 지정 작업에 연결해 계산하고, 공지·뉴스는 근거와 적용 후보를 검토합니다.</p>
     <details>
       <summary>감시 대상·작업 연결 설정</summary>
+      {proposals.length > 0 && <fieldset disabled={disabled}>
+        <legend>프로젝트 맞춤 감시 제안</legend>
+        <p>각 제안의 근거를 검토하고 수락·수정·제외를 선택하세요. 아래에서 날짜·출처·임계값을 편집할 수 있습니다.</p>
+        {proposals.map((item, index) => <div className="external-config" key={item.id}>
+          <b>{item.kind} · {(item.task_ids || []).join(", ") || item.supplier_id || "확인 요청"}</b>
+          <small>{item.reason}</small>
+          {item.agent_note && <small>에이전트 보강: {item.agent_note}{item.agent_keywords?.length ? ` · 검색어 후보 ${item.agent_keywords.join(", ")}` : ""}</small>}
+          {item.threshold_candidates && <small>작업별 임계값 후보(현장 확인 필요): {JSON.stringify(item.threshold_candidates)}</small>}
+          <label>선택<select aria-label={`감시 제안 ${item.id}`} value={item.decision || "proposed"} onChange={(event) => update({ proposal_items: proposals.map((row, rowIndex) => rowIndex === index ? { ...row, decision: event.target.value } : row) })}>
+            <option value="proposed">검토 전</option><option value="accepted">수락</option><option value="modified">수정 후 수락</option><option value="excluded">제외</option>
+          </select></label>
+        </div>)}
+      </fieldset>}
       <fieldset disabled={disabled}>
         <legend>현장 기상 예보</legend>
         <label><input type="checkbox" checked={Boolean(draft.weather_site)} onChange={(event) => update({ weather_site: event.target.checked ? { latitude: "", longitude: "", timezone: "UTC", label: "현장" } : null })} />기상 감시 사용</label>
@@ -44,7 +59,7 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan }: Props) 
           <label>경도<input type="number" step="any" min="-180" max="180" value={site.longitude ?? ""} onChange={(event) => update({ weather_site: { ...site, longitude: event.target.value === "" ? "" : Number(event.target.value) } })} /></label>
           <label>시간대<input value={site.timezone || "UTC"} onChange={(event) => update({ weather_site: { ...site, timezone: event.target.value } })} placeholder="Europe/Budapest" /></label>
           {taskSelect(draft.weather_task_ids || [], (ids) => update({ weather_task_ids: ids }), "해당 현장의 야외 작업", true)}
-          <small>Excel의 야외작업(outdoor) 열이 참인 작업만 표시됩니다.</small>
+          <small>Excel의 야외작업 표시와 작업명·단계·위험 태그에서 제안된 후보를 표시합니다. 실제 야외 여부를 확인하세요.</small>
           {([["max_wind_speed_kmh", "중단 기준 풍속 (km/h)"], ["max_precipitation_mm", "중단 기준 일강수량 (mm)"]] as const).map(([key, label]) =>
             <label key={key}>{label}<input type="number" min="0" step="any" value={limits[key] ?? ""} onChange={(event) => {
               const next = { ...limits }; if (event.target.value === "") delete next[key]; else next[key] = Number(event.target.value);

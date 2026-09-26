@@ -770,6 +770,15 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
                       <small>{text(data.mode)} · {text(data.data_origin)}</small>
                       {Array.isArray(data.verification_required) && data.verification_required.length > 0 &&
                         <small>추가 확인: {(data.verification_required as string[]).join(" · ")}</small>}
+                      {Array.isArray(data.missing_fields) && data.missing_fields.length > 0 &&
+                        <p>확인 질문: {(data.missing_fields as string[]).join(" · ")}</p>}
+                      {Array.isArray(data.risk_signal_evidence) && data.risk_signal_evidence.length > 0 &&
+                        <div className="event-facts"><b>유사 위험 실제 사례 · 지연 일수는 적용하지 않음</b>
+                          {(data.risk_signal_evidence as Dict[]).map((caseRow) => <p key={text(caseRow.risk_id)}>
+                            <a href={text(caseRow.source_url)} target="_blank" rel="noreferrer">{text(caseRow.title)}</a>
+                            <small>발행 {text(caseRow.published_date)} · {text(caseRow.country)} · {text(caseRow.risk_type)}{caseRow.temporal_status === "POST_AS_OF_REFERENCE" ? " · 통보 이후 발행: 후향적 참고만 가능" : ""}</small>
+                          </p>)}
+                        </div>}
                       {Array.isArray(data.extracted_facts) && data.extracted_facts.length > 0 && (
                         <ul className="event-facts">
                           {(data.extracted_facts as Dict[]).slice(0, 3).map((fact, index) => (
@@ -898,6 +907,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
             <h3>영향 분석 결과</h3>
             <small>{text(run.run.status)} · {shortId(run.run.event_id)}</small>
             <p>{text(run.run.data?.summary, run.run.status === "failed" ? "분석 실패: 다시 시도하거나 입력을 확인하세요." : "계산 중입니다.")}</p>
+            {Array.isArray(run.run.data?.missing_fields) && run.run.data.missing_fields.length > 0 && <p>확인 질문: {(run.run.data.missing_fields as string[]).join(" · ")}</p>}
             {selectedScenario && <>
               <p>기준 완료 {text(selectedScenario.data?.baseline_finish)} → 예상 완료 {text(selectedScenario.data?.finish_date)}</p>
               <b>완료일 변화 {text(selectedScenario.data?.finish_shift_days)}일 · 영향 작업 {((selectedScenario.data?.changed_tasks || []) as Dict[]).length}개</b>
