@@ -13,6 +13,7 @@ MAX_TOOL_CALLS = 8
 MAX_INVALID_ARG_RETRIES = 2
 MAX_ARG_BYTES = 8_192
 BLOCKED_TOOL_PARTS = ("commit", "send")
+SCHEDULE_TOOLS = {"simulate_schedule", "recheck_shifted_schedule", "simulate_regulatory_condition"}
 
 
 def run_agent(
@@ -24,7 +25,12 @@ def run_agent(
     """Run a bounded LLM loop and return a normalized agent result."""
 
     allowed_tools = _allowed_tools(tools)
+    if not event.get("patch"):
+        allowed_tools = {name: func for name, func in allowed_tools.items() if name not in SCHEDULE_TOOLS}
     if not allowed_tools and tools:
+        if all(name in SCHEDULE_TOOLS for name in tools):
+            return _result(status="needs_input", summary="Schedule calculation requires confirmed inputs.",
+                           unresolved_items=["changed task and date require confirmation before schedule calculation"])
         return _result(
             status="blocked_action",
             summary="No provided tools are allowed for agent execution.",
@@ -38,6 +44,7 @@ def run_agent(
     usage: Dict[str, Any] = {}
     max_calls = min(MAX_TOOL_CALLS, max(0, max_steps) * 2)
     invalid_arg_retries = 0
+    recheck_prompted = False
 
     try:
         gateway = _gateway(context)
@@ -62,6 +69,13 @@ def run_agent(
         usage = _merge_usage(usage, reply.usage)
         action = _next_action(reply)
         if action:
+            name = str(action.get("tool") or "")
+            if name in SCHEDULE_TOOLS and not event.get("patch"):
+                reason = "changed task and date require confirmation before schedule calculation"
+                tool_log.append({"tool": name, "args": action.get("args", {}),
+                                 "status": "blocked_ambiguous", "error": reason})
+                return _result(status="needs_input", summary="Schedule calculation requires confirmed inputs.",
+                               unresolved_items=[reason], tool_log=tool_log, usage=usage)
             outcome = _execute_action(action, allowed_tools, seen_calls, tool_log, max_calls, context)
             if outcome:
                 if (outcome["status"] == "invalid_tool_args"
@@ -73,6 +87,20 @@ def run_agent(
                 return _result(tool_log=tool_log, usage=usage, **outcome)
             messages.extend(_tool_result_messages(action, tool_log[-1]))
             continue
+
+        if (event.get("patch") and "recheck_shifted_schedule" in allowed_tools
+                and not (event.get("corrects_event_id") and
+                         any(word in str(event.get("content") or "") for word in ("철회", "정정")))
+                and not any(entry.get("tool") == "recheck_shifted_schedule" and entry.get("status") == "ok"
+                            for entry in tool_log)):
+            if not recheck_prompted and step + 1 < max_steps and len(tool_log) < max_calls:
+                recheck_prompted = True
+                messages.append({"role": "user", "content": "Before the final answer, call recheck_shifted_schedule "
+                                 "with option_ids [] to calculate the shifted schedule."})
+                continue
+            return _result(status="needs_review", summary="Shifted schedule recheck was not completed.",
+                           unresolved_items=["recheck_shifted_schedule is required before the final answer"],
+                           tool_log=tool_log, usage=usage)
 
         final = _parse_final(reply.content)
         final["tool_log"] = tool_log
@@ -109,6 +137,8 @@ def _initial_messages(
         "regulatory_assessment, email_draft, required_actions, unresolved_items, stop_reason, status. "
         "You may request exactly one tool call at a time using native tool calls or "
         '{"action":"tool","tool":"name","args":{...}}. '
+        "Pass {} to tools that declare no arguments. For a schedule patch, call "
+        "recheck_shifted_schedule with option_ids [] before the final answer when available. "
         "Choose tools in the order needed. If the task is ambiguous or the changed date is missing, "
         "ask a concrete question and stop before schedule tools. Use calculator tool results exclusively "
         "for all dates, durations and costs; do not alter them. L2 cases show analogies, not legal "
@@ -253,6 +283,9 @@ def _execute_action(
             "summary": "Agent requested a disallowed tool.",
             "unresolved_items": ["tool '%s' is not allowed" % name],
         }
+    ok, reason = _validate_arg_payload(args)
+    if not ok:
+        return _invalid_args(tool_log, name, args, reason)
     # These closures are already scoped to the active project. Some gateways
     # echo its ID even though it is absent from the advertised tool schema.
     if isinstance(args, dict) and "project_id" in args:
@@ -267,6 +300,15 @@ def _execute_action(
                 return _invalid_args(tool_log, name, args, "project_id does not match the active project")
             args = {key: value for key, value in args.items() if key != "project_id"}
             action["args"] = args
+    ignored_args = None
+    try:
+        no_arguments = not inspect.signature(tools[name]).parameters
+    except (TypeError, ValueError):
+        no_arguments = False
+    if no_arguments and args:
+        ignored_args = args
+        args = {}
+        action["args"] = args
     ok, reason = _validate_args(tools[name], args)
     if not ok:
         return _invalid_args(tool_log, name, args, reason)
@@ -281,7 +323,10 @@ def _execute_action(
 
     try:
         result = tools[name](**args)
-        tool_log.append({"tool": name, "args": args, "status": "ok", "result": result})
+        entry = {"tool": name, "args": args, "status": "ok", "result": result}
+        if ignored_args:
+            entry["ignored_args"] = ignored_args
+        tool_log.append(entry)
     except Exception as exc:
         tool_log.append({"tool": name, "args": args, "status": "error", "error": str(exc)})
     return None
@@ -294,12 +339,9 @@ def _invalid_args(tool_log: List[Dict[str, Any]], name: str, args: Any, reason: 
 
 
 def _validate_args(func: Callable[..., Any], args: Any) -> Tuple[bool, str]:
-    if not isinstance(args, dict):
-        return False, "tool arguments must be an object"
-    if len(_encode(args).encode("utf-8")) > MAX_ARG_BYTES:
-        return False, "tool arguments exceed size limit"
-    if not _is_json_safe(args):
-        return False, "tool arguments must be JSON-compatible"
+    ok, reason = _validate_arg_payload(args)
+    if not ok:
+        return ok, reason
     try:
         signature = inspect.signature(func)
     except (TypeError, ValueError):
@@ -308,6 +350,16 @@ def _validate_args(func: Callable[..., Any], args: Any) -> Tuple[bool, str]:
         signature.bind(**args)
     except TypeError as exc:
         return False, str(exc)
+    return True, ""
+
+
+def _validate_arg_payload(args: Any) -> Tuple[bool, str]:
+    if not isinstance(args, dict):
+        return False, "tool arguments must be an object"
+    if len(_encode(args).encode("utf-8")) > MAX_ARG_BYTES:
+        return False, "tool arguments exceed size limit"
+    if not _is_json_safe(args):
+        return False, "tool arguments must be JSON-compatible"
     return True, ""
 
 
@@ -346,9 +398,23 @@ def _normalize_result(value: Dict[str, Any]) -> Dict[str, Any]:
         "required_actions": _list(value.get("required_actions")),
         "unresolved_items": _list(value.get("unresolved_items")),
         "tool_log": _list(value.get("tool_log")),
-        "status": str(value.get("status") or "completed"),
+        "status": _normalize_status(value.get("status")),
         "usage": dict(value.get("usage") or {}),
     }
+
+
+def _normalize_status(value: Any) -> str:
+    if isinstance(value, dict):
+        states = {str(item).lower() for item in value.values()}
+        if states & {"error", "failed", "invalid_tool_args"}:
+            return "failed"
+        for state in ("needs_input", "needs_review", "no_schedule_impact"):
+            if state in states:
+                return state
+        if states and states <= {"converged", "patch_proposed", "completed", "ok"}:
+            return "completed"
+        return "invalid_status"
+    return str(value or "completed")
 
 
 def _summary_sentence(summary: Any, tool_log: List[Any]) -> str:
