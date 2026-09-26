@@ -454,7 +454,7 @@ def test_audit_output_shapes_are_normalized_for_the_screen():
         "regulatory_assessment": {"status": "NEEDS_INPUT", "applicability": "UNCONFIRMED",
                                   "assessment": "규정의 실제 적용 여부가 확인되지 않았습니다.",
                                   "missing_inputs": ["적용 조항", "규정 적용일"]},
-        "email_draft": {"subject": "확인 요청", "body": "다음을 부탁드립니다.\n1. 적용 조항\n2. 설계 변경 범위 (3) 일정"},
+        "email_draft": {"subject": "2028년 완료일 확인 요청", "body": "다음을 부탁드립니다.\n1. 적용 조항\n2. 설계 변경 범위 (3) 일정"},
         "unresolved_items": [{"question": "규정 적용 여부"}],
     }, ensure_ascii=False))])
     scenarios = [{"option_ids": [], "finish_date": "2028-01-25", "target_met": False},
@@ -475,5 +475,6 @@ def test_audit_output_shapes_are_normalized_for_the_screen():
     assert assessment["likelihood"] == "불확실"
     assert assessment["reason"] == "규정의 실제 적용 여부가 확인되지 않았습니다."
     assert assessment["human_check"] == "적용 조항 · 규정 적용일"
+    assert result["email_draft"]["subject"] == "2028년 완료일 확인 요청"
     assert "1. 적용 조항" in result["email_draft"]["body"] and "(3) 일정" in result["email_draft"]["body"]
     assert result["unresolved_items"] == ["규정 적용 여부"]

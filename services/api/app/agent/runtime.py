@@ -543,6 +543,7 @@ def _ground_final(value: Dict[str, Any], event: Dict[str, Any], tool_log: List[D
                 allowed.add(f"{item:,}")
         elif isinstance(item, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", item):
             allowed.add(item)
+            allowed.add(item[:4])  # "2027년" refers to a calculated date's year
 
     for result in calculator:
         collect(result)
