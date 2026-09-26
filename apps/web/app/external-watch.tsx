@@ -5,6 +5,10 @@ import { useEffect, useState } from "react";
 type Row = Record<string, any>;
 type Props = { plan: Row; tasks: Row[]; disabled: boolean; onSave: (plan: Row) => Promise<void>; onScan: () => void };
 
+const PROPOSAL_KIND: Record<string, string> = {
+  outdoor: "야외 작업", holiday: "공휴일 달력", weather: "현장 기상", source: "공지 출처", supplier_calendar: "협력사 달력",
+};
+
 export function ExternalWatch({ plan, tasks, disabled, onSave, onScan }: Props) {
   const [draft, setDraft] = useState<Row>(plan);
   const [editing, setEditing] = useState(false);
@@ -16,6 +20,7 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan }: Props) 
   const holidays: Row[] = draft.holiday_calendars || [];
   const limits = draft.weather_limits || {};
   const proposals: Row[] = draft.proposal_items || [];
+  const undecided = proposals.filter((item) => !item.decision || item.decision === "proposed").length;
   const outdoorCandidates = new Set(proposals.filter((item) => item.kind === "outdoor" && item.decision !== "excluded").flatMap((item) => item.task_ids || []));
   async function save(enabled: boolean) {
     setMessage("");
@@ -33,15 +38,17 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan }: Props) 
     </select><small>Ctrl 또는 Command 키로 여러 작업을 선택할 수 있습니다.</small></label>;
   }
   return <div className="watch-card external-watch">
-    <b>외부 변화 감시</b><span className={plan.enabled ? "pill ok" : "pill"}>{plan.enabled ? "주기 감시 중" : "설정 필요"}</span>
+    <b>외부 변화 감시</b><span className={plan.enabled ? "pill ok" : "pill"}>{plan.enabled ? "주기 감시 중" : "꺼짐"}</span>
     <p>날씨·공휴일은 지정 작업에 연결해 계산하고, 공지·뉴스는 근거와 적용 후보를 검토합니다.</p>
+    {proposals.length > 0 && <p className="watch-progress">감시 제안 {proposals.length}개 중 {undecided ? `${undecided}개를 아직 결정하지 않았습니다. 모두 수락·수정·제외해야 활성화할 수 있습니다.` : "모두 결정했습니다."}</p>}
     <details>
-      <summary>감시 대상·작업 연결 설정</summary>
+      <summary>감시 제안 검토·작업 연결 설정</summary>
       {proposals.length > 0 && <fieldset disabled={disabled}>
         <legend>프로젝트 맞춤 감시 제안</legend>
-        <p>각 제안의 근거를 검토하고 수락·수정·제외를 선택하세요. 아래에서 날짜·출처·임계값을 편집할 수 있습니다.</p>
+        <p>각 제안의 근거를 검토하고 수락·수정·제외를 선택하세요. 아래에서 날짜·출처·임계값을 편집할 수 있습니다. 협력사 달력 제안을 수락해도 달력이 자동으로 만들어지지는 않습니다. 휴무일은 실행 화면의 고급 설정에서 입력합니다.</p>
+        {undecided > 0 && <button className="secondary" onClick={() => update({ proposal_items: proposals.map((row) => !row.decision || row.decision === "proposed" ? { ...row, decision: "accepted" } : row) })}>남은 제안 {undecided}개 모두 수락</button>}
         {proposals.map((item, index) => <div className="external-config" key={item.id}>
-          <b>{item.kind} · {(item.task_ids || []).join(", ") || item.supplier_id || "확인 요청"}</b>
+          <b>{PROPOSAL_KIND[item.kind] || item.kind} · {(item.task_ids || []).join(", ") || item.supplier_id || "확인 요청"}</b>
           <small>{item.reason}</small>
           {item.agent_note && <small>에이전트 보강: {item.agent_note}{item.agent_keywords?.length ? ` · 검색어 후보 ${item.agent_keywords.join(", ")}` : ""}</small>}
           {item.threshold_candidates && <small>작업별 임계값 후보(현장 확인 필요): {JSON.stringify(item.threshold_candidates)}</small>}
@@ -96,10 +103,10 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan }: Props) 
       <button disabled={disabled} className="secondary" onClick={() => save(false)}>설정 저장 · 감시 중지</button>
     </details>
     <div className="button-row">
-      <button disabled={disabled} onClick={() => save(true)}>설정 저장 · 감시 활성화</button>
+      <button disabled={disabled} className="secondary" onClick={() => save(true)}>설정 저장 · 감시 활성화</button>
       <button disabled={disabled || !plan.enabled} className="secondary" onClick={onScan}>외부 변화 지금 확인</button>
     </div>
-    <small role="status">{message}</small>
+    {message && <p className="watch-message" role="status">{message}</p>}
   </div>;
 }
 
@@ -130,7 +137,7 @@ export function EvidenceReview({ event, tasks, disabled, onReview, onAnalyze }: 
       <button disabled={disabled || !ids.length || !day || !note.trim()} onClick={() => onReview({ confirmed: true, related_task_ids: ids, review_note: note, patch: { [operation]: Object.fromEntries(ids.map((id) => [id, operation === "blocked_dates" ? [day] : day])) } })}>근거 확인 후 계산</button>
     </details>}
     {hasPatch && !invalid && event.review_status !== "CONFIRMED" && <button disabled={disabled} onClick={() => onReview({ confirmed: true })}>이 근거의 작업·날짜 적용 확인</button>}
-    {!invalid && <button className="secondary" disabled={disabled} onClick={onAnalyze}>{hasPatch ? "영향 분석 보기" : "근거·작업 후보 분석"}</button>}
+    {!invalid && <button className="secondary" disabled={disabled} onClick={onAnalyze}>{hasPatch ? "영향 분석 시작" : "근거·작업 후보 분석"}</button>}
     {!invalid && <button className="text-button" disabled={disabled} onClick={() => onReview({ confirmed: false })}>적용 보류</button>}
     {invalid && <p>보류되었거나 최신 근거로 대체되어 승인할 수 없습니다.</p>}
   </div>;

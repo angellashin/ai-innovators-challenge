@@ -16,6 +16,15 @@ function friendlyError(value: string) {
   return value || "프로젝트를 생성하지 못했습니다.";
 }
 
+const STEPS = [
+  ["BRIEF", "프로젝트 맥락", "이름 정하기"],
+  ["IMPORT", "기준 일정", "hero 데모 또는 Excel 연결"],
+  ["DETECT", "변경 감지", "협력사 통보 해석 확인"],
+  ["COMPARE", "대응안 비교", "일정·비용 영향 비교"],
+  ["APPROVE", "조건 승인", "조건 확인 후 승인"],
+  ["EXECUTE", "일정 반영·실행", "새 일정 버전과 Excel"],
+];
+
 export default function NewWorkspacePage() {
   const router = useRouter();
   const [name, setName] = useState("해외 생산설비 도입 및 시운전");
@@ -40,7 +49,7 @@ export default function NewWorkspacePage() {
       if (!response.ok) throw new Error(await response.text());
       const value = await response.json() as { project_id: string };
       sessionStorage.setItem("replan.projectId", value.project_id);
-      router.push(`/projects/${value.project_id}`);
+      router.push(`/projects/${value.project_id}#schedule`);
     } catch (caught) {
       setError(friendlyError(caught instanceof Error ? caught.message : ""));
       setBusy(false);
@@ -64,10 +73,8 @@ export default function NewWorkspacePage() {
           <p className="eyebrow"><span className="flow-indicator" aria-hidden="true" /> NEW PROJECT / 01</p>
           <h1 id="project-create-title">새 프로젝트</h1>
           <p>프로젝트의 최소 정보만 먼저 입력하세요. 생성 후 기준 Excel을 연결하면 일정·비용·자원 영향을 같은 맥락에서 비교할 수 있습니다.</p>
-          <ol className="project-create-steps" aria-label="프로젝트 설정 단계">
-            <li className="active"><span>01</span><div><b>프로젝트 정보</b><small>이름과 기준 일정</small></div></li>
-            <li><span>02</span><div><b>기준 일정 연결</b><small>Excel 업로드 및 구조 확인</small></div></li>
-            <li><span>03</span><div><b>변경 영향 분석</b><small>대안 비교와 승인 준비</small></div></li>
+          <ol className="project-create-steps" aria-label="프로젝트 진행 단계">
+            {STEPS.map(([code, label, detail], index) => <li key={code} className={index === 0 ? "active" : undefined}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{label}</b><small>{code} · {detail}</small></div></li>)}
           </ol>
         </section>
 
@@ -92,7 +99,7 @@ export default function NewWorkspacePage() {
             <Link href="/workspaces">취소</Link>
             <button type="submit" disabled={busy || !name.trim()}>{busy ? "프로젝트를 만드는 중…" : "프로젝트 만들고 계속"}<span aria-hidden="true">→</span></button>
           </div>
-          <p className="project-create-next"><span>다음 단계</span> 작업공간에서 기준 Excel을 업로드합니다.</p>
+          <p className="project-create-next"><span>다음 단계</span> 작업공간의 일정 화면에서 기준 일정을 연결합니다.</p>
         </form>
       </div>
     </main>

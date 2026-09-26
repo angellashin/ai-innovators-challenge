@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ProjectRecords, deriveProgress, stageSummary } from "../stages";
 
 type Dict = Record<string, unknown>;
 
@@ -23,16 +24,13 @@ function friendlyError(value: string) {
   return value || "프로젝트를 불러오지 못했습니다.";
 }
 
-const decisions = [
-  { label: "승인 대기", title: "새 프로젝트를 시작할 준비가 되었나요?", detail: "프로젝트를 만들고 기준 데이터를 올려보세요.", tone: "mint" },
-  { label: "근거 필요", title: "변경 영향 분석을 연결하세요", detail: "기준 Excel이 있으면 결정 근거가 더 선명해집니다.", tone: "amber" },
-  { label: "일정 영향", title: "이번 주 마일스톤을 확인하세요", detail: "프로젝트 안에서 변경 대응 상태를 확인합니다.", tone: "coral" },
-];
+const TONE = ["mint", "mint", "amber", "coral", "coral", "mint"];
 
 export default function WorkspacesPage() {
   const router = useRouter();
   const apiBase = "/api/proxy";
   const [projects, setProjects] = useState<Dict[]>([]);
+  const [records, setRecords] = useState<Record<string, ProjectRecords>>({});
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
 
@@ -49,6 +47,10 @@ export default function WorkspacesPage() {
       const value = await api<{ projects: Dict[] }>("/api/projects");
       setProjects(value.projects);
       setError("");
+      // Status comes from each project's stored records, not from placeholders.
+      const details = await Promise.all(value.projects.slice(0, 30).map((project) =>
+        api<ProjectRecords>(`/api/projects/${text(project.id)}`).then((detail) => [text(project.id), detail] as const).catch(() => null)));
+      setRecords(Object.fromEntries(details.filter((item): item is readonly [string, ProjectRecords] => Boolean(item))));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "프로젝트를 불러오지 못했습니다.");
     } finally {
@@ -60,11 +62,18 @@ export default function WorkspacesPage() {
     void loadProjects();
   }, []);
 
-  function openProject(project: Dict) {
+  function openProject(project: Dict, section = "overview") {
     const id = text(project.id);
     sessionStorage.setItem("replan.projectId", id);
-    router.push(`/projects/${id}`);
+    router.push(`/projects/${id}#${section}`);
   }
+
+  const progressById = Object.fromEntries(Object.entries(records).map(([id, detail]) => [id, deriveProgress(detail)]));
+  const known = Object.values(progressById);
+  const waitingChange = known.filter((item) => item.current === 2 && item.focusEvent).length;
+  const waitingApproval = known.filter((item) => item.current === 3 || item.current === 4).length;
+  const committedCount = known.filter((item) => item.allDone).length;
+  const queue = projects.filter((project) => progressById[text(project.id)] && !progressById[text(project.id)].allDone).slice(0, 5);
 
   return (
     <main className="directory-page workspace-directory">
@@ -89,24 +98,24 @@ export default function WorkspacesPage() {
 
       <section className="workspace-stats" aria-label="워크스페이스 요약">
         <div className="workspace-stat"><span>진행 중</span><strong>{projects.length || "—"}</strong><small>현재 프로젝트</small></div>
-        <div className="workspace-stat"><span>주의 필요</span><strong>{projects.length ? "0" : "—"}</strong><small>변경 영향</small></div>
-        <div className="workspace-stat"><span>승인 대기</span><strong>{projects.length ? "0" : "—"}</strong><small>결정 큐</small></div>
-        <div className="workspace-stat"><span>이번 주 마일스톤</span><strong>{projects.length ? "0" : "—"}</strong><small>예정된 액션</small></div>
+        <div className="workspace-stat"><span>변경 확인 대기</span><strong>{projects.length ? waitingChange : "—"}</strong><small>해석 확인이 필요한 변경</small></div>
+        <div className="workspace-stat"><span>비교·승인 대기</span><strong>{projects.length ? waitingApproval : "—"}</strong><small>분석 또는 승인 전</small></div>
+        <div className="workspace-stat"><span>새 버전 확정</span><strong>{projects.length ? committedCount : "—"}</strong><small>최신 변경을 반영 완료</small></div>
       </section>
 
       <section className="workspace-content-grid">
         <div className="workspace-portfolio-panel">
           <div className="workspace-panel-header"><div><p className="eyebrow">PORTFOLIO</p><h2>프로젝트 포트폴리오</h2></div><span className="workspace-count">{projects.length}개 프로젝트</span></div>
           <div className="workspace-table" role="table" aria-label="프로젝트 포트폴리오">
-            <div className="workspace-table-head" role="row"><span>프로젝트</span><span>기준 일정</span><span>목표일</span><span>최근 상태</span></div>
+            <div className="workspace-table-head" role="row"><span>프로젝트</span><span>기준 일정</span><span>목표일</span><span>현재 단계</span></div>
             {busy && <div className="workspace-empty" role="row"><div className="workspace-empty-mark">R</div><b>프로젝트 목록을 불러오는 중입니다.</b><span>연결 상태를 확인하고 있습니다.</span></div>}
             {!busy && !projects.length && <div className="workspace-empty" role="row"><div className="workspace-empty-mark">R</div><b>아직 프로젝트가 없습니다.</b><span>첫 프로젝트를 만들고 기준 데이터를 연결해보세요.</span><Link href="/workspaces/new">첫 프로젝트 만들기 <span aria-hidden="true">→</span></Link></div>}
-            {!busy && projects.map((project) => <button className="workspace-table-row" role="row" key={text(project.id)} onClick={() => openProject(project)}><span className="workspace-project-name"><b>{text(project.name, "이름 없는 프로젝트")}</b><small>{text(project.id)}</small></span><span><i className="workspace-status-dot" />기준 일정 대기</span><span>{text(project.target_finish, "미설정")}</span><span className="workspace-impact-neutral">변경 없음</span></button>)}
+            {!busy && projects.map((project) => { const detail = records[text(project.id)]; const progress = progressById[text(project.id)]; return <button className="workspace-table-row" role="row" key={text(project.id)} onClick={() => openProject(project)}><span className="workspace-project-name"><b>{text(project.name, "이름 없는 프로젝트")}</b><small>{text(project.id)}</small></span><span><i className="workspace-status-dot" />{!detail ? "확인 중" : detail.version ? (detail.version.status === "committed" ? "확정 버전" : "기준 버전") : "연결 전"}</span><span>{text(project.target_finish, "미설정")}</span><span className="workspace-impact-neutral">{progress ? stageSummary(progress) : "-"}</span></button>; })}
           </div>
         </div>
 
         <aside className="workspace-side-rail">
-          <div className="workspace-decision-queue"><div className="workspace-panel-header"><div><p className="eyebrow">NEXT DECISIONS</p><h2>결정 큐</h2></div><span className="workspace-queue-count">{projects.length ? "0" : "3"}</span></div>{projects.length ? <div className="decision-empty"><span aria-hidden="true">✓</span><b>대기 중인 결정이 없습니다.</b><p>프로젝트에서 새 변경이 감지되면 여기에 표시됩니다.</p></div> : <div className="decision-list">{decisions.map((decision) => <div className="decision-item" key={decision.title}><span className={`decision-label ${decision.tone}`}>{decision.label}</span><b>{decision.title}</b><p>{decision.detail}</p></div>)}</div>}</div>
+          <div className="workspace-decision-queue"><div className="workspace-panel-header"><div><p className="eyebrow">NEXT ACTIONS</p><h2>다음 할 일</h2></div><span className="workspace-queue-count">{queue.length}</span></div>{queue.length ? <div className="decision-list">{queue.map((project) => { const progress = progressById[text(project.id)]; return <button className="decision-item" key={text(project.id)} onClick={() => openProject(project, progress.next.section)}><span className={`decision-label ${TONE[progress.current] || "mint"}`}>{stageSummary(progress)}</span><b>{text(project.name, "이름 없는 프로젝트")} · {progress.next.label}</b><p>{progress.next.detail}</p></button>; })}</div> : <div className="decision-empty"><span aria-hidden="true">✓</span><b>{projects.length ? "진행 중인 할 일이 없습니다." : "아직 프로젝트가 없습니다."}</b><p>{projects.length ? "새 변경을 불러오면 여기에 다음 할 일이 표시됩니다." : "프로젝트를 만들고 기준 일정을 연결하세요."}</p></div>}</div>
           <div className="create-card workspace-create-panel" id="new-project">
             <p className="eyebrow">NEW PROJECT</p>
             <h2>새 프로젝트</h2>
