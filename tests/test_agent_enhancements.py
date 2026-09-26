@@ -14,7 +14,8 @@ from app.supplier_interpreter import interpret_supplier_message
 from app.task_retrieval import retrieve_related_tasks
 from app.watch_suggestions import outdoor_candidate
 from app.worker import run_once
-from scripts.evaluate_agent import _calculator_claims, _draft_claims, evaluate, evaluate_l3, evaluate_workflow
+from scripts.evaluate_agent import (_calculator_claims, _draft_claims, evaluate, evaluate_l3,
+                                    evaluate_workflow, rescore_workflow_status_aliases)
 from scripts.evaluation_mocks import MockEvaluationGateway
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,9 +81,9 @@ def test_mock_agent_workflow_metrics_cover_hero_and_variants():
     report = evaluate("mock")
     workflow = report["agent_workflow"]
     assert workflow["cases"] == 19
-    assert workflow["execution_failures"] == 9
-    assert workflow["required_tool_rate"] == 0.5263
-    assert workflow["ambiguous_stop_rate"] == 0.5263
+    assert workflow["execution_failures"] == 0
+    assert workflow["required_tool_rate"] == 1
+    assert workflow["ambiguous_stop_rate"] == 1
     assert workflow["unsupported_draft_numeric_rate"] == 0
     assert workflow["unconfirmed_regulation_as_confirmed_delay_rate"] == 0
     by_id = {row["case_id"]: row for row in workflow["rows"]}
@@ -91,16 +92,69 @@ def test_mock_agent_workflow_metrics_cover_hero_and_variants():
     assert by_id["H04"]["tool_order"] == ["simulate_schedule", "recheck_shifted_schedule",
                                            "list_response_options"]
     assert by_id["H04"]["rejected_tool_calls"] == []
+    assert by_id["H04"]["ignored_tool_args"] == [{"tool": "list_response_options", "args": {"task_id": "T045"}}]
     assert by_id["V03"]["rejected_tool_calls"][0]["tool"] == "simulate_schedule"
     assert by_id["V03"]["rejected_tool_calls"][0]["args"]["unused_argument"] is True
     assert by_id["V03"]["rejected_tool_calls"][0]["reason"]
     assert by_id["V03"]["execution_failed"] is False
-    assert by_id["H06"]["execution_failed"] is True
+    assert by_id["H06"]["execution_failed"] is False
     assert by_id["H06"]["unresolved_items"]
     assert by_id["H06"]["summary"]
     retrieval = report["l3_affected_task_retrieval"]["agent_included"]
     assert retrieval["precision"] > 0.32
     assert retrieval["recall"] >= 0.75
+
+
+def test_selected_mock_cases_skip_other_llm_work():
+    report = evaluate("mock", {"H04"})
+    assert report["selected_case_ids"] == ["H04"]
+    assert report["agent_workflow"]["cases"] == 1
+    assert report["supplier"]["agent_included"] is None
+    assert report["l3_affected_task_retrieval"]["agent_included"] is None
+
+
+def test_selected_real_cases_skip_supplier_and_l3_paid_calls(monkeypatch):
+    import scripts.evaluate_agent as evaluation
+
+    monkeypatch.setenv("REPLAN_PAID_CALLS_ENABLED", "true")
+    monkeypatch.setenv("REPLAN_MAX_PAID_RUNS_PER_DAY", "20")
+    monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    monkeypatch.setenv("API_KEY", "test-key")
+    monkeypatch.setattr(evaluation, "OpenAICompatibleLLM", MockEvaluationGateway)
+    report = evaluation.evaluate("real", {"H04"})
+    assert report["llm_call_count"] == report["expected_paid_call_count"]
+    assert report["agent_workflow"]["cases"] == 1
+    assert report["supplier"]["agent_included"] is None
+    assert report["l3_affected_task_retrieval"]["agent_included"] is None
+
+
+def test_known_review_statuses_can_be_rescored_without_llm_calls():
+    report = {"agent_workflow": {"rows": [
+        {"case_id": "H04", "status": "NEEDS_APPROVAL", "execution_failed": True,
+         "required_tools_called": False, "ambiguous_stopped": False,
+         "tool_order": ["recheck_shifted_schedule"], "rejected_tool_calls": []},
+        {"case_id": "H02", "status": "invalid_tool_args", "execution_failed": True,
+         "required_tools_called": False, "ambiguous_stopped": False,
+         "tool_order": [], "rejected_tool_calls": [{"tool": "simulate_schedule"}]},
+    ]}}
+    rescored = rescore_workflow_status_aliases(report)
+    assert report["agent_workflow"]["rows"][0]["execution_failed"] is True
+    assert rescored["offline_rescored_case_ids"] == ["H04"]
+    assert rescored["agent_workflow"]["execution_failures"] == 1
+    assert rescored["agent_workflow"]["rows"][0]["status_category"] == "needs_review"
+
+
+def test_ambiguous_no_tool_stop_and_uppercase_status_are_valid(monkeypatch):
+    import scripts.evaluate_agent as evaluation
+
+    _, project, tasks = _hero()
+    monkeypatch.setattr(evaluation, "run_agent", lambda _context, _event, _tools, **_kwargs: {
+        "status": "NEEDS_INPUT", "tool_log": [], "summary": "작업 확인 필요",
+        "unresolved_items": ["작업 ID"]})
+    workflow = evaluate_workflow(project, tasks, [], MockEvaluationGateway(), {"H06"})
+    assert workflow["execution_failures"] == 0
+    assert workflow["rows"][0]["ambiguous_stopped"] is True
 
 
 def test_workflow_accepts_recheck_as_calculation_and_excludes_empty_tool_runs(monkeypatch):

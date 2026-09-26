@@ -207,6 +207,69 @@ def test_matching_redundant_project_id_is_ignored_for_project_scoped_tool():
     assert result["tool_log"][0]["result"] == {"task_count": 2}
 
 
+def test_project_scoped_no_arg_tool_ignores_unusable_extra_fields():
+    gateway = FakeGateway([
+        ChatResult(content=json.dumps({"action": "tool", "tool": "list_response_options",
+                                       "args": {"task_id": "T045", "event_id": "H04"}})),
+        ChatResult(content=json.dumps({"status": "completed", "summary": "done"})),
+    ])
+    result = run_agent({"_llm_gateway": gateway}, {"content": "옵션 확인"},
+                       {"list_response_options": lambda: {"options": []}})
+    assert result["status"] == "completed"
+    assert result["tool_log"][0]["args"] == {}
+    assert result["tool_log"][0]["ignored_args"] == {"task_id": "T045", "event_id": "H04"}
+    assert result["tool_log"][0]["result"] == {"options": []}
+
+
+def test_schedule_calculation_is_blocked_without_confirmed_patch():
+    gateway = FakeGateway([
+        ChatResult(content=json.dumps({"action": "tool", "tool": "simulate_schedule",
+                                       "args": {"option_ids": []}})),
+    ])
+    calls = []
+
+    def simulate_schedule(option_ids):
+        calls.append(option_ids)
+        return {}
+
+    result = run_agent({"_llm_gateway": gateway}, {"content": "대상 작업 확인 필요", "patch": {}},
+                       {"simulate_schedule": simulate_schedule,
+                        "find_task_candidates": lambda: {"candidates": []}})
+    assert result["status"] == "needs_input"
+    assert result["tool_log"][0]["status"] == "blocked_ambiguous"
+    assert calls == []
+    assert "simulate_schedule" not in [tool["function"]["name"] for tool in gateway.requests[0]["tools"]]
+
+
+def test_structured_final_status_is_normalized():
+    gateway = FakeGateway([
+        ChatResult(content=json.dumps({"status": {"schedule": "CONVERGED",
+                                                  "regulatory_condition": "NEEDS_INPUT"},
+                                       "summary": "check regulation"})),
+    ])
+    result = run_agent({"_llm_gateway": gateway}, {}, {"find_task_candidates": lambda: {}})
+    assert result["status"] == "needs_input"
+
+
+def test_agent_is_prompted_to_recheck_before_final_answer():
+    gateway = FakeGateway([
+        ChatResult(content=json.dumps({"action": "tool", "tool": "simulate_schedule",
+                                       "args": {"option_ids": []}})),
+        ChatResult(content=json.dumps({"status": "completed", "summary": "done"})),
+        ChatResult(content=json.dumps({"action": "tool", "tool": "recheck_shifted_schedule",
+                                       "args": {"option_ids": []}})),
+        ChatResult(content=json.dumps({"status": "completed", "summary": "done"})),
+    ])
+    result = run_agent({"_llm_gateway": gateway}, {"content": "확정된 변경", "patch": {"estimated_finish": {"T045": "2026-12-28"}}},
+                       {"simulate_schedule": lambda option_ids: {"finish_date": "2026-12-28"},
+                        "recheck_shifted_schedule": lambda option_ids: {"finish_date": "2026-12-29"}},
+                       max_steps=4)
+    assert result["status"] == "completed"
+    assert [entry["tool"] for entry in result["tool_log"]] == ["simulate_schedule", "recheck_shifted_schedule"]
+    assert any("Before the final answer" in message.get("content", "")
+               for message in gateway.requests[2]["messages"])
+
+
 def test_other_project_id_is_rejected_before_tool_execution():
     gateway = FakeGateway([
         ChatResult(content=json.dumps({"action": "tool", "tool": "get_project_context",
@@ -250,7 +313,8 @@ def test_draft_numbers_and_post_notice_regulatory_evidence_are_filtered():
         return {"results": [{"risk_id": "RS-FUTURE", "published_date": "2026-01-01"}]}
 
     result = run_agent({"_llm_gateway": gateway},
-                       {"published_at": "2025-08-21", "content": "규정 적용 여부는 확인되지 않았습니다."},
+                       {"published_at": "2025-08-21", "content": "규정 적용 여부는 확인되지 않았습니다.",
+                        "patch": {"estimated_finish": {"T01": "2026-12-28"}}},
                        {"simulate_schedule": simulate_schedule, "search_risk_signals": search_risk_signals})
     assert "2026-12-28" in result["email_draft"]["body"]
     assert "9일" in result["email_draft"]["body"]
@@ -271,7 +335,9 @@ def test_structured_agent_summary_uses_calculator_and_unrelated_regulation_is_hi
     def recheck_shifted_schedule():
         return {"finish_date": "2028-01-25", "target_met": False, "supplier_finish_shift_days": 21}
 
-    result = run_agent({"_llm_gateway": gateway}, {"content": "설비 반입이 지연됩니다."},
+    result = run_agent({"_llm_gateway": gateway},
+                       {"content": "설비 반입이 지연됩니다.",
+                        "patch": {"estimated_finish": {"T01": "2028-01-25"}}},
                        {"recheck_shifted_schedule": recheck_shifted_schedule})
 
     assert result["summary"] == "통보의 일정 영향을 검토했습니다. 계산된 완료 예정일은 2028-01-25이며, 목표일을 충족하지 못합니다."

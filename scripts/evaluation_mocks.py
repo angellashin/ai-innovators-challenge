@@ -43,6 +43,8 @@ class MockEvaluationGateway:
             case_id = event.get("event_id")
             if case_id == "H04" and not completed:
                 args["project_id"] = initial["context"]["project"]["project_id"]
+            if case_id == "H04" and name == "list_response_options":
+                args["task_id"] = "T045"
             if case_id == "V03" and not completed and not called:
                 args["unused_argument"] = True
             return {"action": "tool", "tool": name, "args": args}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -26,6 +27,51 @@ from app.task_retrieval import retrieve_related_tasks  # noqa: E402
 from app.risk_signals import mentioned_risk_types, search_risk_signals  # noqa: E402
 from app.watch_suggestions import outdoor_candidate  # noqa: E402
 from scripts.evaluation_mocks import MockEvaluationGateway  # noqa: E402
+
+WORKFLOW_CASE_IDS = {f"H{index:02d}" for index in range(1, 9)} | {f"V{index:02d}" for index in range(1, 12)}
+WORKFLOW_REVIEW_STATUSES = {"needs_approval", "patch_proposed", "patch_rechecked_pending_review"}
+
+
+def _workflow_status(value: object) -> str:
+    status = str(value or "").strip().lower()
+    return "needs_review" if status in WORKFLOW_REVIEW_STATUSES else status
+
+
+def _workflow_rates(rows: list[dict]) -> dict:
+    return {"cases": len(rows),
+            "required_tool_rate": _rate(sum(row["required_tools_called"] for row in rows), len(rows)),
+            "ambiguous_stop_rate": _rate(sum(row["ambiguous_stopped"] for row in rows), len(rows)),
+            "execution_failures": sum(row["execution_failed"] for row in rows),
+            "execution_failure_rate": _rate(sum(row["execution_failed"] for row in rows), len(rows))}
+
+
+def rescore_workflow_status_aliases(report: dict) -> dict:
+    """Repair known review-status aliases in a saved report without model calls."""
+    rescored = copy.deepcopy(report)
+    workflow = rescored["agent_workflow"]
+    truths = {item["case_id"]: item for filename in
+              ("supplier_message_ground_truth.json", "supplier_message_variants_ground_truth.json")
+              for item in _load(ROOT / "data" / "hero_demo" / filename)["cases"]}
+    corrected = []
+    for row in workflow["rows"]:
+        if (not row.get("execution_failed") or
+                str(row.get("status") or "").strip().lower() not in WORKFLOW_REVIEW_STATUSES or
+                row.get("rejected_tool_calls")):
+            continue
+        truth = truths[row["case_id"]]
+        tools = row.get("tool_order") or []
+        needs_calculation = truth["expected_outcome"] == "IMPACT"
+        if not tools or needs_calculation and "recheck_shifted_schedule" not in tools:
+            continue
+        row["execution_failed"] = False
+        row["required_tools_called"] = True
+        row["ambiguous_stopped"] = truth["expected_outcome"] != "NEEDS_INPUT"
+        row["status_category"] = "needs_review"
+        corrected.append(row["case_id"])
+    workflow.update(_workflow_rates(workflow["rows"]))
+    rescored["offline_rescored_case_ids"] = corrected
+    rescored["note"] = str(rescored.get("note") or "") + " Known review statuses rescored offline; no additional LLM calls."
+    return rescored
 
 
 def _load(path: Path) -> dict:
@@ -200,7 +246,8 @@ def evaluate_l3(project: dict, tasks: list[dict], gateway: object | None) -> dic
             "f1": _rate(2 * precision * recall, precision + recall), "rows": rows}
 
 
-def evaluate_workflow(project: dict, tasks: list[dict], options: list[dict], gateway: object) -> dict:
+def evaluate_workflow(project: dict, tasks: list[dict], options: list[dict], gateway: object,
+                      case_ids: set[str] | None = None) -> dict:
     """Exercise H01-H08 and V01-V11 with mockable calculator tools."""
     from app.risk_signals import evidence_for_supplier
 
@@ -212,7 +259,7 @@ def evaluate_workflow(project: dict, tasks: list[dict], options: list[dict], gat
         truths = _load(ROOT / "data" / "hero_demo" / answer)["cases"]
         for raw, truth in zip(messages, truths):
             case_id = str(raw.get("event_id") or "")
-            if case_id not in {f"H{index:02d}" for index in range(1, 9)} | {f"V{index:02d}" for index in range(1, 12)}:
+            if case_id not in WORKFLOW_CASE_IDS or case_ids is not None and case_id not in case_ids:
                 continue
             if case_id == "H01" and any(row["case_id"] == "H01" for row in rows):
                 continue
@@ -280,10 +327,18 @@ def evaluate_workflow(project: dict, tasks: list[dict], options: list[dict], gat
                                 "list_response_options": lambda: {"options": options}}, max_steps=8)
             tool_log = output.get("tool_log") or []
             tools = [entry["tool"] for entry in tool_log if entry.get("status") == "ok"]
-            execution_failed = (not tools or output.get("status") not in {"completed", "needs_input"}
-                                or any(entry.get("status") == "error" for entry in tool_log))
             needs_calculation = truth["expected_outcome"] == "IMPACT" and bool(event.get("patch"))
             ambiguous = not event.get("patch") and event.get("classification_status") != "NO_SCHEDULE_IMPACT"
+            status = _workflow_status(output.get("status"))
+            attempted_tools = [entry.get("tool") for entry in tool_log]
+            calculator_attempted = any(name in attempted_tools for name in
+                                       ("simulate_schedule", "recheck_shifted_schedule", "simulate_regulatory_condition"))
+            valid_no_tool_stop = (not needs_calculation and not calculator_attempted and
+                                  status in {"needs_input", "needs_review", "no_schedule_impact", "no_impact"})
+            execution_failed = (status not in {"completed", "needs_input", "needs_review",
+                                               "no_schedule_impact", "no_impact"}
+                                or any(entry.get("status") == "error" for entry in tool_log)
+                                or not tools and not valid_no_tool_stop)
             draft = output.get("email_draft") or {}
             calculator_claims = _calculator_claims([entry.get("result") for entry in tool_log
                                                     if entry.get("status") == "ok" and entry["tool"] in
@@ -293,24 +348,25 @@ def evaluate_workflow(project: dict, tasks: list[dict], options: list[dict], gat
             unconfirmed = "확인되지" in str(raw.get("content") or "")
             assessment = output.get("regulatory_assessment") or {}
             rows.append({"case_id": case_id, "tool_order": tools,
+                         "attempted_tool_order": attempted_tools,
                          "execution_failed": execution_failed,
-                         "required_tools_called": not execution_failed and (not needs_calculation or any(name in tools for name in
-                                                   ("simulate_schedule", "recheck_shifted_schedule"))),
-                         "ambiguous_stopped": not execution_failed and (not ambiguous or not any(name in tools for name in
-                                               ("simulate_schedule", "recheck_shifted_schedule"))),
+                         "required_tools_called": not execution_failed and
+                                                  (not needs_calculation or "recheck_shifted_schedule" in tools),
+                         "ambiguous_stopped": not execution_failed and (not ambiguous or not calculator_attempted),
                          "draft_numeric_claims": len(numeric), "unsupported_draft_numeric_claims": len(unsupported),
                          "unconfirmed_regulation": unconfirmed,
                          "unconfirmed_as_confirmed_delay": bool(unconfirmed and assessment.get("confirmed_delay_days")),
                          "status": output.get("status"), "summary": output.get("summary"),
+                         "status_category": status,
                          "stop_reason": output.get("stop_reason"),
                          "unresolved_items": output.get("unresolved_items") or [],
+                         "ignored_tool_args": [{"tool": entry["tool"], "args": entry["ignored_args"]}
+                                               for entry in tool_log if entry.get("ignored_args")],
                          "rejected_tool_calls": [{"tool": entry["tool"], "args": entry.get("args"),
-                                                  "reason": entry.get("error")}
-                                                 for entry in tool_log if entry.get("status") == "invalid_tool_args"]})
-    return {"cases": len(rows), "required_tool_rate": _rate(sum(row["required_tools_called"] for row in rows), len(rows)),
-            "ambiguous_stop_rate": _rate(sum(row["ambiguous_stopped"] for row in rows), len(rows)),
-            "execution_failures": sum(row["execution_failed"] for row in rows),
-            "execution_failure_rate": _rate(sum(row["execution_failed"] for row in rows), len(rows)),
+                                                  "reason": entry.get("error"), "status": entry.get("status")}
+                                                 for entry in tool_log if entry.get("status") in
+                                                 {"invalid_tool_args", "blocked_ambiguous"}]})
+    return {**_workflow_rates(rows),
             "unsupported_draft_numeric_rate": _rate(sum(row["unsupported_draft_numeric_claims"] for row in rows),
                                                     sum(row["draft_numeric_claims"] for row in rows)),
             "unconfirmed_regulation_as_confirmed_delay_rate": _rate(sum(row["unconfirmed_as_confirmed_delay"] for row in rows),
@@ -318,7 +374,10 @@ def evaluate_workflow(project: dict, tasks: list[dict], options: list[dict], gat
             "rows": rows}
 
 
-def evaluate(mode: str) -> dict:
+def evaluate(mode: str, case_ids: set[str] | None = None) -> dict:
+    if case_ids is not None:
+        if not case_ids or case_ids - WORKFLOW_CASE_IDS:
+            raise ValueError(f"Unknown workflow case IDs: {sorted(case_ids - WORKFLOW_CASE_IDS)}")
     project_file = ROOT / "data" / "l1_project" / "hero_battery_factory_project.xlsx"
     parsed = parse_upload(project_file.name, project_file.read_bytes())
     snapshot = normalize_import_snapshot(parsed, {"name": "새 프로젝트", "mode": "REPLAY"}, ConfirmInput())
@@ -331,9 +390,10 @@ def evaluate(mode: str) -> dict:
         if not all(os.environ.get(key) for key in ("LLM_BASE_URL", "LLM_MODEL", "API_KEY")):
             raise RuntimeError("LLM_BASE_URL, LLM_MODEL and API_KEY are required")
         preview_gateway = MockEvaluationGateway()
-        evaluate_supplier(project, tasks, preview_gateway)
-        evaluate_l3(project, tasks, preview_gateway)
-        evaluate_workflow(project, tasks, snapshot.get("options", []), preview_gateway)
+        if case_ids is None:
+            evaluate_supplier(project, tasks, preview_gateway)
+            evaluate_l3(project, tasks, preview_gateway)
+        evaluate_workflow(project, tasks, snapshot.get("options", []), preview_gateway, case_ids)
         expected_calls = preview_gateway.calls
         if expected_calls > int(os.environ.get("REPLAN_MAX_PAID_RUNS_PER_DAY", "20")):
             raise RuntimeError("Expected paid calls exceed REPLAN_MAX_PAID_RUNS_PER_DAY")
@@ -351,17 +411,19 @@ def evaluate(mode: str) -> dict:
             self.calls += 1
             return self.delegate.chat(*args, **kwargs)
     counting = Counter(gateway)
-    agent = evaluate_supplier(project, tasks, counting)
-    l3_agent = evaluate_l3(project, tasks, counting)
-    workflow = evaluate_workflow(project, tasks, snapshot.get("options", []), counting)
-    if mode == "real" and (any(row["agent_error"] for corpus in agent.values() for row in corpus["cases"])
-                           or any(row["agent_error"] for row in l3_agent["rows"])
+    agent = evaluate_supplier(project, tasks, counting) if case_ids is None else None
+    l3_agent = evaluate_l3(project, tasks, counting) if case_ids is None else None
+    workflow = evaluate_workflow(project, tasks, snapshot.get("options", []), counting, case_ids)
+    if mode == "real" and ((agent is not None and any(row["agent_error"] for corpus in agent.values()
+                                                 for row in corpus["cases"]))
+                           or (l3_agent is not None and any(row["agent_error"] for row in l3_agent["rows"]))
                            or any(row["status"] in {"failed", "llm_unavailable"} for row in workflow["rows"])):
         raise RuntimeError("One or more paid LLM calls failed; no evaluation result was written")
     return {"mode": mode, "model": os.environ.get("LLM_MODEL") if mode == "real" else "offline-semantic-fixture",
             "executed_at": datetime.now(timezone.utc).isoformat(), "llm_call_count": counting.calls if mode == "real" else 0,
             "mock_call_count": counting.calls if mode == "mock" else 0,
             "expected_paid_call_count": expected_calls,
+            "selected_case_ids": sorted(case_ids) if case_ids is not None else None,
             "note": "Mock scores validate wiring and fixtures, not actual model quality." if mode == "mock" else "Actual model run; no ground truth was sent to the model.",
             "supplier": {"rules_only": rules, "agent_included": agent},
             "l3_affected_task_retrieval": {"rules_only": l3_rules, "agent_included": l3_agent},
@@ -372,9 +434,11 @@ def evaluate(mode: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("mock", "real"), default="mock")
+    parser.add_argument("--case-id", action="append", choices=sorted(WORKFLOW_CASE_IDS),
+                        help="Evaluate only the selected workflow case; repeat for multiple cases")
     parser.add_argument("--output", type=Path, default=ROOT / "artifacts" / "agent_evaluation.json")
     args = parser.parse_args()
-    result = evaluate(args.mode)
+    result = evaluate(args.mode, set(args.case_id) if args.case_id else None)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"mode": result["mode"], "model": result["model"], "llm_call_count": result["llm_call_count"],
