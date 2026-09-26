@@ -14,6 +14,10 @@ MAX_INVALID_ARG_RETRIES = 2
 MAX_ARG_BYTES = 8_192
 BLOCKED_TOOL_PARTS = ("commit", "send")
 SCHEDULE_TOOLS = {"simulate_schedule", "recheck_shifted_schedule", "simulate_regulatory_condition"}
+# Tools whose results may supply dates and numbers to the final text.
+CALCULATOR_TOOLS = SCHEDULE_TOOLS | {"check_schedule_slack", "simulate_conditional", "find_procurement_items",
+                                     "get_task_facts", "find_related_signals", "compare_responses"}
+INVESTIGATION_STOPS = {"M1", "M2", "M3", "M4", "M5", "M6", "done"}
 
 
 def run_agent(
@@ -21,6 +25,7 @@ def run_agent(
     event: Dict[str, Any],
     tools: Dict[str, Callable[..., Any]],
     max_steps: int = 8,
+    system_prompt: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run a bounded LLM loop and return a normalized agent result."""
 
@@ -37,7 +42,7 @@ def run_agent(
             unresolved_items=["commit/send actions are not executable by the agent"],
         )
 
-    messages = _initial_messages(context, event, allowed_tools)
+    messages = _initial_messages(context, event, allowed_tools, system_prompt)
     tool_schemas = [_tool_schema(name, func) for name, func in allowed_tools.items()]
     tool_log: List[Dict[str, Any]] = []
     seen_calls = set()
@@ -117,9 +122,10 @@ def _initial_messages(
     context: Dict[str, Any],
     event: Dict[str, Any],
     tools: Dict[str, Callable[..., Any]],
+    system_prompt: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     tool_names = sorted(tools)
-    system = (
+    system = system_prompt or (
         "You review a schedule change for a project team. Return only one JSON object with these keys: "
         "summary (Korean string, 1-2 sentences: what changed and what it means for the finish date), "
         "status (one of completed, needs_input, needs_review), "
@@ -167,6 +173,11 @@ def _is_blocked_tool_name(name: str) -> bool:
 
 
 def _tool_schema(name: str, func: Callable[..., Any]) -> Dict[str, Any]:
+    explicit = getattr(func, "parameters_schema", None)
+    if isinstance(explicit, dict):
+        return {"type": "function", "function": {
+            "name": name, "description": (getattr(func, "__doc__", None) or "Project planning tool").strip()[:512],
+            "parameters": explicit}}
     properties: Dict[str, Any] = {}
     required = []
     try:
@@ -413,7 +424,25 @@ def _normalize_result(value: Dict[str, Any]) -> Dict[str, Any]:
         "unresolved_items": [_text(item) for item in _list(value.get("unresolved_items")) if _text(item)],
         "tool_log": _list(value.get("tool_log")),
         "status": _normalize_status(value.get("status")),
+        "investigation": _investigation(value.get("investigation")),
         "usage": dict(value.get("usage") or {}),
+    }
+
+
+def _investigation(value: Any) -> Optional[Dict[str, Any]]:
+    """The investigation record the screen shows; absent for ordinary reviews."""
+    if not isinstance(value, dict):
+        return None
+    stop = str(value.get("stop") or "").strip()
+    link = value.get("cause_link") if isinstance(value.get("cause_link"), dict) else None
+    return {
+        "stop": stop if stop in INVESTIGATION_STOPS else "M5",
+        "cause_link": {key: _text(link.get(key)) for key in ("signal_event_id", "supplier_quote", "signal_quote")} if link else None,
+        "items": [item for item in _list(value.get("items")) if isinstance(item, dict)][:10],
+        "applicable_task_ids": [str(item) for item in _list(value.get("applicable_task_ids"))][:20],
+        "excluded": [item for item in _list(value.get("excluded")) if isinstance(item, dict)][:20],
+        "question": _text(value.get("question"))[:300],
+        "checks": [_text(item) for item in _list(value.get("checks")) if _text(item)][:10],
     }
 
 
@@ -519,14 +548,14 @@ _LIST_MARKER = re.compile(r"(?:^|(?<=\s)|(?<=\())\d{1,2}(?=[.)]\s|\))", re.MULTI
 def _calculated_context(context: Dict[str, Any]) -> List[Any]:
     """Calculator output and registered option data the caller put in context."""
     return [context[key] for key in ("scenario_summaries", "changed_tasks_without_response", "response_options",
-                                     "baseline_finish", "related_tasks") if context.get(key) is not None]
+                                     "baseline_finish", "related_tasks", "facts", "reported_change")
+            if context.get(key) is not None]
 
 
 def _ground_final(value: Dict[str, Any], event: Dict[str, Any], tool_log: List[Dict[str, Any]],
                   calculated: Optional[List[Any]] = None) -> Dict[str, Any]:
     """Treat model prose as untrusted; numeric claims need calculator provenance."""
-    calculator = [row["result"] for row in tool_log if row.get("status") == "ok"
-                  and row.get("tool") in {"simulate_schedule", "recheck_shifted_schedule", "simulate_regulatory_condition"}]
+    calculator = [row["result"] for row in tool_log if row.get("status") == "ok" and row.get("tool") in CALCULATOR_TOOLS]
     calculator.extend(calculated or [])
     allowed: set[str] = set()
 
@@ -562,7 +591,7 @@ def _ground_final(value: Dict[str, Any], event: Dict[str, Any], tool_log: List[D
             return {key: clean(child) for key, child in item.items()}
         return item
 
-    for key in ("email_draft", "option_explanations"):
+    for key in ("email_draft", "option_explanations", "investigation"):
         if key in value:
             value[key] = clean(value[key])
 

@@ -597,9 +597,28 @@ def get_project(project_id: str) -> dict[str, Any]:
         "supplier_calendars": db.list_json("supplier_calendars", project_id),
         "decision_deadlines": [{"id": item["id"], **item["data"]} for item in db.list_json("actions", project_id) if item["data"].get("due_at")],
         "demo_events": version["data"].get("demo_events", []) if version else [],
+        "agent_enabled": agent_enabled(),
+        # Supplier notices with a same-period external change on the same tasks can be investigated.
+        "related_signals": _related_signals_by_event(db, project_id, version),
         "versions": [dict(row) for row in version_rows],
         "approvals": [dict(row) for row in approval_rows],
     }
+
+
+def _related_signals_by_event(db: Store, project_id: str, version: dict[str, Any] | None) -> dict[str, Any]:
+    from .investigation import related_signals
+
+    if not version:
+        return {}
+    rows = db.list_json("events", project_id, 1000)
+    found = {}
+    for row in rows:
+        data = row["data"]
+        if data.get("channel") == "supplier_message" and data.get("patch") and data.get("review_status") not in {"REJECTED", "SUPERSEDED"}:
+            signals = related_signals(data, rows, version["id"])["signals"]
+            if signals:
+                found[row["id"]] = signals
+    return found
 
 
 @app.post("/api/projects/{project_id}/demo/hero-baseline", dependencies=[Depends(authorize)])
@@ -861,6 +880,34 @@ def create_event(project_id: str, value: EventInput) -> dict[str, Any]:
                             fingerprint=previous.get("fingerprint"), created_at=previous.get("created_at"))
     notify_project(db, project_id, "event_received", "새 변경 이벤트", f"{event.get('source_label', '입력')} 이벤트가 등록되었습니다.", data={"event_id": event_id})
     return {"event_id": event_id, "event": event, "duplicate": False}
+
+
+@app.post("/api/projects/{project_id}/events/{event_id}/investigations", status_code=202, dependencies=[Depends(authorize)])
+def start_investigation(project_id: str, event_id: str) -> dict[str, Any]:
+    """A person starts an investigation; nothing starts one automatically."""
+    from .investigation import EXTERNAL_CHANNELS, related_signals
+
+    db = store()
+    project_or_404(db, project_id)
+    record = db.get_json("events", event_id, project_id)
+    version = db.current_version(project_id)
+    if not record or not version:
+        raise HTTPException(404, "event not found")
+    if not agent_enabled():
+        raise HTTPException(409, "에이전트가 꺼져 있어 조사를 시작할 수 없습니다")
+    event = record["data"]
+    if event.get("review_status") in {"REJECTED", "SUPERSEDED"}:
+        raise HTTPException(409, "event rejected or superseded")
+    if event.get("channel") == "supplier_message":
+        if not event.get("patch") or not related_signals(event, db.list_json("events", project_id, 1000), version["id"])["signals"]:
+            raise HTTPException(409, "같은 기간·같은 작업의 외부 변화가 없어 조사할 것이 없습니다")
+    elif event.get("channel") not in EXTERNAL_CHANNELS:
+        raise HTTPException(409, "외부 변화 또는 협력사 통보만 조사할 수 있습니다")
+    key = digest({"investigation": event_id, "event_hash": digest(event.get("patch") or event.get("content")),
+                  "version_id": version["id"]})
+    run = db.create_run(project_id, "investigation", event_id, version["id"], key,
+                        {"project_context_snapshot": db.project_context_snapshot(project_id)})
+    return {"run_id": run["id"], "status": run["status"]}
 
 
 @app.patch("/api/projects/{project_id}/events/{event_id}/review", dependencies=[Depends(authorize)])
