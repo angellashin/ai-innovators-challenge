@@ -259,7 +259,7 @@ def _run_review_agent(db: Store, run: dict[str, Any], project: dict[str, Any], t
     evidence = event.get("evidence") or {}
     context = {
         "_llm_gateway": OpenAICompatibleLLM(),
-        "project": {key: project.get(key) for key in ("project_id", "project_name", "name", "target_finish",
+        "project": {key: project.get(key) for key in ("project_id", "project_name", "target_finish",
                                                       "country", "region", "currency") if project.get(key)},
         "baseline_finish": no_response.get("baseline_finish"),
         "budget_krw": budget,
@@ -295,7 +295,9 @@ INVESTIGATION_PROMPT = (
     "When context.supplier_notice is present: first decide from the supplier's stated reason and each "
     "context.related_signals quote whether they share a cause. If not, stop with M1. If they do, look for other "
     "purchase items the notice's condition also covers (same supplier and origin, customs, arriving later) with "
-    "find_procurement_items; the supplier did not mention them. Then check_schedule_slack for the tasks those items "
+    "find_procurement_items; the supplier did not mention them. Take supplier_id and origin_country from "
+    "context.mentioned_items (the named item's supplier, not the owner of a logistics task) and arriving_after from "
+    "that item's planned_arrival. Then check_schedule_slack for the tasks those items "
     "are needed for, using the notice's duration bound; then simulate_conditional (kind hold_after_arrival, the "
     "bound as value, the fact quote) only for items whose task cannot absorb the bound. "
     "When context.notice is present: if context.rule_candidates is long, call narrow_candidates; use get_task_facts "
@@ -404,7 +406,7 @@ def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         if any(row["task_id"] not in state["slack_checked"] for row in applied):
             return {"status": "rejected", "reason": "먼저 check_schedule_slack으로 해당 작업의 여유를 확인하세요."}
         combined = combine_patches([base_patch, patch])
-        state["conditional"] = combined
+        state["conditional"], state["applied"] = combined, applied
         return inv.conditional_summary(recheck(combined), reported["finish_date"], baseline_finish, applied,
                                        project.get("target_finish"))
 
@@ -412,6 +414,13 @@ def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         """Registered response options on the last conditional schedule."""
         if not state["conditional"]:
             return {"status": "rejected", "reason": "먼저 simulate_conditional 결과가 있어야 합니다."}
+        named = {row["item_id"] for row in context.get("mentioned_items") or []}
+        inferred = sorted({row["item_id"] for row in state.get("applied") or [] if row.get("item_id") and row["item_id"] not in named})
+        if supplier and inferred:
+            # The supplier never said these items need the documents; a person confirms before responses are compared.
+            return {"status": "rejected", "inferred_items": inferred,
+                    "reason": f"통보에 없는 품목({', '.join(inferred)})은 서류가 필요한지 사람이 확인하기 전까지 대응안을 비교하지 않습니다. "
+                              "확인 요청 1개와 같은 내용의 협력사 메일 초안을 남기고 M4로 멈추세요."}
         briefs = []
         for label, selected in _candidate_options(options, set()):
             chosen = [item for item in options if item.get("option_id") in selected]
@@ -464,6 +473,8 @@ def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
             "finish_shift_days": (date.fromisoformat(reported["finish_date"]) - date.fromisoformat(baseline_finish)).days,
             "tasks": inv.task_facts(tasks, procurement, event.get("related_task_ids") or [])["tasks"]}
         context["related_signals"] = signals
+        # The purchase item the supplier names carries the supplier and origin; the task owner may be a forwarder.
+        context["mentioned_items"] = inv.mentioned_items(str(event.get("content") or ""), procurement)
     else:
         tools["narrow_candidates"] = narrow_candidates
         context["notice"] = {key: event.get(key) for key in ("title", "content", "published_at", "source_label")}

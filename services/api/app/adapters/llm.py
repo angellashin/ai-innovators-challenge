@@ -2,7 +2,8 @@
 
 REPLAN_LLM_MODE selects how requests are served:
 - live (default): call the gateway.
-- record: call the gateway and save each response to REPLAN_LLM_CASSETTE.
+- record: answer from REPLAN_LLM_CASSETTE when the request is there; otherwise call the gateway
+  and save the response.
 - replay: answer from REPLAN_LLM_CASSETTE only; no key, no network, no cost.
 Replay matches on the request body with run-specific IDs and timestamps masked,
 so a prompt or tool change is a replay miss and needs a new recording.
@@ -115,8 +116,11 @@ class OpenAICompatibleLLM:
         if response_format:
             payload["response_format"] = response_format
 
+        recorded = self._recorded(payload) if mode == "record" else None
         if mode == "replay":
             data = self._replay(payload)
+        elif recorded is not None:
+            data = recorded  # record mode only pays for requests the cassette does not have yet
         else:
             if not self.api_key:
                 raise LLMUnavailable("API_KEY is not configured")
@@ -146,6 +150,10 @@ class OpenAICompatibleLLM:
             model=data.get("model"),
             finish_reason=choice.get("finish_reason"),
         )
+
+    def _recorded(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        entry = _load_cassette(_cassette_path()).get("entries", {}).get(request_key(payload))
+        return dict(entry["response"]) if entry else None
 
     def _replay(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         key = request_key(payload)

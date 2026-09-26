@@ -118,6 +118,12 @@ def _item(item: dict[str, Any]) -> dict[str, Any]:
                                            "permit_or_certification", "planned_arrival", "needed_for_task_id")}
 
 
+def mentioned_items(text: str, procurement: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Purchase items a notice names by item ID (e.g. "P-A1")."""
+    return [_item(item) for item in procurement
+            if item.get("item_id") and re.search(rf"(?<![\w-]){re.escape(str(item['item_id']))}(?![\w-])", text)]
+
+
 def procurement_items(tasks: list[dict[str, Any]], procurement: list[dict[str, Any]], supplier_id: str = "",
                       origin_country: str = "", customs_required: bool | None = None,
                       arriving_after: str = "") -> dict[str, Any]:
@@ -145,9 +151,14 @@ def schedule_slack(project: dict[str, Any], tasks: list[dict[str, Any]], task_id
     base_patch = base_patch or {}
     finish = simulate(project, tasks, event={"patch": base_patch})["finish_date"]
 
+    pinned = base_patch.get("estimated_finish") or {}
+
     def finish_with(task_id: str, days: int) -> str:
-        start = (_day(by_id[task_id]["baseline_start"]) + timedelta(days=days)).isoformat()
-        patch = combine_patches([base_patch, {"not_before": {task_id: start}}])
+        if task_id in pinned:
+            patch = {**base_patch, "estimated_finish": {**pinned, task_id: (_day(pinned[task_id]) + timedelta(days=days)).isoformat()}}
+        else:
+            start = (_day(by_id[task_id]["baseline_start"]) + timedelta(days=days)).isoformat()
+            patch = combine_patches([base_patch, {"not_before": {task_id: start}}])
         return simulate(project, tasks, event={"patch": patch})["finish_date"]
 
     rows = []
@@ -163,7 +174,7 @@ def schedule_slack(project: dict[str, Any], tasks: list[dict[str, Any]], task_id
             else:
                 high = middle - 1
         row = {"task_id": task_id, "name": by_id[task_id].get("name"), "float_calendar_days": low,
-               "on_critical_path": low == 0}
+               "on_critical_path": low == 0, "float_at_least": low == FLOAT_SEARCH_DAYS}
         if bound_days is not None:
             row["absorbs_bound"] = low >= bound_days
         rows.append(row)

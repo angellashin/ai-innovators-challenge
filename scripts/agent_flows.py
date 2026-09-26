@@ -1,7 +1,8 @@
 """Run the hero agent flows through the API and worker, the way the workspace does.
 
     python scripts/agent_flows.py --mode replay            # no key, no network, no cost
-    python scripts/agent_flows.py --mode record --max-calls 10 H04   # paid; refreshes the cassette
+    python scripts/agent_flows.py --mode record --max-calls 10 X2    # paid only for requests not yet recorded
+    python scripts/agent_flows.py --mode replay --prune               # also drop recordings no flow uses
 
 Replay answers from data/llm_replay/hero_demo.json. A replay miss means a prompt, tool or input
 changed since recording; record that flow again. Record mode reads LLM settings from .env without
@@ -22,7 +23,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "services" / "api"))
 CASSETTE = ROOT / "data" / "llm_replay" / "hero_demo.json"
-FLOWS = ("H04", "H02", "V08", "EXT_NOTICE", "EXT_HOLIDAY")
+FLOWS = ("H04", "H02", "V08", "EXT_NOTICE", "EXT_HOLIDAY", "X2", "X2-C", "X1-A", "X1-B")
 SYNTHETIC_NOTICE = {
     "status": "ok", "source_id": "https://environment.ec.europa.eu/news_en", "provider": "registered_source",
     "url": "https://environment.ec.europa.eu/news_en", "fetched_at": "2025-08-27T08:00:00+00:00",
@@ -76,8 +77,9 @@ def _patch_sources(patch: Any = setattr) -> None:
 def _count_calls(limit: int | None, patch: Any = setattr) -> dict:
     from app.adapters import llm
 
-    counter = {"gateway": 0, "replayed": 0, "misses": []}
-    request, replay = llm.OpenAICompatibleLLM._request, llm.OpenAICompatibleLLM._replay
+    counter = {"gateway": 0, "replayed": 0, "misses": [], "used_keys": set()}
+    request, replay, recorded = (llm.OpenAICompatibleLLM._request, llm.OpenAICompatibleLLM._replay,
+                                 llm.OpenAICompatibleLLM._recorded)
 
     def counted_request(self: Any, *args: Any) -> Any:
         if limit is not None and counter["gateway"] >= limit:
@@ -92,14 +94,23 @@ def _count_calls(limit: int | None, patch: Any = setattr) -> dict:
             counter["misses"].append(str(exc))
             raise
         counter["replayed"] += 1
+        counter["used_keys"].add(llm.request_key(payload))
+        return result
+
+    def counted_recorded(self: Any, payload: dict) -> Any:
+        result = recorded(self, payload)
+        counter["used_keys"].add(llm.request_key(payload))
+        if result is not None:
+            counter["replayed"] += 1
         return result
 
     patch(llm.OpenAICompatibleLLM, "_request", counted_request)
     patch(llm.OpenAICompatibleLLM, "_replay", counted_replay)
+    patch(llm.OpenAICompatibleLLM, "_recorded", counted_recorded)
     return counter
 
 
-def run_flow(flow: str, mode: str) -> dict:
+def run_flow(flow: str, mode: str, project_name: str = "에이전트 흐름 확인") -> dict:
     """One flow in a fresh data directory; returns each analysis run's agent output and scenarios."""
     from fastapi.testclient import TestClient
     from app import main as api
@@ -129,8 +140,15 @@ def run_flow(flow: str, mode: str) -> dict:
                     "label", "option_ids", "finish_date", "supplier_finish_shift_days",
                     "external_additional_shift_days", "recovery_days_vs_no_response")} for row in run["scenarios"]]}
 
-    # The name is part of the recorded request; keep it when refreshing the cassette.
-    project_id = call("POST", "/api/projects", {"name": f"audit {flow} rec", "mode": "REPLAY"})["project_id"]
+    def investigate(event_id: str) -> dict:
+        queued = call("POST", f"/api/projects/{project_id}/events/{event_id}/investigations")
+        drain()
+        run = call("GET", f"/api/runs/{queued['run_id']}")["run"]
+        return {"agent": run["data"].get("agent"), "status": run["data"].get("status"),
+                "action_ids": run["data"].get("action_ids"), "run_status": run["status"]}
+
+    # The display name never reaches the model, so any name replays (as a project made on screen does).
+    project_id = call("POST", "/api/projects", {"name": project_name, "mode": "REPLAY"})["project_id"]
     # Watch-plan enrichment is not part of these flows.
     os.environ["REPLAN_LLM_MODE"], os.environ["REPLAN_PAID_CALLS_ENABLED"] = "live", "false"
     call("POST", f"/api/projects/{project_id}/demo/hero-baseline")
@@ -139,7 +157,10 @@ def run_flow(flow: str, mode: str) -> dict:
     project = call("GET", f"/api/projects/{project_id}")
     runs: dict[str, dict] = {}
 
-    if flow in {"H04", "H02", "V08"}:
+    if flow in {"X2", "X2-C"}:
+        call("POST", f"/api/projects/{project_id}/demo/external-signals/N-X2")
+        drain()
+    if flow in {"H04", "H02", "V08", "X2", "X2-C"}:
         if flow == "V08":
             variants = json.loads((ROOT / "data/hero_demo/supplier_message_variants.json").read_text(encoding="utf-8"))
             item = next(row for row in variants["events"] if row["event_id"] == "V08")
@@ -160,6 +181,12 @@ def run_flow(flow: str, mode: str) -> dict:
         runs["preview"] = analyse(event_id, True)
         call("PATCH", f"/api/projects/{project_id}/events/{event_id}/review", review)
         runs["confirmed"] = analyse(event_id, False)
+        if flow in {"X2", "X2-C"}:
+            runs["investigation"] = investigate(event_id)
+    elif flow in {"X1-A", "X1-B"}:
+        event_id = call("POST", f"/api/projects/{project_id}/demo/external-signals/{flow}")["event_ids"][0]
+        drain()
+        runs["investigation"] = investigate(event_id)
     else:
         plan = dict(project["watch_plan"])
         keep = "holiday:HU:2027" if flow == "EXT_HOLIDAY" else "source:"
@@ -191,6 +218,8 @@ def main() -> int:
     parser.add_argument("--mode", choices=["replay", "record"], default="replay")
     parser.add_argument("--max-calls", type=int, default=None, help="record mode: stop before this many gateway calls")
     parser.add_argument("--output", type=Path, help="write the flow results as JSON")
+    parser.add_argument("--prune", action="store_true", help="replay mode: drop cassette entries no flow used")
+    parser.add_argument("--project-name", default="에이전트 흐름 확인", help="any name; it is not sent to the model")
     args = parser.parse_args()
     if set(args.flows) - set(FLOWS):
         parser.error(f"unknown flow: {', '.join(sorted(set(args.flows) - set(FLOWS)))}")
@@ -206,16 +235,24 @@ def main() -> int:
     for flow in args.flows or FLOWS:
         with tempfile.TemporaryDirectory() as data_dir:
             os.environ["REPLAN_DATA_DIR"] = data_dir
-            results[flow] = run_flow(flow, args.mode)
+            results[flow] = run_flow(flow, args.mode, args.project_name)
         for name, run in results[flow].items():
             agent = run.get("agent") or {}
-            print(f"{flow:<12} {name:<14} {agent.get('status', '-'):<16} {str(agent.get('summary') or '')[:70]}")
+            state = run.get('status') if name == 'investigation' else agent.get('status', '-')
+            print(f"{flow:<12} {name:<14} {str(state):<16} {str(agent.get('summary') or '')[:70]}")
     report = {"mode": args.mode, "gateway_calls": counter["gateway"], "replayed_calls": counter["replayed"],
               "replay_misses": counter["misses"], "flows": results}
+    # Keep every recording some flow still uses; flows that miss are listed for re-recording.
+    if args.prune and args.mode == "replay" and set(args.flows or FLOWS) == set(FLOWS):
+        cassette = json.loads(CASSETTE.read_text(encoding="utf-8"))
+        before = len(cassette["entries"])
+        cassette["entries"] = {key: value for key, value in cassette["entries"].items() if key in counter["used_keys"]}
+        CASSETTE.write_text(json.dumps(cassette, ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+        report["pruned_entries"] = before - len(cassette["entries"])
     if args.output:
         args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({key: report[key] for key in ("mode", "gateway_calls", "replayed_calls", "replay_misses")},
-                     ensure_ascii=False))
+    print(json.dumps({key: report[key] for key in ("mode", "gateway_calls", "replayed_calls", "replay_misses",
+                                                    "pruned_entries") if key in report}, ensure_ascii=False))
     return 1 if counter["misses"] else 0
 
 

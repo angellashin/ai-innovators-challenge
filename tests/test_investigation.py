@@ -45,6 +45,11 @@ def test_x2_finds_later_items_and_only_the_critical_one_moves_the_finish(hero):
     assert [row["item_id"] for row in found["items"]] == ["P-B", "P-C"]
     assert [row["needed_by"] for row in found["items"]] == ["2026-10-08", "2027-04-09"]
 
+    named = inv.mentioned_items(LOOP["supplier_messages"][0]["content"], procurement)
+    assert [(row["item_id"], row["supplier_id"], row["planned_arrival"]) for row in named] == [
+        ("P-A1", "Equipment Vendor A", "2026-03-07")]
+    pinned = inv.schedule_slack(project, tasks, ["T042"], X2_PATCH, bound_days=30)["tasks"][0]
+    assert 200 <= pinned["float_calendar_days"] < inv.FLOAT_SEARCH_DAYS and pinned["absorbs_bound"]
     slack = inv.schedule_slack(project, tasks, ["T058", "T051"], X2_PATCH, bound_days=30)
     by_task = {row["task_id"]: row for row in slack["tasks"]}
     assert by_task["T058"]["absorbs_bound"] and by_task["T058"]["float_calendar_days"] >= 200

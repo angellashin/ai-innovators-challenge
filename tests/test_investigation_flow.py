@@ -81,6 +81,7 @@ def test_x2_investigation_finds_c_and_leaves_one_request(client, monkeypatch):
             {"kind": "hold_after_arrival", "item_id": "P-C", "value": 45, "fact_quote": QUOTE}]),
         tool("simulate_conditional", reason="T051은 여유가 없어 서류가 늦을 때의 완료일과 기한을 계산합니다.", changes=[
             {"kind": "hold_after_arrival", "item_id": "P-C", "value": 30, "fact_quote": QUOTE}]),
+        tool("compare_responses", reason="대응안을 비교합니다."),
         {"summary": "통관 서류 요건이 이후 반입될 P-C에도 걸리면 완료일이 2028-01-11로 밀립니다.", "status": "needs_input",
          "stop_reason": "P-B·P-C 서류 필요 여부 확인 필요",
          "investigation": {"stop": "M4", "cause_link": {"signal_event_id": "x", "supplier_quote": "현지 세관의 수입 서류 보완 요청",
@@ -99,13 +100,15 @@ def test_x2_investigation_finds_c_and_leaves_one_request(client, monkeypatch):
     assert run["status"] == "succeeded" and run["data"]["status"] == "M4"
     log = run["data"]["agent"]["tool_log"]
     assert [row["tool"] for row in log] == ["find_procurement_items", "check_schedule_slack",
-                                            "simulate_conditional", "simulate_conditional"]
+                                            "simulate_conditional", "simulate_conditional", "compare_responses"]
+    assert log[4]["result"]["status"] == "rejected" and log[4]["result"]["inferred_items"] == ["P-C"]
     assert [row["item_id"] for row in log[0]["result"]["items"]] == ["P-B", "P-C"]
     assert log[0]["args"]["reason"].startswith("통보 사유가 공지와 같다면")
     assert log[2]["result"]["status"] == "rejected"
     assert (log[3]["result"]["finish_date"], log[3]["result"]["changes"][0]["latest_action_date"]) == ("2028-01-11", "2027-03-10")
     context = json.loads(requests[0]["messages"][1]["content"])["context"]
     assert context["reported_change"]["finish_date"] == "2027-12-21"
+    assert [row["item_id"] for row in context["mentioned_items"]] == ["P-A1"]
     assert "narrow_candidates" not in requests[0]["tools"]
     action = Store().get_json("actions", run["data"]["action_ids"][0], project_id)["data"]
     assert "2027-03-10" in action["request"] and action["source"] == "investigation"

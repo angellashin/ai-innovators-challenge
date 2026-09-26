@@ -23,6 +23,7 @@ def test_record_then_replay_without_key(tmp_path, monkeypatch):
     messages = [{"role": "user", "content": "run 0123456789abcdef0123456789abcdef at 2026-09-26T09:05:38.797199+00:00"}]
     assert recording.chat(messages).content == '{"ok": 1}'
     assert len(sent) == 1
+    assert recording.chat(messages).content == '{"ok": 1}' and len(sent) == 1  # already recorded: no call
     stored = json.loads(cassette.read_text(encoding="utf-8"))["entries"]
     assert len(stored) == 1 and "API_KEY" not in cassette.read_text(encoding="utf-8")
 
