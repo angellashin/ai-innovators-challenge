@@ -505,10 +505,10 @@ def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     if supplier:
         rules_only = {"finish_date": reported.get("finish_date"),
                       "finish_shift_days": (date.fromisoformat(reported["finish_date"]) - date.fromisoformat(baseline_finish)).days,
-                      "scope": "통보에 적힌 작업만 반영", "items_checked": 0}
+                      "scope": "통보에 적힌 작업만 계산", "items_checked": 0}
     else:
         rules_only = {"candidate_count": len(event.get("candidates") or []),
-                      "scope": "위험 태그·작업명 일치 후보만 표시, 효력일·기간 입력 전에는 계산하지 않음"}
+                      "scope": "작업 이름·위험 태그로 찾은 후보만 표시, 효력일·기간이 정해지기 전에는 계산하지 않음"}
     from .hero_demo import real_case_basis
     scenario_ids = [str(event.get("demo_signal_id") or event.get("event_id") or "")] + [
         str(next((row["data"].get("demo_signal_id") for row in rows if row["id"] == signal["event_id"]), "") or "")
@@ -561,14 +561,14 @@ def _agent_found_cases(output: dict[str, Any]) -> list[dict[str, Any]]:
 def _rules_only_agent(run_data: dict[str, Any]) -> dict[str, Any]:
     """Describe why no agent ran, so the screen never presents rule output as agent reasoning."""
     if run_data.get("auto_detected"):
-        status, summary = "waiting_review", "외부 변화를 감지해 규칙과 계산기로만 정리했습니다. 근거를 확인한 뒤 분석을 시작하면 에이전트가 검토합니다."
+        status, summary = "waiting_review", "외부 변화를 감지해 통보 내용과 계산기로만 정리했습니다. 근거를 확인한 뒤 분석을 시작하면 에이전트가 검토합니다."
     elif run_data.get("preview_only"):
-        status, summary = "skipped_preview", "잠정 분석은 규칙과 계산기로만 합니다. 해석을 확인한 뒤 정식 분석에서 에이전트가 검토합니다."
+        status, summary = "skipped_preview", "잠정 분석은 통보 내용과 계산기로만 합니다. 해석을 확인한 뒤 정식 분석에서 에이전트가 검토합니다."
     elif os.environ.get("REPLAN_LLM_MODE", "live").lower() != "replay" and not all(
             os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")):
-        status, summary = "llm_unavailable", "LLM 연결 정보가 없어 규칙과 계산기로만 분석했습니다."
+        status, summary = "llm_unavailable", "LLM 연결 정보가 없어 통보 내용과 계산기로만 분석했습니다."
     else:
-        status, summary = "disabled", "에이전트가 꺼져 있어 규칙과 계산기로만 분석했습니다."
+        status, summary = "disabled", "에이전트가 꺼져 있어 통보 내용과 계산기로만 분석했습니다."
     return {"status": status, "mode": "rules_only", "summary": summary}
 
 
@@ -577,7 +577,7 @@ def _interpretation_agent(result: dict[str, Any], source: str) -> dict[str, Any]
     usage = {**(result.get("usage") or {}), "llm_calls": 1}
     if result.get("status") == "interpretation_failed" or result.get("error"):
         return {"status": "failed", "mode": "llm_interpretation", "usage": usage,
-                "summary": f"LLM이 {source}를 해석하지 못해 규칙 결과만 보여줍니다."}
+                "summary": f"LLM이 {source}를 해석하지 못해 통보 내용에서 찾은 결과만 보여줍니다."}
     candidates = result.get("candidates") or result.get("task_candidates") or []
     facts = result.get("facts") or []
     if result.get("patch"):
@@ -734,7 +734,9 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     if supplier_sources and supplier_sources[3]:
         return {"status": "NEEDS_INPUT", "summary": "공휴일 출처를 확인할 수 없어 재계획을 멈췄습니다.",
                 "missing_fields": supplier_sources[3], "scenario_ids": []}
-    for label, selected in candidates:
+    def run_candidate(label: str, selected: list[str]) -> dict[str, Any] | None:
+        """Calculate one response set; returns an early NEEDS_INPUT result if the recheck cannot converge."""
+        nonlocal no_response_finish
         chosen = [item for item in options if item.get("option_id") in selected]
         if supplier_sources:
             from .shifted_external import recheck_shifted_schedule
@@ -770,6 +772,31 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         db.put_json("scenarios", scenario_id, record, project_id=run["project_id"], run_id=run["id"], version_id=version["id"])
         scenario_ids.append(scenario_id)
         scenario_results.append({"id": scenario_id, **record})
+        return None
+
+    # Singles first; the pair then combines the two singles that recover most (declaration order breaks ties),
+    # falling back to the default pair when fewer than two singles recover anything.
+    singles = [(label, selected) for label, selected in candidates if len(selected) <= 1]
+    for label, selected in singles:
+        stop = run_candidate(label, selected)
+        if stop:
+            return stop
+    order = {str(option.get("option_id")): index for index, option in enumerate(options)}
+    recovering = sorted([row for row in scenario_results if len(row["option_ids"]) == 1
+                         and (row.get("recovery_days_vs_no_response") or 0) > 0],
+                        key=lambda row: (-(row.get("recovery_days_vs_no_response") or 0), order.get(row["option_ids"][0], 99)))
+    pairs = [(label, selected) for label, selected in candidates if len(selected) > 1]
+    by_option = {str(option.get("option_id")): option for option in options}
+    if len(recovering) >= 2:
+        first, second = (by_option[row["option_ids"][0]] for row in recovering[:2])
+        if _can_combine(first, second):
+            ids = sorted([str(first["option_id"]), str(second["option_id"])], key=lambda item: order.get(item, 99))
+            pairs = [(" + ".join(str(by_option[item].get("name") or item) for item in ids), ids)] + [
+                pair for pair in pairs if pair[1] != ids]
+    for label, selected in pairs[:max(0, 8 - len(singles))]:
+        stop = run_candidate(label, selected)
+        if stop:
+            return stop
 
     # The agent reviews calculated scenarios; it never replaces the calculators.
     agent_output: dict[str, Any] = supplier_agent
@@ -1061,7 +1088,7 @@ def enqueue_due_scans(db: Store, now: datetime | None = None) -> int:
 
 def _run_watch_plan_enrichment(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     if not agent_enabled():
-        return {"status": "rules_only", "summary": "LLM 보강이 꺼져 있어 규칙 제안을 유지합니다."}
+        return {"status": "rules_only", "summary": "LLM 보강이 꺼져 있어 기본 제안을 유지합니다."}
     version = db.get_json("versions", run["version_id"], run["project_id"])
     watch = db.get_json("watch_plans", run["project_id"])
     if not version or not watch:
@@ -1070,7 +1097,7 @@ def _run_watch_plan_enrichment(db: Store, run: dict[str, Any]) -> dict[str, Any]
         return {"status": "stale", "summary": "새 기준 일정이 등록되어 보강을 건너뜁니다."}
     paid_state = _reserve_paid_attempt(db, run["id"])
     if paid_state != "reserved":
-        return {"status": paid_state, "summary": "유료 호출 한도로 규칙 제안을 유지합니다."}
+        return {"status": paid_state, "summary": "유료 호출 한도로 기본 제안을 유지합니다."}
     from .adapters.llm import OpenAICompatibleLLM
     from .watch_suggestions import enrich_watch_plan
     plan = dict(watch["data"])

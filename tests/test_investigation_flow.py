@@ -207,3 +207,54 @@ def test_x1a_narrows_checks_facts_and_computes_the_deadline(client, monkeypatch)
     assert run["data"]["agent"]["usage"]["llm_calls"] == 6
     assert run["data"]["real_case_basis"][0]["risk_id"] == "RS-001"
     assert "2026-11-05" in Store().get_json("actions", run["data"]["action_ids"][0], project_id)["data"]["request"]
+
+
+def run_x2_investigation(client, monkeypatch):
+    project_id, event_id = load(client, "X2")
+    enable_agent(monkeypatch, [
+        tool("find_procurement_items", reason="같은 원인의 이후 품목 확인", supplier_id="Equipment Vendor A",
+             origin_country="China", customs_required=True, arriving_after="2026-03-07"),
+        tool("check_schedule_slack", reason="여유 확인", task_ids=["T058", "T051"], bound_days=60),
+        tool("simulate_conditional", reason="P-C 최악 조건", changes=[
+            {"kind": "hold_after_arrival", "item_id": "P-C", "value": 60, "fact_quote": QUOTE}]),
+        {"summary": "P-C가 늦으면 2028-02-11", "status": "needs_input", "stop_reason": "P-C 확인",
+         "investigation": {"stop": "M4", "question": "P-C도 허가가 필요합니까?", "checks": []},
+         "email_draft": {"to": "Equipment Vendor A", "subject": "P-C 확인", "body": "P-C 허가 여부를 알려 주세요."}},
+        # The explanation after recalculation.
+        {"summary": "P-C 지연을 반영하면 2028-02-11이며 HOPT-05와 HOPT-06 조합이 가장 많이 회복합니다.",
+         "status": "needs_review", "stop_reason": "", "option_explanations": [], "email_draft": None, "unresolved_items": []},
+    ])
+    queued = call(client, "post", f"/api/projects/{project_id}/events/{event_id}/investigations")
+    assert run_once(Store())
+    return project_id, event_id, call(client, "get", f"/api/runs/{queued['run_id']}")["run"]
+
+
+def test_confirming_the_hidden_item_recalculates_and_recommends_the_best_pair(client, monkeypatch):
+    project_id, event_id, investigation = run_x2_investigation(client, monkeypatch)
+    resolved = call(client, "post", f"/api/projects/{project_id}/investigations/{investigation['id']}/resolve",
+                    json={"decision": "applies", "note": "협력사 회신: P-C도 선적별 허가 대상"})
+    assert run_once(Store())
+    result = call(client, "get", f"/api/runs/{resolved['analysis_run_id']}")
+    by_options = {tuple(row["data"]["option_ids"]): row["data"] for row in result["scenarios"]}
+    assert by_options[()]["finish_date"] == "2028-02-11"
+    best = max(result["scenarios"], key=lambda row: row["data"]["recovery_days_vs_no_response"] or 0)["data"]
+    assert best["option_ids"] == ["HOPT-05", "HOPT-06"] and best["finish_date"] == "2028-01-25"
+    assert best["recovery_days_vs_no_response"] == 17
+    event = Store().get_json("events", event_id, project_id)["data"]
+    assert event["patch"]["not_before"] == {"T051": "2027-05-25"} and event["patch"]["estimated_finish"] == {"T042": "2026-03-14"}
+    assert event["investigation"]["resolution"]["decision"] == "applies"
+    action = Store().get_json("actions", investigation["data"]["action_ids"][0], project_id)["data"]
+    assert action["state"] == "DONE" and action["decision"] == "applies"
+    again = client.post(f"/api/projects/{project_id}/investigations/{investigation['id']}/resolve",
+                        headers={"Authorization": "Bearer test-token"}, json={"decision": "not_applicable"})
+    assert again.status_code == 409
+
+
+def test_not_applicable_keeps_the_reported_result(client, monkeypatch):
+    project_id, event_id, investigation = run_x2_investigation(client, monkeypatch)
+    resolved = call(client, "post", f"/api/projects/{project_id}/investigations/{investigation['id']}/resolve",
+                    json={"decision": "not_applicable"})
+    assert resolved["analysis_run_id"] is None and not run_once(Store())
+    event = Store().get_json("events", event_id, project_id)["data"]
+    assert event["patch"] == {"estimated_finish": {"T042": "2026-03-14"}}
+    assert event["investigation"]["resolution"]["note"] == "확인 결과 해당 없음"

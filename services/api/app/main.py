@@ -244,6 +244,11 @@ class AnalysisInput(BaseModel):
     preview_only: bool = False
 
 
+class ResolveInput(BaseModel):
+    decision: str = Field(pattern="^(applies|not_applicable)$")
+    note: str = Field(default="", max_length=500)
+
+
 class ReplanInput(BaseModel):
     budget_krw: int = Field(ge=0)
     unavailable_option_ids: list[str] = Field(default_factory=list)
@@ -913,6 +918,65 @@ def start_investigation(project_id: str, event_id: str) -> dict[str, Any]:
     run = db.create_run(project_id, "investigation", event_id, version["id"], key,
                         {"project_context_snapshot": db.project_context_snapshot(project_id)})
     return {"run_id": run["id"], "status": run["status"]}
+
+
+@app.post("/api/projects/{project_id}/investigations/{run_id}/resolve", dependencies=[Depends(authorize)])
+def resolve_investigation(project_id: str, run_id: str, value: ResolveInput) -> dict[str, Any]:
+    """A person records whether the investigated items are affected; if so the schedule is recalculated."""
+    from .external_risks import combine_patches
+    from .investigation import conditional_changes
+
+    db = store()
+    project_or_404(db, project_id)
+    run = db.get_json("runs", run_id, project_id)
+    if not run or run["kind"] != "investigation" or run["status"] != "succeeded":
+        raise HTTPException(404, "finished investigation not found")
+    data = run["data"]
+    if data.get("status") not in {"M3", "M4"}:
+        raise HTTPException(409, "이 조사에는 확인할 질문이 없습니다")
+    record = db.get_json("events", run["event_id"], project_id)
+    version = db.current_version(project_id)
+    if not record or not version:
+        raise HTTPException(404, "event not found")
+    event = dict(record["data"])
+    if (event.get("investigation") or {}).get("resolution"):
+        raise HTTPException(409, "이미 확인 결과를 기록했습니다")
+    applies = value.decision == "applies"
+    note = value.note.strip() or ("확인 결과 해당함(지연 반영)" if applies else "확인 결과 해당 없음")
+    changes = []
+    for entry in (data.get("agent") or {}).get("tool_log") or []:
+        if (entry.get("tool") == "simulate_conditional" and entry.get("status") == "ok"
+                and (entry.get("result") or {}).get("status") != "rejected"):
+            changes = (entry.get("args") or {}).get("changes") or []
+    if applies and not changes:
+        raise HTTPException(409, "다시 계산할 조건부 결과가 없습니다")
+    for action_id in data.get("action_ids") or []:
+        action = db.get_json("actions", action_id, project_id)
+        if action:
+            db.put_json("actions", action_id, {**action["data"], "state": "DONE", "note": note, "decision": value.decision},
+                        project_id=project_id, event_id=action.get("event_id"), scenario_id=action.get("scenario_id"))
+    resolution = {"decision": value.decision, "note": note, "at": utcnow(), "run_id": run_id}
+    event["investigation"] = {**(event.get("investigation") or {}), "resolution": resolution}
+    analysis_run = None
+    if applies:
+        # The same deterministic holds the investigation calculated, now confirmed by a person.
+        patch, applied = conditional_changes(version["data"]["tasks"], version["data"].get("procurement") or [], changes)
+        event["patch"] = combine_patches([event.get("patch") or {}, patch])
+        related = list(event.get("related_task_ids") or [])
+        event["related_task_ids"] = related + [row["task_id"] for row in applied if row["task_id"] not in related]
+        event["confirmed_additions"] = [{**row, "note": note} for row in applied]
+        event["review_status"] = "CONFIRMED"
+    db.put_json("events", record["id"], event, project_id=project_id,
+                fingerprint=record.get("fingerprint"), created_at=record.get("created_at"))
+    if applies:
+        analysis_run = db.create_run(project_id, "analysis", record["id"], version["id"],
+                                     digest({"resolved": run_id, "patch": event["patch"]}),
+                                     {"budget_krw": None, "preview_only": False,
+                                      "project_context_snapshot": db.project_context_snapshot(project_id)})
+    notify_project(db, project_id, "investigation_resolved", "조사 확인 결과 기록",
+                   "추가 영향을 반영해 일정을 다시 계산합니다." if applies else "해당 없음으로 기록했습니다. 기존 분석을 유지합니다.",
+                   data={"event_id": record["id"], "run_id": run_id})
+    return {"decision": value.decision, "analysis_run_id": analysis_run["id"] if analysis_run else None}
 
 
 @app.patch("/api/projects/{project_id}/events/{event_id}/review", dependencies=[Depends(authorize)])
