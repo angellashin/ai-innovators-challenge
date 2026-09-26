@@ -971,7 +971,7 @@ def resolve_investigation(project_id: str, run_id: str, value: ResolveInput) -> 
     if applies:
         analysis_run = db.create_run(project_id, "analysis", record["id"], version["id"],
                                      digest({"resolved": run_id, "patch": event["patch"]}),
-                                     {"budget_krw": None, "preview_only": False,
+                                     {"budget_krw": None, "preview_only": False, "resolved_from": run_id,
                                       "project_context_snapshot": db.project_context_snapshot(project_id)})
     notify_project(db, project_id, "investigation_resolved", "조사 확인 결과 기록",
                    "추가 영향을 반영해 일정을 다시 계산합니다." if applies else "해당 없음으로 기록했습니다. 기존 분석을 유지합니다.",

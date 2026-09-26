@@ -363,6 +363,57 @@
     }
    }
   },
+  "31b512a03dda4a2c48df23fec171e0a43b041d2a3dddaabc0182c9a2f6992a78": {
+   "model": "bedrock-gpt-5.6-sol",
+   "recorded_at": "2026-09-26T15:30:31+00:00",
+   "request": {
+    "chars": 19468,
+    "messages": 2,
+    "system": "You review a schedule change for a project team. Return only one JSON object with these keys: summary (Korean string, 1-2 sentences: what changed and what it me",
+    "tools": [
+     "search_risk_signals",
+     "simulate_regulatory_condition",
+     "search_public_sources",
+     "fetch_allowed_source"
+    ]
+   },
+   "response": {
+    "choices": [
+     {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+       "content": "{\n  \"summary\": \"중국 수출 허가 대기로 통관 지연과 교정 착수 제한이 후속 일정에 전파되었습니다. 무대응 시 프로젝트 종료일은 2028-02-11로 기준 대비 52일 늦어지며, 검토된 모든 대응안도 목표 종료일을 충족하지 못합니다.\",\n  \"status\": \"needs_input\",\n  \"stop_reason\": \"공급사가 수출 허가의 공식 진행 상태와 예상 승인·출하 해제일을 확인해 현재 통관 완료 전망이 유효한지 답해야 합니다.\",\n  \"option_explanations\": [\n    {\n      \"option_ids\": [],\n      \"text\": \"무대응 시 추가 비용은 0원이고 종료일은 2028-02-11로 52일 지연됩니다.\"\n    },\n    {\n      \"option_ids\": [\n        \"HOPT-01\"\n      ],\n      \"text\": \"24,000,000원이 추가되지만 회복일은 0일로, 종료일은 무대응과 같은 2028-02-11입니다.\"\n    },\n    {\n      \"option_ids\": [\n        \"HOPT-02\"\n      ],\n      \"text\": \"16,000,000원이 추가되지만 회복일은 0일로, 종료일은 무대응과 같은 2028-02-11입니다.\"\n    },\n    {\n      \"option_ids\": [\n        \"HOPT-03\"\n      ],\n      \"text\": \"9,000,000원이 추가되지만 회복일은 0일로, 종료일은 무대응과 같은 2028-02-11입니다.\"\n    },\n    {\n      \"option_ids\": [\n        \"HOPT-04\"\n      ],\n      \"text\": \"5,500,000원이 추가되지만 회복일은 0일로, 종료일은 무대응과 같은 2028-02-11입니다.\"\n    },\n    {\n      \"option_ids\": [\n        \"HOPT-05\"\n      ],\n      \"text\": \"13,000,000원의 추가 비용으로 무대응 대비 7일을 회복해 종료일이 2028-02-04가 되지만 목표는 충족하지 못합니다.\"\n    },\n    {\n      \"option_ids\": [\n        \"HOPT-06\"\n      ],\n      \"text\": \"19,000,000원의 추가 비용으로 무대응 대비 14일을 회복해 종료일이 2028-01-28이 되지만 목표는 충족하지 못합니다.\"\n    },\n    {\n      \"option_ids\": [\n        \"HOPT-05\",\n        \"HOPT-06\"\n      ],\n      \"text\": \"32,000,000원의 추가 비용으로 무대응 대비 17일을 회복해 검토안 중 가장 이른 2028-01-25에 종료되지만 목표는 충족하지 못합니다.\"\n    }\n  ],\n  \"regulatory_assessment\": {\n    \"likelihood\": \"높음\",\n    \"reason\": \"공급사 메시지가 중국 수출 허가 대기를 지연 원인으로 직접 명시했습니다. RS-019는 중국 수출 통제가 자동차 공급망에 영향을 줄 수 있다는 일반적 위험 신호일 뿐, 본 건의 법적 적용 여부나 추가 지연 기간을 입증하지는 않습니다.\",\n    \"human_check\": \"허가 신청 번호와 관할 기관, 보완서류 제출 완료 여부, 공식 예상 승인일 및 출하 해제일을 공급사·통관사가 확인해야 합니다.\",\n    \"evidence_risk_ids\": [\n      \"RS-019\"\n    ]\n  },\n  \"email_draft\": {\n    \"to\": \"Equipment Vendor A\",\n    \"subject\": \"중국 수출 허가 진행 상태 및 통관 전망 확인 요청\",\n    \"body\": \"안녕하세요. 서보 모터 자석 부품의 중국 수출 허가와 관련해 허가 신청 번호 및 관할 기관, 보완서류 제출 완료 여부, 공식 예상 승인일과 출하 해제일을 알려주시기 바랍니다. 또한 현재 제시한 통관 완료 전망이 여전히 유효한지, 추가 지연 가능성이 있는지도 함께 회신 부탁드립니다. 본 요청은 일정 검토를 위한 것이며 대응안 확정이나 승인을 의미하지 않습니다.\"\n  },\n  \"unresolved_items\": [\n    \"수출 허가 보완서류는 제출 완료되었으며 관할 기관에 정식 접수되었는가?\",\n    \"공식 예상 승인일과 출하 해제일은 언제이며 현재 통관 완료 전망은 유효한가?\",\n    \"계산에 반영된 공휴일과 작업 중단일이 해당 현장 작업에 실제 적용되는가?\",\n    \"HOPT-05에 필요한 제어 엔지니어, 교정 장비 및 선행 검사 완료 조건을 확보할 수 있는가?\",\n    \"HOPT-06의 시험 계획 승인과 별도 시험 인력 확보가 가능한가?\"\n  ]\n}",
+       "reasoning_content": "",
+       "reasoning_items": [
+        {
+         "encrypted_content": "rsn_rru6BQHgUc/VWS5vRIAlHwIFeMFl2KD2hr+T8WbSUwQp8jAHkrfueaBt9ydTLaZSINxTAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBc1VNdlVKMDFITXV0WktaMUJwLytsODNxa2lUdkdoTWVaOUp3Q0VLckZ6VlJWNnVxejByU2E2SmEvVWliR0kzVFE9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcBzOA42h/9ZZPVGTJae37xQZ0NKbZYUYpAjmr5wTyexPQO0PepR8jRQ3zVYRU98f19IRUnxZNUvb3nI5abdsm69PmHgW0szWWXEHvra52LAE4PGmj1xXIaxbEadwCAAAQAGGiqrjnLToVXpYVleQzA8DppBo4SXA0Mfh6obaiRuHDpbIppcD49m64kWGbQvVLyf////8AAAABAAAAAAAAAAAAAAABAAACti6UqmzobZUiAtOiaOxLNbIpdTJsA99BYCSZ2v9jztBuBwKx82yA/Ko0cr6P04SYSLU0FCYSjH2fKLw0Ep2u5V4yLe657SN8eHAZhNAnyRAjMVDClxKeMT4TEfzG6jSZ20LmbsLks9wzczX5LHS0GCtE2ir3hemqharKUNcgG/XXvqhPrvnMHeDaZ7NkVkWtZIM85D6BAviOA8h9rmhOmoW0YftbUUR4XRUx5h24P/NB5PA7wDmhzL5WIgNSbjVprGpcylr8zl7fE42ok4/otH2uoOhLV/4rCe5TRKDeSpkXQm6UKogCkbf2unfQlFxiK4bQLEj0C0TH48eII/XD03txFU0n4aXbaDXyA2BVefvxSoPdsELV15Hfme47guvoJ2iebIeYu9cBjuYnd47PmGnS2aoiO0/7ccq6egfZFk84CoWJgMij37PwaWfBvlz55Osrgz92tY5vP6yjQ7D2ljRaa7tXPxHSDqXLC41gJ4WytKEnxGR/A+XRUZAyLlKfrsIYTPuc8OKuEnC8WEf5amXRaaJioN2zfrl4eS9e3opzslCV0t73PVwGiqUkYYO28fRRnilA8hley+E/ia0PVmlXbIPFYuH52Fkr7HywqzGa0viIapSQ5sODXm5RZIuDtH8UvMLwPJRx+DgejERGaJuoruWhgJln8YYdmyI7uaoconCuytxlP1uAVByttzQVIlhIVNbWK1z61uyTfPpw8idLNm3Bi8eFQMvFWAgws8ngjSSXcGnDpS2dNe3FqPRQgolSPR54+cUHlx9qTYQeSBO7d8YqiRdvjUMDnBc4X8yJiXPMD46oVu7bqT0SpeWmLs5zdwWQEe9s3Ksrnd++PLmFmg80zDYH1B7DjHq/19wVretpgRYa+IjuBMbrQKaKdueem6ciK6HIPhbM85eLGhdz36n+T7doYPPERJUpKekwweJuFxibAGcwZQIwB1LCnDB2VV+uA6aCDfEXGT89ZvWAKaOmxduhCVATdlkU01M+ZJL8oGdK4KPRgF/oAjEA4UgwevfeQSTTlMQvcnMaM8TE/ZkQiSpdoNv7yKgIaFllTxbk0u2pG/PCGtdYgWeb",
+         "id": "rs_ae1382cabb825b4783c7970541e53c4d",
+         "summary": [],
+         "type": "reasoning"
+        }
+       ],
+       "role": "assistant"
+      }
+     }
+    ],
+    "model": "bedrock-gpt-5.6-sol",
+    "usage": {
+     "completion_tokens": 2252,
+     "completion_tokens_details": {
+      "reasoning_tokens": 1174
+     },
+     "cost_usd": 0.117385125,
+     "prompt_tokens": 6265,
+     "prompt_tokens_details": {
+      "cache_creation_tokens": 6263,
+      "cache_write_tokens": 6263,
+      "cached_tokens": 0
+     },
+     "total_tokens": 8517
+    }
+   }
+  },
   "49383909b828e56b7d1302a1b2c40f56d992fc23f108963b5e504b48c09c7dcb": {
    "model": "bedrock-gpt-5.6-sol",
    "recorded_at": "2026-09-26T13:04:33+00:00",

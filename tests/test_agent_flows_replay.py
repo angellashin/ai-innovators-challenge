@@ -46,3 +46,7 @@ def test_every_recorded_flow_replays_in_any_project(tmp_path, monkeypatch):
     assert runs["X2-C"]["investigation"]["status"] == "M1" and runs["X2-C"]["investigation"]["action_ids"] == []
     assert runs["X1-B"]["investigation"]["status"] == "M2"
     assert runs["X1-A"]["investigation"]["status"] == "M4"
+    recalculated = {tuple(row["option_ids"]): row for row in runs["X2-resolved"]["recalculated"]["scenarios"]}
+    assert recalculated[()]["finish_date"] == "2028-02-11"
+    assert recalculated[("HOPT-05", "HOPT-06")]["finish_date"] == "2028-01-25"
+    assert recalculated[("HOPT-05", "HOPT-06")]["recovery_days_vs_no_response"] == 17

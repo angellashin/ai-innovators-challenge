@@ -117,20 +117,28 @@ export function EvidenceReview({ event, tasks, disabled, onReview, onAnalyze }: 
   const [day, setDay] = useState("");
   const [operation, setOperation] = useState("not_before");
   const [note, setNote] = useState("");
+  const [allTasks, setAllTasks] = useState(false);
   const hasPatch = Object.keys(event.patch || {}).length > 0;
+  const candidates = (event.candidates || []) as Row[];
+  const related = new Set<string>([...(event.related_task_ids || []), ...candidates.map((row) => row.task_id)]);
+  const choices = allTasks || !related.size ? tasks : tasks.filter((task) => related.has(task.task_id));
+  const day10 = (value: unknown) => (typeof value === "string" && value ? value.slice(0, 10) : "");
+  const reviewLabel: Record<string, string> = { PENDING: "확인 대기", CONFIRMED: "확인됨", REJECTED: "보류", SUPERSEDED: "대체됨" };
+  const candidateRow = (candidate: Row) => <p key={candidate.task_id}>{candidate.task_id}: {(candidate.reasons || []).join(" · ")}{candidate.quote && <><br /><small>원문 인용: <q>{candidate.quote}</q></small></>}</p>;
   const invalid = ["SUPERSEDED", "REJECTED"].includes(event.review_status);
   const proof = event.evidence || {};
   const url = /^https?:\/\//.test(proof.source_url || "") ? proof.source_url : null;
   return <div className="evidence-review">
     <b>{proof.kind === "FORECAST" ? "예보 기반 · 조건부 계산" : proof.kind === "CALENDAR" ? "공개 달력 · 실제 휴무 확인 필요" : "공지·뉴스 · 적용 여부 확인 필요"}</b>
     {url && <a href={url} target="_blank" rel="noreferrer">원문 근거 열기 ↗</a>}
-    <small>수집 {proof.fetched_at || "미확인"} · 발행 {proof.published_at || "미확인"}</small>
-    <small>기준 버전 {event.version_id} · {event.review_status}</small>
-    {(event.candidates || []).map((candidate: Row) => <p key={candidate.task_id}>{candidate.task_id}: {(candidate.reasons || []).join(" · ")}{candidate.quote && <><br /><small>원문 인용: <q>{candidate.quote}</q></small></>}</p>)}
+    <small>수집 {day10(proof.fetched_at) || "미확인"} · 발행 {day10(proof.published_at) || day10(event.published_at) || "미확인"} · {reviewLabel[event.review_status] || event.review_status}</small>
+    {candidates.slice(0, 5).map(candidateRow)}
+    {candidates.length > 5 && <details><summary>관련 작업 후보 {candidates.length}개 모두 보기</summary>{candidates.slice(5).map(candidateRow)}</details>}
     {event.missing_fields?.length > 0 && <p>확인할 내용: {event.missing_fields.join(", ")}</p>}
     {hasPatch && <ul>{Object.entries(event.patch).flatMap(([kind, values]) => Object.entries(values as Row).map(([id, value]) => <li key={`${kind}-${id}`}>{id} · {kind === "blocked_dates" ? "작업 제외일" : kind === "not_before" ? "착수 가능일" : "완료 예정일"}: {Array.isArray(value) ? value.join(", ") : String(value)}</li>))}</ul>}
     {!hasPatch && !invalid && <details><summary>적용 작업·날짜 확인</summary>
-      <label>영향 작업<select multiple value={ids} onChange={(input) => setIds(Array.from(input.target.selectedOptions, (option) => option.value))}>{tasks.map((task) => <option value={task.task_id} key={task.task_id}>{task.task_id} · {task.name}</option>)}</select></label>
+      <label>영향 작업<select multiple value={ids} onChange={(input) => setIds(Array.from(input.target.selectedOptions, (option) => option.value))}>{choices.map((task) => <option value={task.task_id} key={task.task_id}>{task.task_id} · {task.name}</option>)}</select></label>
+      {related.size > 0 && <label className="inline-check"><input type="checkbox" checked={allTasks} onChange={(input) => setAllTasks(input.target.checked)} /> 관련 후보 밖의 작업도 보기</label>}
       <label>변경 내용<select value={operation} onChange={(input) => setOperation(input.target.value)}><option value="not_before">이 날짜부터 착수 가능</option><option value="blocked_dates">이 날짜는 작업 불가</option><option value="estimated_finish">변경된 완료 예정일</option></select></label>
       <label>적용 날짜<input type="date" value={day} onChange={(input) => setDay(input.target.value)} /></label>
       <label>적용 근거·확인 내용<textarea value={note} onChange={(input) => setNote(input.target.value)} placeholder="원문의 효력일, 적용 설비·지역과 담당자 확인 내용을 기록하세요." /></label>

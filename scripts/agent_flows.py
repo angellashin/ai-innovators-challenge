@@ -23,7 +23,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "services" / "api"))
 CASSETTE = ROOT / "data" / "llm_replay" / "hero_demo.json"
-FLOWS = ("H04", "H02", "V08", "EXT_NOTICE", "EXT_HOLIDAY", "X2", "X2-C", "X1-A", "X1-B")
+FLOWS = ("H04", "H02", "V08", "EXT_NOTICE", "EXT_HOLIDAY", "X2", "X2-C", "X1-A", "X1-B", "X2-resolved")
 SYNTHETIC_NOTICE = {
     "status": "ok", "source_id": "https://environment.ec.europa.eu/news_en", "provider": "registered_source",
     "url": "https://environment.ec.europa.eu/news_en", "fetched_at": "2025-08-27T08:00:00+00:00",
@@ -144,7 +144,7 @@ def run_flow(flow: str, mode: str, project_name: str = "에이전트 흐름 확�
         queued = call("POST", f"/api/projects/{project_id}/events/{event_id}/investigations")
         drain()
         run = call("GET", f"/api/runs/{queued['run_id']}")["run"]
-        return {"agent": run["data"].get("agent"), "status": run["data"].get("status"),
+        return {"agent": run["data"].get("agent"), "status": run["data"].get("status"), "run_id": run["id"],
                 "action_ids": run["data"].get("action_ids"), "run_status": run["status"]}
 
     # The display name never reaches the model, so any name replays (as a project made on screen does).
@@ -157,10 +157,10 @@ def run_flow(flow: str, mode: str, project_name: str = "에이전트 흐름 확�
     project = call("GET", f"/api/projects/{project_id}")
     runs: dict[str, dict] = {}
 
-    if flow in {"X2", "X2-C"}:
+    if flow in {"X2", "X2-C", "X2-resolved"}:
         call("POST", f"/api/projects/{project_id}/demo/external-signals/N-X2")
         drain()
-    if flow in {"H04", "H02", "V08", "X2", "X2-C"}:
+    if flow in {"H04", "H02", "V08", "X2", "X2-C", "X2-resolved"}:
         if flow == "V08":
             variants = json.loads((ROOT / "data/hero_demo/supplier_message_variants.json").read_text(encoding="utf-8"))
             item = next(row for row in variants["events"] if row["event_id"] == "V08")
@@ -171,7 +171,7 @@ def run_flow(flow: str, mode: str, project_name: str = "에이전트 흐름 확�
             review = {"confirmed": True, "related_task_ids": ["T036"], "review_note": "작업·날짜를 사람이 지정함",
                       "patch": {"estimated_finish": {"T036": "2026-01-15"}}}
         else:
-            item = next(row for row in project["demo_events"] if row.get("event_id") == flow)
+            item = next(row for row in project["demo_events"] if row.get("event_id") == flow.split("-resolved")[0])
             payload = {"event_id": item.get("event_id"), "content": item.get("body") or item.get("content"),
                        "channel": item.get("channel", "supplier_message"), "source_label": item.get("source_label"),
                        "published_at": item.get("published_at"), "mode": item.get("mode", "SYNTHETIC"),
@@ -181,8 +181,18 @@ def run_flow(flow: str, mode: str, project_name: str = "에이전트 흐름 확�
         runs["preview"] = analyse(event_id, True)
         call("PATCH", f"/api/projects/{project_id}/events/{event_id}/review", review)
         runs["confirmed"] = analyse(event_id, False)
-        if flow in {"X2", "X2-C"}:
+        if flow in {"X2", "X2-C", "X2-resolved"}:
             runs["investigation"] = investigate(event_id)
+        if flow == "X2-resolved":
+            # A person confirms P-C is affected; the schedule is recalculated with its hold.
+            resolved = call("POST", f"/api/projects/{project_id}/investigations/{runs['investigation']['run_id']}/resolve",
+                            {"decision": "applies", "note": "협력사 회신: P-C도 선적별 수출 허가 대상"})
+            drain()
+            run = call("GET", f"/api/runs/{resolved['analysis_run_id']}")
+            runs["recalculated"] = {"agent": run["run"]["data"].get("agent"), "status": run["run"]["data"].get("status"),
+                                    "scenarios": [{key: row["data"].get(key) for key in (
+                                        "label", "option_ids", "finish_date", "recovery_days_vs_no_response",
+                                        "extra_cost_krw")} for row in run["scenarios"]]}
     elif flow in {"X1-A", "X1-B"}:
         event_id = call("POST", f"/api/projects/{project_id}/demo/external-signals/{flow}")["event_ids"][0]
         drain()

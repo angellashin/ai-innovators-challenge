@@ -2751,3 +2751,21 @@ main {
 .evidence-block p small { display: block; color: #4a565c; margin-bottom: 2px; }
 .evidence-block mark { background: #fff1b8; padding: 0 2px; }
 @media (max-width: 720px) { .compare-pair { grid-template-columns: 1fr; } }
+.mode-line { margin: 8px 0 0; padding: 8px 12px; border-radius: 9px; background: #e3eef4; color: #2f5d73; font-size: 13px; }
+.mode-line.off { background: #fff2dc; color: #8a5a1f; }
+.mode-line code, .investigation code { font-size: 12px; }
+.investigation.compact p { margin: 4px 0; }
+.investigation .conclusion b { font-size: 15px; }
+.resolve-box { margin: 10px 0; padding: 10px 12px; border-radius: 9px; background: #fff; border: 1px solid #467f9d; }
+.resolve-box label { display: block; margin: 6px 0; }
+.resolve-box input { width: 100%; }
+.resolve-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.investigation details { margin-top: 8px; }
+.investigation details > summary { cursor: pointer; font-weight: 700; }
+.resolution { color: #2f5d73; }
+.no-response-ok b { display: block; font-size: 16px; margin-bottom: 4px; }
+.no-response-ok details { margin-top: 10px; }
+.recommended { font-style: normal; margin-right: 6px; padding: 1px 6px; border-radius: 999px; background: #467f9d; color: #fff; font-size: 11px; }
+details.agent-decision > summary { cursor: pointer; }
+.rules-only-note { font-size: 13px; color: #4a565c; }
+.inline-check { display: flex; align-items: center; gap: 6px; font-size: 13px; }
