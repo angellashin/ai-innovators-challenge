@@ -3,7 +3,7 @@
 from scripts import agent_flows
 
 
-def test_recorded_flows_replay_in_any_project(tmp_path, monkeypatch):
+def test_every_recorded_flow_replays_in_any_project(tmp_path, monkeypatch):
     for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("REPLAN_LLM_MODE", "replay")
@@ -15,7 +15,7 @@ def test_recorded_flows_replay_in_any_project(tmp_path, monkeypatch):
 
     # Recorded under another project name: the display name is never sent to the model.
     runs = {}
-    for flow in ("H04", "X2", "X2-C"):
+    for flow in agent_flows.FLOWS:
         monkeypatch.setenv("REPLAN_DATA_DIR", str(tmp_path / flow))
         runs[flow] = agent_flows.run_flow(flow, "replay", project_name=f"화면에서 만든 {flow} 프로젝트")
 
@@ -27,6 +27,8 @@ def test_recorded_flows_replay_in_any_project(tmp_path, monkeypatch):
             no_response["external_additional_shift_days"]) == ("2028-01-25", 21, 14)
     explanations = h04["confirmed"]["agent"]["option_explanations"]
     assert all(isinstance(row["text"], str) and "HOPT-은" not in row["text"] for row in explanations)
+    regulation = runs["H02"]["confirmed"]["agent"]["regulatory_assessment"]
+    assert regulation["likelihood"] == "불확실" and regulation["reason"] and regulation["human_check"]
 
     x2 = runs["X2"]["investigation"]
     assert runs["X2"]["confirmed"]["scenarios"][0]["finish_date"] == "2027-12-21"  # rules alone: no change
@@ -35,9 +37,11 @@ def test_recorded_flows_replay_in_any_project(tmp_path, monkeypatch):
     found = next(row for row in log if row["tool"] == "find_procurement_items")["result"]["items"]
     assert [row["item_id"] for row in found] == ["P-B", "P-C"]
     worst = next(row for row in log if row["tool"] == "simulate_conditional")["result"]
-    assert (worst["finish_date"], worst["changes"][0]["latest_action_date"]) == ("2028-01-11", "2027-03-10")
+    assert (worst["finish_date"], worst["changes"][0]["latest_action_date"]) == ("2028-02-11", "2027-02-08")
+    assert "2027-02-08" in x2["agent"]["investigation"]["question"]
     assert all(row["args"].get("reason") for row in log)
     assert x2["agent"]["email_draft"]["to"] == "Equipment Vendor A"
 
-    x2c = runs["X2-C"]["investigation"]
-    assert x2c["status"] == "M1" and x2c["action_ids"] == [] and not x2c["agent"]["tool_log"]
+    assert runs["X2-C"]["investigation"]["status"] == "M1" and runs["X2-C"]["investigation"]["action_ids"] == []
+    assert runs["X1-B"]["investigation"]["status"] == "M2"
+    assert runs["X1-A"]["investigation"]["status"] == "M4"
