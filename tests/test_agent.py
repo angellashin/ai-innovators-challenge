@@ -439,3 +439,41 @@ def test_llm_gateway_does_not_fallback_on_auth_or_rate_limit_errors():
         raise AssertionError("expected rate-limit error")
 
     assert len(calls) == 1
+
+
+def test_audit_output_shapes_are_normalized_for_the_screen():
+    """Shapes the real model returned in the agent audit (docs/AGENT_AUDIT.md)."""
+    gateway = FakeGateway([ChatResult(content=json.dumps({
+        "summary": {"change": "T037 완료일 변경"},
+        "status": "PENDING_HUMAN_REVIEW",
+        "option_explanations": [
+            {"option": "통보 완료일을 현재 계획 가정으로 반영", "tradeoff": "프로젝트 완료일은 변경되지 않습니다."},
+            {"option_ids": ["HOPT-01"], "text": "HOPT-01은 2028-01-11로 14일 회복하지만 999원이 듭니다."},
+            "HOPT-02와 HOPT-03은 조건 확인이 필요합니다.",
+        ],
+        "regulatory_assessment": {"status": "NEEDS_INPUT", "applicability": "UNCONFIRMED",
+                                  "assessment": "규정의 실제 적용 여부가 확인되지 않았습니다.",
+                                  "missing_inputs": ["적용 조항", "규정 적용일"]},
+        "email_draft": {"subject": "확인 요청", "body": "다음을 부탁드립니다.\n1. 적용 조항\n2. 설계 변경 범위 (3) 일정"},
+        "unresolved_items": [{"question": "규정 적용 여부"}],
+    }, ensure_ascii=False))])
+    scenarios = [{"option_ids": [], "finish_date": "2028-01-25", "target_met": False},
+                 {"option_ids": ["HOPT-01"], "finish_date": "2028-01-11", "recovery_days_vs_no_response": 14}]
+    result = run_agent({"_llm_gateway": gateway, "scenario_summaries": scenarios},
+                       {"content": "헝가리/EU 규정 요건 때문에 T037 완료일을 2026-01-08로 변경합니다.",
+                        "patch": {"estimated_finish": {"T037": "2026-01-08"}}}, {})
+
+    assert result["status"] == "needs_review"
+    assert result["summary"].startswith("통보의 일정 영향을 검토했습니다. 계산된 완료 예정일은 2028-01-25")
+    texts = [item["text"] for item in result["option_explanations"]]
+    assert texts[0] == "통보 완료일을 현재 계획 가정으로 반영: 프로젝트 완료일은 변경되지 않습니다."
+    assert result["option_explanations"][1]["option_ids"] == ["HOPT-01"]
+    assert "HOPT-01은 2028-01-11로 14일" in texts[1] and "999" not in texts[1]
+    assert "HOPT-02와 HOPT-03은" in texts[2]
+    assert not any(text.startswith("{") for text in texts)
+    assessment = result["regulatory_assessment"]
+    assert assessment["likelihood"] == "불확실"
+    assert assessment["reason"] == "규정의 실제 적용 여부가 확인되지 않았습니다."
+    assert assessment["human_check"] == "적용 조항 · 규정 적용일"
+    assert "1. 적용 조항" in result["email_draft"]["body"] and "(3) 일정" in result["email_draft"]["body"]
+    assert result["unresolved_items"] == ["규정 적용 여부"]

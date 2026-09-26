@@ -302,6 +302,26 @@ def _rules_only_agent(run_data: dict[str, Any]) -> dict[str, Any]:
     return {"status": status, "mode": "rules_only", "summary": summary}
 
 
+def _interpretation_agent(result: dict[str, Any], source: str) -> dict[str, Any]:
+    """Credit a one-shot LLM interpretation to the LLM, not to the rules."""
+    usage = {**(result.get("usage") or {}), "llm_calls": 1}
+    if result.get("status") == "interpretation_failed" or result.get("error"):
+        return {"status": "failed", "mode": "llm_interpretation", "usage": usage,
+                "summary": f"LLM이 {source}를 해석하지 못해 규칙 결과만 보여줍니다."}
+    candidates = result.get("candidates") or result.get("task_candidates") or []
+    facts = result.get("facts") or []
+    if result.get("patch"):
+        changes = ", ".join(f"{row['task_id']} {row['date']}" for row in facts) or "작업·날짜"
+        summary = f"LLM이 {source}에서 변경({changes})을 원문 인용과 함께 찾았습니다."
+    elif candidates:
+        ids = ", ".join(str(row.get("task_id")) for row in candidates)
+        summary = f"LLM이 {source}를 해석해 영향 작업 후보 {len(candidates)}개({ids})를 원문 인용과 함께 찾았습니다."
+    else:
+        summary = f"LLM이 {source}를 해석했지만 근거가 있는 작업 후보를 찾지 못했습니다."
+    return {"status": "needs_input" if not result.get("patch") else "completed", "mode": "llm_interpretation",
+            "summary": summary, "candidates": candidates, "usage": usage}
+
+
 def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     from .scheduling import calendar_shift_days, simulate
 
@@ -346,6 +366,8 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
                 from .adapters.llm import OpenAICompatibleLLM
                 result = interpret_notice(event, tasks, OpenAICompatibleLLM())
                 _record_usage(db, run["id"], result)
+                paid_reserved = True
+                supplier_agent = _interpretation_agent(result, "공지")
                 event["interpretation"] = result
                 if result.get("candidates"):
                     event["candidates"] = result["candidates"]
@@ -364,6 +386,7 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
                     from .supplier_interpreter import interpret_supplier_message
                     interpreted = interpret_supplier_message(event, project, tasks, OpenAICompatibleLLM())
                     _record_usage(db, run["id"], interpreted)
+                    supplier_agent = _interpretation_agent(interpreted, "통보")
                     event["interpretation"] = interpreted
                     if interpreted.get("patch"):
                         completed = {str(task["task_id"]) for task in tasks if task.get("status") == "completed"}
@@ -409,7 +432,8 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
                 "action_ids": [action_id], "scenario_ids": [], "candidates": event.get("candidates", []),
                 "evidence": event.get("evidence"), "risk_signal_evidence": event.get("risk_signal_evidence", []), "missing_fields": missing,
                 "agent_status": supplier_agent.get("status", event.get("interpretation", {}).get("status", "rules_only")),
-                "agent": {**supplier_agent, "stop_reason": supplier_agent.get("stop_reason") or ", ".join(missing)}}
+                "agent": {**supplier_agent, "stop_reason": supplier_agent.get("stop_reason")
+                          or "사람 확인 대기: " + ", ".join(missing)}}
 
     if event.get("evidence"):
         from .external_risks import combine_patches

@@ -2728,3 +2728,4 @@ main {
 .workspace-directory button.decision-item { display: block; width: 100%; height: auto; min-height: 0; border: 0; border-top: 1px solid var(--replan-line); border-radius: 0; background: transparent; color: var(--replan-ink); padding: 17px 0 18px; text-align: left; box-shadow: none; }
 .workspace-directory button.decision-item:hover:not(:disabled) { background: #f1f5f1; color: var(--replan-ink); }
 .human-workspace .text-button:hover:not(:disabled) { background: transparent; color: var(--replan-mint-ink); text-decoration: underline; }
+.agent-decision.rules-only { padding: 12px 20px; border-color: #d3d9d6; border-left-color: #9aa7ad; background: #f5f6f4; color: #4a565c; }

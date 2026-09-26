@@ -1091,22 +1091,44 @@ function toolResultSummary(entry: Dict) {
   return "도구 결과를 받았습니다. 세부 응답을 펼쳐 확인할 수 있습니다.";
 }
 
+// Older runs stored rule calculations as "rules_fallback" tool calls; they are not agent reasoning either.
+function isRulesOnly(agent: Dict) {
+  const log = (Array.isArray(agent.tool_log) ? agent.tool_log : []) as Dict[];
+  return agent.mode === "rules_only" || (log.length > 0 && log.every((entry) => entry.source === "rules_fallback"))
+    || agent.summary === "규칙 기반 분석";
+}
+
+function explanationText(item: unknown) {
+  if (typeof item === "string") return item;
+  const row = (item || {}) as Dict;
+  const ids = Array.isArray(row.option_ids) ? (row.option_ids as unknown[]).map((id) => text(id)) : [];
+  const body = text(row.text ?? row.explanation ?? row.tradeoff, "");
+  return ids.length ? `${ids.join(" + ")} · ${body}` : body;
+}
+
 function AgentDecisionPanel({ agent, eventContent }: { agent?: Dict; eventContent: string }) {
   if (!agent) return null;
+  if (isRulesOnly(agent)) {
+    return <section className="agent-decision rules-only" aria-label="분석 방식">
+      <span className="eyebrow">RULES · 규칙과 계산기</span>
+      <p>{text(agent.summary, "에이전트 없이 규칙과 계산기로만 분석했습니다.")}</p>
+    </section>;
+  }
+  const interpretation = agent.mode === "llm_interpretation";
   const log = (Array.isArray(agent.tool_log) ? agent.tool_log : []) as Dict[];
   const regulation = agent.regulatory_assessment as Dict | undefined;
   const conditional = agent.conditional_scenario as Dict | undefined;
   const email = agent.email_draft as Dict | undefined;
   const explanations = (Array.isArray(agent.option_explanations) ? agent.option_explanations : []) as unknown[];
   return <section className="agent-decision" aria-label="에이전트 판단 과정">
-    <span className="eyebrow">AGENT REASONING · 설명과 초안</span>
-    <h3>에이전트 판단 과정</h3>
+    <span className="eyebrow">{interpretation ? "LLM INTERPRETATION · 원문 해석" : "AGENT REASONING · 설명과 초안"}</span>
+    <h3>{interpretation ? "에이전트 해석" : "에이전트 판단 과정"}</h3>
     <p>{agentSummary(agent)}</p>
     {agent.stop_reason ? <p className="agent-stop">멈춘 이유: {text(agent.stop_reason)}</p> : null}
     {Array.isArray(agent.unresolved_items) && agent.unresolved_items.length ? <p className="agent-stop">확인 질문: {(agent.unresolved_items as unknown[]).map((item) => text(item)).join(" · ")}</p> : null}
-    {regulation && /(규제|인허가|허가|법령|법규|규정|regulation|regulatory|permit|license)/i.test(eventContent) ? <div className="agent-note"><h4>규제·인허가 적용 가능성: {text(regulation.likelihood, "불확실")}</h4><p>{text(regulation.reason)}</p><p>사람 확인: {text(regulation.human_check)}</p>{Array.isArray(regulation.evidence_risk_ids) && regulation.evidence_risk_ids.length ? <small>당시 이용 가능한 L2 근거: {(regulation.evidence_risk_ids as unknown[]).join(", ")}</small> : null}{Array.isArray(regulation.reference_only_risk_ids) && regulation.reference_only_risk_ids.length ? <small>통보 이후 발행된 참고 사례: {(regulation.reference_only_risk_ids as unknown[]).join(", ")}</small> : null}</div> : null}
+    {regulation && /(규제|인허가|허가|법령|법규|규정|regulation|regulatory|permit|license)/i.test(eventContent) ? <div className="agent-note"><h4>규제·인허가 적용 가능성: {text(regulation.likelihood, "불확실")}</h4>{regulation.reason ? <p>{text(regulation.reason)}</p> : null}{regulation.human_check ? <p>사람 확인: {text(regulation.human_check)}</p> : null}{Array.isArray(regulation.evidence_risk_ids) && regulation.evidence_risk_ids.length ? <small>당시 이용 가능한 L2 근거: {(regulation.evidence_risk_ids as unknown[]).join(", ")}</small> : null}{Array.isArray(regulation.reference_only_risk_ids) && regulation.reference_only_risk_ids.length ? <small>통보 이후 발행된 참고 사례: {(regulation.reference_only_risk_ids as unknown[]).join(", ")}</small> : null}</div> : null}
     {conditional ? <div className="agent-note"><h4>규제 적용 시 조건부 일정 · 계산 도구</h4><p>{conditional.finish_date ? `계산된 완료 예정일 ${text(conditional.finish_date)}` : text(conditional.reason, "추가 일정 입력이 필요합니다.")}</p><small>적용 확인 전에는 확정 일정에 반영되지 않습니다.</small></div> : null}
-    {explanations.length ? <div className="agent-note"><h4>대응안별 설명</h4>{explanations.map((item, index) => <p key={index}>{typeof item === "string" ? item : JSON.stringify(item)}</p>)}</div> : null}
+    {explanations.length ? <div className="agent-note"><h4>대응안별 설명</h4>{explanations.map((item, index) => <p key={index}>{explanationText(item)}</p>)}</div> : null}
     {email ? <div className="agent-note email-draft"><h4>협력사 협의 메일 · 발송 전 초안</h4><p><b>{text(email.subject, "협의 요청")}</b></p><p className="draft-body">{text(email.body)}</p></div> : null}
     {log.length > 0 && <details><summary>도구 호출 기록 {log.length}건</summary><ol className="agent-tool-list">{log.map((entry, index) => <li key={`${text(entry.tool)}-${index}`}><b>{text(entry.tool)}</b> · {text(entry.status)}<p className="agent-tool-result">{toolResultSummary(entry)}</p><details><summary>전체 도구 응답 보기</summary><pre>{JSON.stringify(entry.result ?? entry.error ?? {}, null, 2)}</pre></details></li>)}</ol></details>}
   </section>;

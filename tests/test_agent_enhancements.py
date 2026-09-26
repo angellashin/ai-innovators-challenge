@@ -249,7 +249,7 @@ def test_hero_variant_llm_fallback_reaches_existing_external_recheck(tmp_path, m
     # A preview only interprets the notice (one call); the agent loop waits for a confirmed analysis.
     assert gateway.calls == 1
     agent = result["run"]["data"]["agent"]
-    assert agent["status"] == "skipped_preview" and agent["mode"] == "rules_only"
+    assert agent["mode"] == "llm_interpretation" and "T045 2026-12-28" in agent["summary"]
     assert not agent.get("tool_log")
     past = client.post(f"/api/projects/{project_id}/events", headers=header, json={
         "event_id": "PAST", "channel": "supplier_message", "source_label": "가상 검증",

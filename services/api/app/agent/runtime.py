@@ -91,6 +91,7 @@ def run_agent(
         final["tool_log"] = tool_log
         final["usage"] = usage
         final.setdefault("status", "completed")
+        final["regulatory_assessment"] = _regulatory_fields(final.get("regulatory_assessment"))
         final = _ground_final(final, event, tool_log, _calculated_context(context))
         if not isinstance(final.get("summary"), str):
             final["summary"] = _summary_sentence(final.get("summary"), tool_log, context.get("scenario_summaries"))
@@ -401,16 +402,70 @@ def _normalize_result(value: Dict[str, Any]) -> Dict[str, Any]:
         "summary": _summary_sentence(value.get("summary"), _list(value.get("tool_log"))),
         "impacted_tasks": _list(value.get("impacted_tasks")),
         "options": _list(value.get("options")),
-        "option_explanations": _list(value.get("option_explanations")),
+        "option_explanations": [_option_explanation(item) for item in _list(value.get("option_explanations"))
+                                if _option_explanation(item)["text"]],
         "regulatory_assessment": value.get("regulatory_assessment") if isinstance(value.get("regulatory_assessment"), dict) else None,
         "conditional_scenario": value.get("conditional_scenario") if isinstance(value.get("conditional_scenario"), dict) else None,
-        "email_draft": value.get("email_draft") if isinstance(value.get("email_draft"), dict) else None,
+        "email_draft": ({key: str(value["email_draft"].get(key) or "") for key in ("to", "subject", "body")}
+                        if isinstance(value.get("email_draft"), dict) else None),
         "stop_reason": str(value.get("stop_reason") or ""),
         "required_actions": _list(value.get("required_actions")),
-        "unresolved_items": _list(value.get("unresolved_items")),
+        "unresolved_items": [_text(item) for item in _list(value.get("unresolved_items")) if _text(item)],
         "tool_log": _list(value.get("tool_log")),
         "status": _normalize_status(value.get("status")),
         "usage": dict(value.get("usage") or {}),
+    }
+
+
+EXPLANATION_TEXT_KEYS = ("text", "explanation", "tradeoff", "description", "reason", "summary")
+
+
+def _text(value: Any) -> str:
+    """Model prose as one readable string, never a serialized object."""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        parts = [_text(value[key]) for key in EXPLANATION_TEXT_KEYS + ("question", "item") if key in value]
+        return " ".join(part for part in parts if part)
+    if isinstance(value, list):
+        return " · ".join(part for part in (_text(item) for item in value) if part)
+    return "" if value is None else str(value)
+
+
+def _option_explanation(item: Any) -> Dict[str, Any]:
+    """One explanation per scenario: {option_ids, text}, whatever shape the model used."""
+    if not isinstance(item, dict):
+        return {"option_ids": [], "text": _text(item)}
+    ids = item.get("option_ids")
+    if ids is None and item.get("option_id") is not None:
+        ids = [item.get("option_id")]
+    ids = [str(value) for value in ids] if isinstance(ids, list) else []
+    text = next((_text(item[key]) for key in EXPLANATION_TEXT_KEYS if _text(item.get(key))), "")
+    label = _text(item.get("option") or item.get("label") or item.get("name"))
+    if label and text and label not in text:
+        text = f"{label}: {text}"
+    return {"option_ids": ids, "text": text or label}
+
+
+LIKELIHOOD = {"높음": "높음", "high": "높음", "likely": "높음", "confirmed": "높음",
+              "중간": "중간", "medium": "중간", "possible": "중간",
+              "낮음": "낮음", "low": "낮음", "unlikely": "낮음", "not_applicable": "낮음"}
+
+
+def _regulatory_fields(value: Any) -> Optional[Dict[str, Any]]:
+    """Map whatever regulation keys the model used onto the fields the screen shows."""
+    if not isinstance(value, dict):
+        return None
+    raw = str(value.get("likelihood") or value.get("applicability") or "").strip().lower()
+    reason = _text(value.get("reason") or value.get("assessment") or value.get("rationale"))
+    human_check = _text(value.get("human_check") or value.get("required_check") or value.get("next_step")
+                        or value.get("missing_inputs"))
+    return {
+        "likelihood": LIKELIHOOD.get(raw, "불확실"),
+        "reason": reason,
+        "human_check": human_check,
+        "evidence_risk_ids": [str(item) for item in _list(value.get("evidence_risk_ids"))],
+        "reference_only_risk_ids": [str(item) for item in _list(value.get("reference_only_risk_ids"))],
     }
 
 
@@ -425,7 +480,21 @@ def _normalize_status(value: Any) -> str:
         if states and states <= {"converged", "patch_proposed", "completed", "ok"}:
             return "completed"
         return "invalid_status"
-    return str(value or "completed")
+    state = str(value or "completed").strip().lower()
+    if state in KNOWN_STATUSES:
+        return state
+    if "input" in state:
+        return "needs_input"
+    if any(word in state for word in ("review", "pending", "approval", "confirm")):
+        return "needs_review"
+    if any(word in state for word in ("fail", "error")):
+        return "failed"
+    return "completed"
+
+
+KNOWN_STATUSES = {"completed", "needs_input", "needs_review", "no_schedule_impact", "failed", "llm_unavailable",
+                  "blocked_action", "invalid_tool_args", "max_tool_calls_reached", "repeated_tool_call",
+                  "max_steps_reached", "invalid_status"}
 
 
 def _summary_sentence(summary: Any, tool_log: List[Any], scenarios: Any = None) -> str:
@@ -443,7 +512,8 @@ def _summary_sentence(summary: Any, tool_log: List[Any], scenarios: Any = None) 
     return "통보 내용을 검토했습니다. 일정 계산에 필요한 조건을 추가로 확인해야 합니다."
 
 
-_NUMBER_OR_DATE = re.compile(r"(?<![A-Za-z0-9])(?:\d{4}-\d{2}-\d{2}|\d[\d,]*(?:\.\d+)?)(?![A-Za-z0-9])")
+_NUMBER_OR_DATE = re.compile(r"(?<![A-Za-z0-9_-])(?:\d{4}-\d{2}-\d{2}|\d[\d,]*(?:\.\d+)?)(?![A-Za-z0-9_-])")
+_LIST_MARKER = re.compile(r"(?:^|(?<=\s)|(?<=\())\d{1,2}(?=[.)]\s|\))", re.MULTILINE)
 
 
 def _calculated_context(context: Dict[str, Any]) -> List[Any]:
@@ -482,7 +552,9 @@ def _ground_final(value: Dict[str, Any], event: Dict[str, Any], tool_log: List[D
 
     def clean(item: Any) -> Any:
         if isinstance(item, str):
-            return _NUMBER_OR_DATE.sub(lambda match: match.group() if match.group() in allowed else "", item)
+            markers = {match.start() for match in _LIST_MARKER.finditer(item)}
+            return _NUMBER_OR_DATE.sub(lambda match: match.group() if match.group() in allowed
+                                       or match.start() in markers else "", item)
         if isinstance(item, list):
             return [clean(child) for child in item]
         if isinstance(item, dict):

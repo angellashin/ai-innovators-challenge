@@ -135,3 +135,17 @@ def test_detected_change_waits_for_person_before_any_llm_call(tmp_path, monkeypa
     finished = db.get_json("runs", analysis["id"])
     assert finished["status"] == "succeeded", finished["data"]
     assert finished["data"]["agent"]["status"] == "waiting_review"
+
+    from app.adapters.llm import ChatResult
+
+    calls = []
+    monkeypatch.setattr(OpenAICompatibleLLM, "chat", lambda self, *args, **kwargs: calls.append(1) or ChatResult(
+        content=json.dumps({"candidates": [{"task_id": "T01", "quote": "Environmental permit reviews may take longer.",
+                                            "reason": "permit review"}]}), usage={"prompt_tokens": 5}))
+    started = db.create_run("P", "analysis", analysis["event_id"], "V", "person", {"project_context_snapshot": {}})
+    assert run_once(db)
+    person = db.get_json("runs", started["id"])["data"]
+    assert len(calls) == 1 and person["status"] == "NEEDS_INPUT"
+    assert person["agent"]["mode"] == "llm_interpretation"
+    assert "T01" in person["agent"]["summary"] and "규칙 기반" not in person["agent"]["summary"]
+    assert person["agent"]["stop_reason"].startswith("사람 확인 대기")
