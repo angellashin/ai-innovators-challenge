@@ -7,6 +7,7 @@ from datetime import date
 from typing import Any
 
 from .events import _direct_task_ids, _extract_dates, _year
+from .task_retrieval import retrieve_related_tasks
 
 PATCH_KINDS = {"estimated_finish", "not_before", "blocked_dates"}
 
@@ -17,6 +18,29 @@ def interpret_supplier_message(event: dict, project: dict, tasks: list[dict], ga
                   "phase": task.get("phase"), "supplier_id": task.get("supplier_id"),
                   "resource_group": task.get("resource_group")}
                  for task in tasks]
+    # A semantic match is a retrieval suggestion, not authority to edit a
+    # schedule.  In particular, translated supplier wording can be close to
+    # several English WBS rows.  Keep the evidence quote and require an
+    # operator to select/confirm a task before patch interpretation.
+    if not _direct_task_ids(body, tasks):
+        retrieval = retrieve_related_tasks(body, tasks, gateway)
+        candidates = retrieval.get("candidates") or []
+        if candidates:
+            choices = ", ".join(item["task_id"] for item in candidates)
+            question = (f"후보 작업이 여러 개입니다({choices}). 적용할 작업을 선택해 주세요."
+                        if len({item["task_id"] for item in candidates}) > 1
+                        else f"후보 작업 {choices}이 맞는지 확인해 주세요.")
+            return {"status": "task_confirmation_required", "patch": {},
+                    "no_schedule_impact": False,
+                    "related_task_ids": sorted({item["task_id"] for item in candidates}),
+                    "task_candidates": candidates, "facts": [], "questions": [question],
+                    "rejected_claims": [], "usage": retrieval.get("usage") or {},
+                    "model": retrieval.get("model")}
+        return {"status": "needs_input", "patch": {}, "no_schedule_impact": False,
+                "related_task_ids": [], "task_candidates": [], "facts": [],
+                "questions": ["영향받는 작업을 기준 일정에서 선택해 주세요."],
+                "rejected_claims": [], "usage": retrieval.get("usage") or {},
+                "model": retrieval.get("model"), "retrieval_error": retrieval.get("error")}
     try:
         reply = gateway.chat([
             {"role": "system", "content": (

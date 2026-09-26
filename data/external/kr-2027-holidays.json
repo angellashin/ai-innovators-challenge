@@ -1,0 +1,270 @@
+{
+  "status": "ok",
+  "source_id": "nager:KR:2027",
+  "provider": "nager_date",
+  "url": "https://date.nager.at/api/v3/PublicHolidays/2027/KR",
+  "fetched_at": "2026-09-25T14:00:00+00:00",
+  "holidays": [
+    {
+      "date": "2027-01-01",
+      "localName": "새해",
+      "name": "New Year’s Day",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-02-06",
+      "localName": "설날",
+      "name": "Korean New Year",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-02-07",
+      "localName": "설날",
+      "name": "Korean New Year",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-02-08",
+      "localName": "설날",
+      "name": "Korean New Year",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-02-09",
+      "localName": "대체공휴일",
+      "name": "Alternative holiday",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-03-01",
+      "localName": "3·1절",
+      "name": "March 1st Movement Day",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-05-05",
+      "localName": "어린이날",
+      "name": "Children’s Day",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-05-13",
+      "localName": "부처님 오신 날",
+      "name": "Birthday of the Buddha",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-06-06",
+      "localName": "현충일",
+      "name": "Memorial Day",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-08-15",
+      "localName": "광복절",
+      "name": "Liberation Day",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-08-16",
+      "localName": "대체공휴일",
+      "name": "Alternative holiday",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-09-14",
+      "localName": "추석",
+      "name": "Chuseok",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-09-15",
+      "localName": "추석",
+      "name": "Chuseok",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-09-16",
+      "localName": "추석",
+      "name": "Chuseok",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-10-03",
+      "localName": "개천절",
+      "name": "National Foundation Day",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-10-04",
+      "localName": "대체공휴일",
+      "name": "Alternative holiday",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-10-09",
+      "localName": "한글날",
+      "name": "Hangul Day",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-10-11",
+      "localName": "대체공휴일",
+      "name": "Alternative holiday",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-12-25",
+      "localName": "크리스마스",
+      "name": "Christmas Day",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2027-12-27",
+      "localName": "대체공휴일",
+      "name": "Alternative holiday",
+      "countryCode": "KR",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    }
+  ],
+  "body_hash": "9447a55f1bd266716fbbdc03ed002f88d2af9aba000005cbddb7f26a5ab16ec6"
+}

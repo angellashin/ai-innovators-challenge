@@ -117,7 +117,7 @@ def _reserve_paid_attempt(db: Store, run_id: str) -> str:
 
 def _supplier_external_sources(db: Store, project_id: str, project: dict, tasks: list[dict], event: dict, plan_snapshot: dict | None = None) -> tuple[list[tuple[dict, dict]], list[dict], dict, list[str]]:
     """Use immutable hero snapshots or the latest monitored evidence, never an LLM."""
-    from .shifted_external import bundled_hu_calendars
+    from .shifted_external import bundled_hero_calendars
     watch = db.get_json("watch_plans", project_id)
     plan = plan_snapshot if plan_snapshot is not None else watch["data"] if watch else {}
     snapshots = [row["data"] for row in db.list_json("source_snapshots", project_id, 1000)
@@ -125,7 +125,7 @@ def _supplier_external_sources(db: Store, project_id: str, project: dict, tasks:
     latest = {}
     for source in snapshots:
         latest.setdefault(source.get("source_id"), source)
-    calendars = bundled_hu_calendars(tasks) if project.get("hero_fixture_id") == "HERO-BAT-HU-001" and project.get("data_origin") == "SYNTHETIC" else []
+    calendars = bundled_hero_calendars(tasks) if project.get("hero_fixture_id") == "HERO-BAT-HU-001" and project.get("data_origin") == "SYNTHETIC" else []
     known = {(config["country_code"], config["year"]) for config, _ in calendars}
     missing = []
     for configured in plan.get("holiday_calendars") or []:
@@ -221,6 +221,10 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
                         event["classification_status"] = "NO_SCHEDULE_IMPACT"
                         event.pop("missing_fields", None)
                     else:
+                        if interpreted.get("task_candidates"):
+                            event["task_candidates"] = interpreted["task_candidates"]
+                            event["related_task_ids"] = interpreted["related_task_ids"]
+                            event["classification_status"] = "NEEDS_INPUT"
                         event["missing_fields"] = interpreted.get("questions") or event.get("missing_fields") or []
                 else:
                     event["interpretation"] = {"status": paid_state}

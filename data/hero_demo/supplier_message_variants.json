@@ -2,12 +2,93 @@
   "label": "가상 메시지 표현 변형 - 원본 통보와 별도 평가 입력",
   "data_origin": "SYNTHETIC",
   "events": [
-    {"event_id":"V01","published_at":"2025-08-21T09:00:00+02:00","channel":"supplier_message","source_label":"Equipment Vendor A / 가상 재서술","content":"[가상 메시지] T036 셀 설비 제작의 최종 납기를 2026-01-15로 재통지합니다.","mode":"SYNTHETIC"},
-    {"event_id":"V02","published_at":"2025-08-21T10:00:00+02:00","channel":"supplier_message","source_label":"Equipment Vendor B / 가상 재서술","content":"[가상 메시지] T037 모듈 설비 제작분의 출고 목표를 2026-01-08로 조정합니다. 환경 인허가 요건이 원인이라고 보고 있으나 실제 적용 여부는 확인 중입니다.","mode":"SYNTHETIC"},
-    {"event_id":"V03","published_at":"2025-08-22T09:00:00+02:00","channel":"supplier_message","source_label":"Equipment Vendor A / 가상 재서술","content":"[가상 메시지] T038 셀 설비 FAT 착수 가능 시점을 2026-02-02로 재지정했습니다.","mode":"SYNTHETIC"},
-    {"event_id":"V04","published_at":"2025-08-22T10:00:00+02:00","channel":"supplier_message","source_label":"Logistics Partner / 가상 재서술","content":"[가상 메시지] T045 헝가리 현장 설비 반입은 2026-12-28까지 마무리할 예정으로 갱신합니다. 통관 처리 여파입니다.","mode":"SYNTHETIC"},
-    {"event_id":"V05","published_at":"2025-08-23T10:00:00+02:00","channel":"supplier_message","source_label":"Equipment Vendor A / 가상 재서술","content":"[가상 메시지] T053 셀 라인 시운전 일정 재협의가 필요합니다. 새 완료일은 아직 결정되지 않았습니다.","mode":"SYNTHETIC"},
-    {"event_id":"V06","published_at":"2025-08-24T09:00:00+02:00","channel":"supplier_message","source_label":"Equipment Vendor B / 가상 재서술","content":"[가상 메시지] T054 담당자 이메일만 교체합니다. 작업 날짜와 투입 자원은 그대로입니다.","mode":"SYNTHETIC"},
-    {"event_id":"V07","published_at":"2025-08-25T09:00:00+02:00","channel":"supplier_message","source_label":"Equipment Vendor A / 가상 모호 사례","content":"[가상 메시지] 설비 제작 납기를 2026-01-15로 재통지합니다. 어느 라인인지는 후속 회신하겠습니다.","mode":"SYNTHETIC"}
+    {
+      "event_id": "V01",
+      "published_at": "2025-08-21T09:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor A / 가상 재서술",
+      "content": "[가상 메시지] T036 셀 설비 제작의 최종 납기를 2026-01-15로 재통지합니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "V02",
+      "published_at": "2025-08-21T10:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor B / 가상 재서술",
+      "content": "[가상 메시지] T037 모듈 설비 제작분의 출고 목표를 2026-01-08로 조정합니다. 환경 인허가 요건이 원인이라고 보고 있으나 실제 적용 여부는 확인 중입니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "V03",
+      "published_at": "2025-08-22T09:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor A / 가상 재서술",
+      "content": "[가상 메시지] T038 셀 설비 FAT 착수 가능 시점을 2026-02-02로 재지정했습니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "V04",
+      "published_at": "2025-08-22T10:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Logistics Partner / 가상 재서술",
+      "content": "[가상 메시지] T045 헝가리 현장 설비 반입은 2026-12-28까지 마무리할 예정으로 갱신합니다. 통관 처리 여파입니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "V05",
+      "published_at": "2025-08-23T10:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor A / 가상 재서술",
+      "content": "[가상 메시지] T053 셀 라인 시운전 일정 재협의가 필요합니다. 새 완료일은 아직 결정되지 않았습니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "V06",
+      "published_at": "2025-08-24T09:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor B / 가상 재서술",
+      "content": "[가상 메시지] T054 담당자 이메일만 교체합니다. 작업 날짜와 투입 자원은 그대로입니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "V07",
+      "published_at": "2025-08-25T09:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor A / 가상 모호 사례",
+      "content": "[가상 메시지] 설비 제작 납기를 2026-01-15로 재통지합니다. 어느 라인인지는 후속 회신하겠습니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "V08",
+      "published_at": "2025-08-26T09:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor A / 가상 작업명 통보",
+      "content": "[가상 메시지] 셀 설비 제작이 늦어집니다. 완료 예정일은 2026-01-15입니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "V09",
+      "published_at": "2025-08-26T10:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor B / 가상 작업명 통보",
+      "content": "[가상 메시지] 모듈 설비 제작 완료일을 2026-01-08로 변경합니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "V10",
+      "published_at": "2025-08-27T09:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Equipment Vendor A / 가상 설명 통보",
+      "content": "[가상 메시지] 셀 설비 인수시험은 2026-02-02부터 시작할 수 있습니다.",
+      "mode": "SYNTHETIC"
+    },
+    {
+      "event_id": "V11",
+      "published_at": "2025-08-27T10:00:00+02:00",
+      "channel": "supplier_message",
+      "source_label": "Logistics Partner / 가상 설명 통보",
+      "content": "[가상 메시지] 설비가 현장에 도착하는 일정이 늦어져 2026-12-28에 마무리됩니다.",
+      "mode": "SYNTHETIC"
+    }
   ]
 }

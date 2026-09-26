@@ -70,6 +70,9 @@ def _evaluate_one(raw: dict, truth: dict, project: dict, tasks: list[dict], base
         if interpreted.get("patch"):
             event["patch"] = interpreted["patch"]
             event["related_task_ids"] = interpreted["related_task_ids"]
+        elif interpreted.get("task_candidates"):
+            event["related_task_ids"] = interpreted["related_task_ids"]
+            event["task_candidates"] = interpreted["task_candidates"]
         elif interpreted.get("no_schedule_impact"):
             event["classification_status"] = "NO_SCHEDULE_IMPACT"
     patch = event.get("patch") or {}

@@ -1,0 +1,1007 @@
+{
+  "mode": "mock",
+  "model": "offline-semantic-fixture",
+  "executed_at": "2026-09-26T00:04:20.434971+00:00",
+  "llm_call_count": 0,
+  "mock_call_count": 18,
+  "expected_paid_call_count": 0,
+  "note": "Mock scores validate wiring and fixtures, not actual model quality.",
+  "supplier": {
+    "rules_only": {
+      "supplier_messages.json": {
+        "summary": {
+          "cases": 9,
+          "change_date_accuracy": 1.0,
+          "direct_task_accuracy": 1.0,
+          "outcome_accuracy": 1.0,
+          "impact_precision": 1.0,
+          "impact_recall": 1.0,
+          "impact_f1": 1.0,
+          "clarification_accuracy": 1.0,
+          "unsupported_date_rate": 0.0
+        },
+        "cases": [
+          {
+            "case_id": "H01",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              5,
+              5,
+              5
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "H02",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              4,
+              4,
+              4
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "H03",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              4,
+              4,
+              4
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "H04",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              19,
+              19,
+              19
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "H05",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              1,
+              1,
+              1
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 5
+          },
+          {
+            "case_id": "H06",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "H07",
+            "outcome": "NO_IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "H01-repeat",
+            "outcome": "DUPLICATE",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "H08",
+            "outcome": "RETRACTION",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          }
+        ]
+      },
+      "supplier_message_variants.json": {
+        "summary": {
+          "cases": 11,
+          "change_date_accuracy": 0.6364,
+          "direct_task_accuracy": 0.6364,
+          "outcome_accuracy": 0.5455,
+          "impact_precision": 0.0,
+          "impact_recall": 0.0,
+          "impact_f1": 0.0,
+          "clarification_accuracy": 0.5455,
+          "unsupported_date_rate": 0.0
+        },
+        "cases": [
+          {
+            "case_id": "V01",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 0,
+            "date_correct": 0,
+            "task_correct": 1,
+            "clarification_correct": 0,
+            "impact_counts": [
+              0,
+              0,
+              5
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V02",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 0,
+            "date_correct": 0,
+            "task_correct": 1,
+            "clarification_correct": 0,
+            "impact_counts": [
+              0,
+              0,
+              4
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V03",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 0,
+            "date_correct": 0,
+            "task_correct": 1,
+            "clarification_correct": 0,
+            "impact_counts": [
+              0,
+              0,
+              4
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V04",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 0,
+            "date_correct": 0,
+            "task_correct": 1,
+            "clarification_correct": 0,
+            "impact_counts": [
+              0,
+              0,
+              19
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V05",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V06",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 0,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 0,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V07",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V08",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 0,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V09",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 0,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V10",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 0,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V11",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 0,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          }
+        ]
+      }
+    },
+    "agent_included": {
+      "supplier_messages.json": {
+        "summary": {
+          "cases": 9,
+          "change_date_accuracy": 1.0,
+          "direct_task_accuracy": 1.0,
+          "outcome_accuracy": 1.0,
+          "impact_precision": 1.0,
+          "impact_recall": 1.0,
+          "impact_f1": 1.0,
+          "clarification_accuracy": 1.0,
+          "unsupported_date_rate": 0.0
+        },
+        "cases": [
+          {
+            "case_id": "H01",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              5,
+              5,
+              5
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "H02",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              4,
+              4,
+              4
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "H03",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              4,
+              4,
+              4
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "H04",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              19,
+              19,
+              19
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "H05",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              1,
+              1,
+              1
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 5
+          },
+          {
+            "case_id": "H06",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "H07",
+            "outcome": "NO_IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "H01-repeat",
+            "outcome": "DUPLICATE",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "H08",
+            "outcome": "RETRACTION",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          }
+        ]
+      },
+      "supplier_message_variants.json": {
+        "summary": {
+          "cases": 11,
+          "change_date_accuracy": 1.0,
+          "direct_task_accuracy": 1.0,
+          "outcome_accuracy": 1.0,
+          "impact_precision": 1.0,
+          "impact_recall": 1.0,
+          "impact_f1": 1.0,
+          "clarification_accuracy": 1.0,
+          "unsupported_date_rate": 0.0
+        },
+        "cases": [
+          {
+            "case_id": "V01",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              5,
+              5,
+              5
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "V02",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              4,
+              4,
+              4
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "V03",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              4,
+              4,
+              4
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "V04",
+            "outcome": "IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              19,
+              19,
+              19
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 1
+          },
+          {
+            "case_id": "V05",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V06",
+            "outcome": "NO_IMPACT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V07",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V08",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V09",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V10",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          },
+          {
+            "case_id": "V11",
+            "outcome": "NEEDS_INPUT",
+            "agent_error": false,
+            "outcome_correct": 1,
+            "date_correct": 1,
+            "task_correct": 1,
+            "clarification_correct": 1,
+            "impact_counts": [
+              0,
+              0,
+              0
+            ],
+            "unsupported_dates": 0,
+            "proposed_dates": 0
+          }
+        ]
+      }
+    }
+  },
+  "l3_affected_task_retrieval": {
+    "rules_only": {
+      "cases": 6,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "rows": [
+        {
+          "case_id": "V2-001",
+          "predicted_task_ids": [],
+          "l2_evidence_risk_ids": [
+            "RS-006",
+            "RS-009"
+          ],
+          "agent_error": false,
+          "impact_counts": [
+            0,
+            0,
+            2
+          ],
+          "date_correct": 0,
+          "task_correct": 0,
+          "clarification_correct": 0,
+          "unsupported_dates": 0,
+          "proposed_dates": 0
+        },
+        {
+          "case_id": "V2-002",
+          "predicted_task_ids": [],
+          "l2_evidence_risk_ids": [
+            "RS-010",
+            "RS-017"
+          ],
+          "agent_error": false,
+          "impact_counts": [
+            0,
+            0,
+            1
+          ],
+          "date_correct": 0,
+          "task_correct": 0,
+          "clarification_correct": 0,
+          "unsupported_dates": 0,
+          "proposed_dates": 0
+        },
+        {
+          "case_id": "V3-001",
+          "predicted_task_ids": [],
+          "l2_evidence_risk_ids": [
+            "RS-001",
+            "RS-009"
+          ],
+          "agent_error": false,
+          "impact_counts": [
+            0,
+            0,
+            2
+          ],
+          "date_correct": 0,
+          "task_correct": 0,
+          "clarification_correct": 0,
+          "unsupported_dates": 0,
+          "proposed_dates": 0
+        },
+        {
+          "case_id": "V3-005",
+          "predicted_task_ids": [],
+          "l2_evidence_risk_ids": [
+            "RS-001",
+            "RS-003",
+            "RS-006",
+            "RS-007",
+            "RS-009"
+          ],
+          "agent_error": false,
+          "impact_counts": [
+            0,
+            0,
+            1
+          ],
+          "date_correct": 0,
+          "task_correct": 0,
+          "clarification_correct": 0,
+          "unsupported_dates": 0,
+          "proposed_dates": 0
+        },
+        {
+          "case_id": "V3-006",
+          "predicted_task_ids": [],
+          "l2_evidence_risk_ids": [
+            "RS-010",
+            "RS-017",
+            "RS-019"
+          ],
+          "agent_error": false,
+          "impact_counts": [
+            0,
+            0,
+            1
+          ],
+          "date_correct": 0,
+          "task_correct": 0,
+          "clarification_correct": 0,
+          "unsupported_dates": 0,
+          "proposed_dates": 0
+        },
+        {
+          "case_id": "V3-007",
+          "predicted_task_ids": [],
+          "l2_evidence_risk_ids": [
+            "RS-001",
+            "RS-003",
+            "RS-006",
+            "RS-007",
+            "RS-009"
+          ],
+          "agent_error": false,
+          "impact_counts": [
+            0,
+            0,
+            2
+          ],
+          "date_correct": 0,
+          "task_correct": 0,
+          "clarification_correct": 0,
+          "unsupported_dates": 0,
+          "proposed_dates": 0
+        }
+      ]
+    },
+    "agent_included": {
+      "cases": 6,
+      "precision": 0.875,
+      "recall": 0.7778,
+      "f1": 0.8235,
+      "rows": [
+        {
+          "case_id": "V2-001",
+          "predicted_task_ids": [
+            "T046",
+            "T047"
+          ],
+          "l2_evidence_risk_ids": [
+            "RS-006",
+            "RS-009"
+          ],
+          "agent_error": false,
+          "impact_counts": [
+            2,
+            2,
+            2
+          ],
+          "date_correct": 0,
+          "task_correct": 0,
+          "clarification_correct": 0,
+          "unsupported_dates": 0,
+          "proposed_dates": 0
+        },
+        {
+          "case_id": "V2-002",
+          "predicted_task_ids": [
+            "T023",
+            "T024"
+          ],
+          "l2_evidence_risk_ids": [
+            "RS-010",
+            "RS-017"
+          ],
+          "agent_error": false,
+          "impact_counts": [
+            1,
+            2,
+            1
+          ],
+          "date_correct": 0,
+          "task_correct": 0,
+          "clarification_correct": 0,
+          "unsupported_dates": 0,
+          "proposed_dates": 0
+        },
+        {
+          "case_id": "V3-001",
+          "predicted_task_ids": [
+            "T046",
+            "T047"
+          ],
+          "l2_evidence_risk_ids": [
+            "RS-001",
+            "RS-009"
+          ],
+          "agent_error": false,
+          "impact_counts": [
+            2,
+            2,
+            2
+          ],
+          "date_correct": 0,
+          "task_correct": 0,
+          "clarification_correct": 0,
+          "unsupported_dates": 0,
+          "proposed_dates": 0
+        },
+        {
+          "case_id": "V3-005",
+          "predicted_task_ids": [
+            "T021"
+          ],
+          "l2_evidence_risk_ids": [
+            "RS-001",
+            "RS-003",
+            "RS-006",
+            "RS-007",
+            "RS-009"
+          ],
+          "agent_error": false,
+          "impact_counts": [
+            1,
+            1,
+            1
+          ],
+          "date_correct": 0,
+          "task_correct": 0,
+          "clarification_correct": 0,
+          "unsupported_dates": 0,
+          "proposed_dates": 0
+        },
+        {
+          "case_id": "V3-006",
+          "predicted_task_ids": [
+            "T059"
+          ],
+          "l2_evidence_risk_ids": [
+            "RS-010",
+            "RS-017",
+            "RS-019"
+          ],
+          "agent_error": false,
+          "impact_counts": [
+            1,
+            1,
+            1
+          ],
+          "date_correct": 0,
+          "task_correct": 0,
+          "clarification_correct": 0,
+          "unsupported_dates": 0,
+          "proposed_dates": 0
+        },
+        {
+          "case_id": "V3-007",
+          "predicted_task_ids": [],
+          "l2_evidence_risk_ids": [
+            "RS-001",
+            "RS-003",
+            "RS-006",
+            "RS-007",
+            "RS-009"
+          ],
+          "agent_error": false,
+          "impact_counts": [
+            0,
+            0,
+            2
+          ],
+          "date_correct": 0,
+          "task_correct": 0,
+          "clarification_correct": 0,
+          "unsupported_dates": 0,
+          "proposed_dates": 0
+        }
+      ]
+    }
+  },
+  "outdoor_classification": {
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "predicted_task_ids": [
+      "T006",
+      "T009",
+      "T021",
+      "T022",
+      "T023",
+      "T024",
+      "T025",
+      "T027",
+      "T028",
+      "T030",
+      "T044",
+      "T045"
+    ]
+  }
+}

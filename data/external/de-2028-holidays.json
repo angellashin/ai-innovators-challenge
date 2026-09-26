@@ -1,0 +1,127 @@
+{
+  "status": "ok",
+  "source_id": "nager:DE:2028",
+  "provider": "nager_date",
+  "url": "https://date.nager.at/api/v3/PublicHolidays/2028/DE",
+  "fetched_at": "2026-09-25T14:00:00+00:00",
+  "holidays": [
+    {
+      "date": "2028-01-01",
+      "localName": "Neujahr",
+      "name": "New Year’s Day",
+      "countryCode": "DE",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2028-04-14",
+      "localName": "Karfreitag",
+      "name": "Good Friday",
+      "countryCode": "DE",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2028-04-17",
+      "localName": "Ostermontag",
+      "name": "Easter Monday",
+      "countryCode": "DE",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2028-05-01",
+      "localName": "Tag der Arbeit",
+      "name": "Labour Day",
+      "countryCode": "DE",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2028-05-25",
+      "localName": "Christi Himmelfahrt",
+      "name": "Ascension Day",
+      "countryCode": "DE",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2028-06-05",
+      "localName": "Pfingstmontag",
+      "name": "Whit Monday",
+      "countryCode": "DE",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2028-10-03",
+      "localName": "Tag der Deutschen Einheit",
+      "name": "German Unity Day",
+      "countryCode": "DE",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2028-12-25",
+      "localName": "Erster Weihnachtstag",
+      "name": "Christmas Day",
+      "countryCode": "DE",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    },
+    {
+      "date": "2028-12-26",
+      "localName": "Zweiter Weihnachtstag",
+      "name": "St. Stephen’s Day",
+      "countryCode": "DE",
+      "fixed": false,
+      "global": true,
+      "counties": null,
+      "launchYear": null,
+      "types": [
+        "Public"
+      ]
+    }
+  ],
+  "body_hash": "f133977ef8e34763851e9969d28c132aa7a84a1f6ba7114ffe609be15d98baa6"
+}
