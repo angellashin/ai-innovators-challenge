@@ -1,127 +1,61 @@
 # REPLAN MVP
 
-설비 도입 프로젝트의 엑셀 일정을 읽고, 협력사 통보와 외부 감시에서 발견한 변경을 작업별로 반영해 대응안을 비교·승인·내보내는 데모입니다. 에이전트는 해석·연결·질문·초안을 맡고, 날짜·비용·일정은 결정적 계산기 도구가 계산하며, 확정·발송은 사람이 맡습니다.
+설비 도입 프로젝트의 엑셀 일정을 읽고, 협력사 통보와 외부 공지에서 생긴 변경이 어느 작업에 닿는지 찾아 대응안을 비교·승인·내보내는 데모입니다. **에이전트**는 해석·원인 연결·조사·질문·초안을 맡고, **결정적 계산기**가 날짜·비용·일정을 계산하며, **사람**이 확인·승인·발송을 맡습니다.
 
-## 협력사 통보와 외부 감시
+## 대표 장면
 
-핵심 흐름은 **Excel 업로드 → 에이전트의 감시 계획 제안·사람의 수락 → 협력사 통보 수신 → 해석·영향 작업 확인(모호하면 질문) → 일정 계산 → 밀린 기간의 공휴일·날씨 재점검 → L2 실제 사례 근거 연결 → 대응안 비교 → 조건 확인 → 승인 → 수정 Excel → 계속 감시**입니다. 외부 주기 감시에서 새 변화가 감지되어도 해석·영향 확인 단계부터 같은 흐름에 합류합니다.
+### X2 — 통보에 없던 숨은 위험을 에이전트가 찾음
 
-두 입력 경로는 병렬입니다. 협력사 진행 메시지는 수신 직후 처리하는 핵심 트리거이며, 현재는 붙여넣기·합성 데모 통보로 입력합니다. 실제 메일 자동 수신은 아직 연결되지 않았습니다. 날씨는 6시간, 정책·공식 공지와 공개 기업 소식은 12시간 주기를 초기 감시 계획으로 제안하며, 이는 데이터 공급자의 갱신 보장이 아니라 사람이 조정·수락할 설정입니다. 등록 출처의 근거와 영향 작업 후보를 표시하되, 공지 발행일이나 L2 기사 속 지연 일수를 일정 지연으로 바꾸지 않습니다. 적용 여부·효력일이 불분명하면 질문하고, 승인된 일정과 근거를 새 Excel로 내보냅니다.
+협력사가 "셀 설비 서보 모터 자석 부품(P-A1)이 중국 수출 허가를 기다리느라 T042 통관이 1주 늦어진다"고 알립니다. 규칙만으로는 **완료일 변화 0일**(T042는 여유가 큼)이라 할 일이 없습니다. 사람이 **조사 시작**을 누르면 에이전트가:
 
-설정·동작 범위·데이터 출처는 [외부 변화 워크플로](docs/EXTERNAL_RISK_WORKFLOW.md)를 참고하세요.
-오프라인 검증: `python scripts/evaluate_external.py`.
+1. 같은 시기 등록 공지("중국산 희토류 자석은 선적마다 수출 허가, 검토 최대 60일")와 통보 사유를 연결하고,
+2. 구매 목록에서 통보에 없던 같은 협력사·원산지 품목 **P-B**(교육 시뮬레이터 구동부 → T058)와 **P-C**(정밀 서보 스테이지 → T051)를 찾고,
+3. 계산기로 T058은 여유 245일로 흡수, **T051은 여유 0일**임을 확인하고,
+4. P-C 허가가 늦으면 **완료 2028-02-11(+52일)**, 영향을 피하려면 **2027-02-08까지 서류 제출**이 필요하다고 계산한 뒤,
+5. 통보에 없던 품목이라 대응안 비교 대신 **확인 요청 1개와 협력사 메일 초안**을 남기고 멈춥니다("확인이 필요합니다").
 
-## 팀원 시작하기
+화면에는 규칙만 대 에이전트 비교, 에이전트가 인용한 원문 문장 강조, 판단 기록(확인마다 '왜'), 판단별 LLM 호출 수·비용, 시나리오의 근거가 된 실제 기사(RS-019, CNBC 2025-10-15)가 함께 보입니다. 일정·날짜는 합성이며 기사 속 지연 기간은 계산에 쓰지 않습니다.
+
+![X2 조사 결과](docs/demo/X2_04_investigation.png)
+
+### H04 — 결정적 계산과 비용 효율
+
+T045 설비 반입 완료일이 2026-12-05 → 2026-12-28로 늦어지는 통보입니다. 계산기가 통보 지연 **21일**과 밀린 기간에 새로 걸린 공휴일 **14일**을 나눠 계산하고(무대응 **2028-01-25**, 설치팀 추가·야간 작업 **2028-01-11**, 두 안 조합 2027-12-28), 에이전트는 계산이 끝난 8개 안을 **LLM 1회**로 비교·설명하고 협의 메일 초안을 씁니다. 진단 전 같은 흐름은 6회·입력 17만 토큰·$1.30이었고 지금은 1회·6천 토큰·약 $0.09입니다([진단 기록](docs/AGENT_AUDIT.md)).
+
+![H04 영향 내역](docs/demo/H04_05_impact.png)
+
+단계별 화면은 [데모 가이드](docs/DEMO_GUIDE.md)에 있습니다.
+
+## 실행
 
 ```sh
-git clone https://github.com/angellashin/ai-innovators-challenge.git
-cd ai-innovators-challenge
-cp .env.example .env
+cp .env.example .env          # REPLAN_DEMO_TOKEN을 로컬 값으로
+REPLAN_LLM_MODE=replay docker compose up -d --build
 ```
 
-`.env`의 `REPLAN_DEMO_TOKEN`을 로컬용 값으로 바꾸세요. LLM 없이도 Excel/REPLAY 데모는 동작합니다. 실제 대회 키가 필요한 경우에만 `API_KEY`와 승인된 `LLM_MODEL` 별칭을 서버 환경에 추가하세요. **키가 있는 `.env`와 프로젝트 데이터는 커밋하지 않습니다.** Docker를 쓴다면 `docker compose up --build`로 API·worker·web을 함께 실행하고 `http://localhost:3000`을 여세요. 데모 토큰은 브라우저에 입력하지 않으며 Next.js 서버 프록시가 백엔드 요청에만 주입합니다.
+`http://localhost:3000` → **데모 보기 → 워크스페이스 열기 → 프로젝트 만들기**. `REPLAN_LLM_MODE=replay`는 녹화된 응답(`data/llm_replay/hero_demo.json`)으로 에이전트를 돌려 **키·네트워크·비용 없이** 두 장면을 끝까지 보여줍니다. 키 없이 기본 모드로 띄우면 규칙과 계산기만 동작합니다. 실제 LLM은 서버 환경에 `API_KEY`·`LLM_MODEL`·`LLM_BASE_URL`과 `REPLAN_PAID_CALLS_ENABLED=true`를 둘 때만 호출합니다. **키가 있는 `.env`와 프로젝트 데이터는 커밋하지 않습니다.**
+
+Docker 없이 실행하려면 API(`uvicorn app.main:app --app-dir services/api`), worker(`PYTHONPATH=services/api python -m app.worker`), 웹(`apps/web`에서 `npm run dev`)을 같은 `REPLAN_DATA_DIR`·`REPLAN_DEMO_TOKEN`으로 띄웁니다(웹에는 `REPLAN_BACKEND_URL`). API 문서는 `http://localhost:8000/docs`.
 
 | 경로 | 역할 |
 | --- | --- |
-| `apps/web/` | Next.js 화면과 제품용 브랜드 에셋 |
-| `services/api/app/` | FastAPI, Excel 처리, 이벤트·일정 계산, LLM 어댑터, worker |
-| `tests/` | API·import·계산·수집·agent 회귀 테스트 |
-| `scripts/` | REPLAY 평가와 선택적 게이트웨이 점검 |
-| `assets/brand/replan/` | 승인된 로고 원본과 정규화 파일 |
-| `REPLAN_PROJECT_MASTER.md` | 제품 기획·데모 계약 |
-| `DESIGN.md` | 앞으로의 화면 구현 기준과 미결정 사항 |
+| `apps/web/` | Next.js 화면(6단계: 개요 → 일정 → 변경 → 대응안 → 실행 → 이력) |
+| `services/api/app/` | FastAPI, Excel 처리, 일정 계산기, 에이전트 런타임·조사 도구, worker |
+| `scripts/` | REPLAY 평가, 에이전트 흐름 녹화·재생(`agent_flows.py`), 평가 스크립트 |
+| `data/` | 합성 hero 일정(L1), 실제 리스크 사례(L2), 채점 전용 정답(L3), 데모 통보·공지, 녹화된 LLM 응답 |
+| `docs/` | 데모 가이드, 에이전트 진단·개선 기록, 루프 설계, 외부 변화·연동 문서 |
 
-연동 범위와 운영 전 결정사항은 [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md)에 기록합니다. GitHub Actions는 Python 테스트·REPLAY 평가·웹 빌드·Compose 설정을 PR마다 검증합니다.
-
-현재 저장소는 단일 프로젝트·공유 데모 토큰·SQLite 기반의 MVP입니다. 인터넷 공개 운영용 인증/권한/백업을 갖춘 서비스로 보지 마세요. UI를 수정할 때는 [DESIGN.md](DESIGN.md)를 먼저 읽고, 변경 전후의 핵심 흐름을 테스트하세요. 로컬 `.lazyweb/` 연구 산출물은 생성 자료와 제3자 참고 이미지를 포함해 Git에 올리지 않고, 실행 가능한 디자인 기준만 `DESIGN.md`에 남깁니다.
-
-## 로컬 실행
-
-Python 3.9 이상과 Next.js를 실행할 Node.js가 필요합니다. 세 터미널에서 아래 순서로 실행하세요.
-
-```sh
-python3 -m venv .venv
-./.venv/bin/pip install -r requirements.txt
-export REPLAN_DATA_DIR=.data
-export REPLAN_DEMO_TOKEN=local-demo-token
-./.venv/bin/uvicorn app.main:app --app-dir services/api --host 127.0.0.1 --port 8000
-```
-
-```sh
-export REPLAN_DATA_DIR=.data
-PYTHONPATH=services/api ./.venv/bin/python -m app.worker
-```
-
-```sh
-cd apps/web
-npm ci
-export REPLAN_BACKEND_URL=http://localhost:8000
-export REPLAN_DEMO_TOKEN=local-demo-token
-npm run dev
-```
-
-### 기본 데모(hero)
-
-`http://localhost:3000` → **데모 보기** → **워크스페이스 열기** → **프로젝트 만들기** 후, 작업공간의 6단계(개요 → 일정 → 변경 → 대응안 → 실행 → 이력)를 순서대로 진행합니다.
-
-1. **일정** — **hero 데모 기준 일정 연결**(64개 작업).
-2. **변경** — 합성 통보 **H04**를 골라 **합성 통보 불러오기**, 카드의 해석(T045 완료 예정일 2026-12-28)을 보고 **해석 확인 후 영향 분석**.
-3. **대응안** — 분석이 끝나면 자동으로 열립니다. 무대응 2028-01-25와 대응안 2028-01-11(회복 14일)을 비교하고, 한 안을 골라 **확인 요청 만들기 → 확인 기록 → 이 대응안 승인**.
-4. **실행** — **새 일정 버전 확정** → **Excel 다운로드**.
-
-H02(규제 언급)·V08(작업 번호 없는 통보)·직접 업로드·감시 계획의 단계별 화면과 LLM 키 유무에 따른 차이는 [데모 사용 가이드](docs/DEMO_GUIDE.md)에 있습니다. 최초 분석은 비용 한도 없이 실행되며, 대응안 화면의 '비용 한도로 다시 계산'은 선택입니다.
-
-### REPLAN_demo_inputs.xlsx
-
-저장소 루트의 `REPLAN_demo_inputs.xlsx`(20개 작업·대응안 4개·E01~E05)는 **직접 Excel을 업로드하는 예시(가이드의 여정 C)**이자 pytest와 `scripts/evaluate_replay.py`(REPLAY 16개 검사)의 입력입니다. 일정 화면에서 **Excel 파일 선택 → 업로드·미리보기 → 기준 일정 확정** 순서로 쓰며, 파일의 변경 이벤트 행은 자동 등록되지 않으므로 변경 화면에 원문을 붙여 넣습니다.
-
-### 데모의 세 장면
-
-- **H04:** 반입 지연 통보를 해석해 통보 지연 21일을 계산하고, 밀린 기간의 공휴일 14일을 재점검합니다. 무대응 완료일 2028-01-25와 대응안 완료일 2028-01-11(14일 회복)을 비교한 뒤 협력사 협의 메일 초안을 만듭니다.
-- **H02:** 규제가 언급된 통보에 L2 실제 사례를 근거로 연결해 적용 가능성을 추론합니다. 적용이 확정된 지연으로 계산하지 않고 조건부 시나리오와 확인 질문으로 남깁니다.
-- **V08:** 작업 번호가 없는 한국어 통보에서 원문 근거를 인용한 작업 후보를 제안합니다. 사람이 대상을 확인하기 전에는 일정 계산을 하지 않고 멈춥니다.
-
-### 데모 데이터의 역할
-
-| 층 | 자료 | 사용 범위 |
-| --- | --- | --- |
-| L1 | 합성 hero 프로젝트 일정 | 데모의 기준 일정과 결정적 일정 계산 입력 |
-| L2 | 실제 리스크 사례 | 에이전트가 검색·인용하는 참고 근거. 기사 속 지연 일수는 계산에 사용하지 않음 |
-| L3 | 일정 영향 확인 사례 | 채점 전용 정답. 에이전트는 접근할 수 없음 |
-
-데모의 협력사 통보 데이터는 합성이지만, 협력사 통보 자체는 서비스의 핵심 변경 트리거입니다.
-
-Docker를 사용할 경우 `REPLAN_DEMO_TOKEN`을 설정한 뒤 `docker compose up --build`로 API·worker·web을 함께 실행할 수 있습니다. SQLite 데이터는 `replan_data` 볼륨에 유지됩니다. 깨끗한 데모가 필요하면 기존 볼륨을 지우는 대신 다른 `REPLAN_DATA_DIR`의 로컬 실행 환경 또는 별도 Compose 프로젝트 이름을 사용하세요.
-
-API 문서는 `http://localhost:8000/docs`에 있습니다. 분석/수집은 큐에 등록되며 별도 worker가 처리합니다. 감시 계획은 처음에 꺼져 있으므로 좌표·출처·간격을 검토하고 직접 활성화해야 합니다. 기상 일정 이벤트는 사용자가 `weather_limits.max_wind_speed_kmh` 또는 `weather_limits.max_precipitation_mm`를 설정한 경우에만 만듭니다. 외부 수집 실패는 스냅샷 오류로 남고 안전 판정으로 취급하지 않습니다.
-
-### P1 운영 입력·연동
-
-화면에서는 근거 문서가 변경 화면의 '다른 입력 방식'에, 나머지는 실행 화면의 **고급 설정**에 있으며 연동 여부(`분석에 반영`·`저장만`·`미연동`)를 함께 표시합니다.
-
-- `/api/projects/{project_id}/documents`는 PDF/TXT/MD/EML 원본을 저장하고 `202 QUEUED`를 반환합니다. 같은 SHA-256 문서는 중복 큐잉하지 않으며, worker가 파싱을 끝내면 `SUCCEEDED/FAILED` 상태와 검토용 이벤트를 기록합니다. 실패 문서는 `/documents/{document_id}/retry`로 재처리할 수 있습니다. PDF는 `pypdf`로 텍스트만 추출합니다.
-- `/api/projects/{project_id}/mail-account`는 IMAP/Gmail/Outlook 연결 메타데이터만 저장합니다. 비밀번호·OAuth 토큰은 저장하지 않으며 실제 메일 수집은 별도 인증 작업이 필요합니다.
-- `/api/projects/{project_id}/public-feeds`로 허용 호스트의 RSS/Atom URL을 등록하고 기존 감시계획에 합칠 수 있습니다. 피드 내용은 여전히 검토 사건입니다.
-- 공급사 휴무일은 `/supplier-calendars`로 등록되어 시뮬레이터의 작업 가능일에서 제외됩니다.
-- 알림은 `/notifications`의 인앱 기록으로 동작하고, 이메일·웹훅·Slack 채널은 `DRAFT` 설정으로만 보존합니다. 외부 발송은 P1 범위에서 자동 실행하지 않습니다.
-- `/site-prep`의 `equipment_installation_v1` 템플릿은 허가, 적치장, 양중 장비, 안전 브리핑 체크리스트를 생성합니다. 시나리오 대응 업무의 `due_at`은 옵션의 `decision_lead_days` 또는 기본 3일 기준으로 자동 산출됩니다.
-
-등록 공지는 서버가 허용한 호스트에서만 가져옵니다. 기본 허용 호스트는 `environment.ec.europa.eu`이며, 다른 공식 출처는 서버의 `REPLAN_ALLOWED_SOURCE_HOSTS`에 명시적으로 추가해야 합니다. 페이지 내용은 정책 적용 확정이 아니라 검토 대상입니다.
+데이터 층: L1 합성 일정은 계산 입력, L2 실제 사례는 에이전트가 검색·인용하는 참고 근거(기사 속 지연 일수는 계산에 쓰지 않음), L3는 채점 전용 정답으로 에이전트와 서비스 이미지에서 제외합니다.
 
 ## 검증과 선택적 LLM
 
 ```sh
 ./.venv/bin/python -m pytest -q
-./.venv/bin/python scripts/evaluate_replay.py
-# 스크립트는 현재 작업 디렉터리와 무관하게 저장소의 기본 엑셀을 찾습니다.
-./.venv/bin/python scripts/evaluate_replay.py --input /path/to/REPLAN_demo_inputs.xlsx
+./.venv/bin/python scripts/evaluate_replay.py        # REPLAY 16개 검사, 인터넷·LLM 없음
+./.venv/bin/python scripts/agent_flows.py --mode replay   # 녹화된 에이전트 흐름 9개 재생, 비용 0
 ```
 
-`scripts/evaluate_replay.py`는 인터넷/LLM 호출 없이 제공 엑셀의 baseline과 E01~E05 경계를 재현합니다. 실제 대회 API는 `API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`을 서버에만 설정하세요. `python scripts/smoke_llm.py`는 모델 목록 조회만 하며, `--roundtrip`을 명시해야 생성 및 도구 호출을 테스트합니다. 분석 중 유료 호출을 허용하려면 `REPLAN_PAID_CALLS_ENABLED=true`를 별도로 지정합니다. 기본 일일 유료 실행 상한은 20건(`REPLAN_MAX_PAID_RUNS_PER_DAY`)이고 비용 단가가 검증되지 않은 호출은 0원이 아닌 `UNKNOWN`으로 기록합니다.
-
-`REPLAN_LLM_MODE=record`로 실행하면 LLM 응답을 `REPLAN_LLM_CASSETTE` 파일에 저장하고, `REPLAN_LLM_MODE=replay`로 실행하면 키·네트워크·비용 없이 저장된 응답으로 같은 흐름을 재생합니다. 재생은 요청 본문(실행마다 바뀌는 ID·시각은 가림)이 같을 때만 맞으므로 프롬프트나 도구를 바꾸면 다시 녹화해야 합니다. 녹화본이 없는 요청은 `replay miss` 오류로 멈춥니다. hero 흐름(H04·H02·V08·외부 공지·공휴일)은 `python scripts/agent_flows.py --mode replay`로 저장된 응답(`data/llm_replay/hero_demo.json`)을 재생해 확인합니다.
-
-협력사 메시지는 규칙으로 먼저 해석하고, 규칙이 실패했을 때만 설정된 LLM에 작업 ID·원문 날짜·정확한 인용을 요구합니다. 검증된 해석도 사람 확인 전에는 잠정 patch입니다. 유료 호출이 켜져 있으면 이어서 `run_agent`가 작업 후보, 일정 계산, 밀린 기간 외부 제약, L2 사례, 대응안 도구를 필요한 순서로 선택합니다. 호출 결과와 멈춘 이유는 분석 화면의 **에이전트 판단 과정**에 저장됩니다. LLM이 꺼져 있으면 기존 규칙 순서가 작동합니다. 메일은 검증된 계산 도구의 날짜·일수·비용만 남긴 발송 전 초안입니다. 규제·인허가·인력·물류 사유는 `search_risk_signals`가 찾은 L2 실제 사례의 URL·발행일을 참고 근거로 제시하며 사례의 지연 일수는 계산에 사용하지 않습니다. 통보 이후 발행된 사례는 당시 판단 근거에서 제외합니다. 규제 적용 날짜나 기간이 확인되지 않은 조건부 시나리오는 추가 지연을 계산하지 않고 입력을 요청합니다. 감시 계획은 업로드한 Excel의 국가·기간·공정·위험 태그·협력사에서 제안하고 각 항목을 수락·수정·제외한 후 활성화합니다. 야외 작업 분류와 기상 임계값은 모두 현장 확인 대상입니다.
+`REPLAN_LLM_MODE=record`는 녹화본에 없는 요청만 실제로 호출해 저장하고, `replay`는 녹화본으로만 답합니다(프롬프트·도구·입력이 바뀌면 `replay miss`로 멈춤). 모의·실제 평가 명령과 기준은 아래와 같습니다.
 
 ```sh
 python scripts/evaluate_agent.py --mode mock --output artifacts/agent_evaluation.json
@@ -146,6 +80,16 @@ python scripts/evaluate_agent_real.py --output artifacts/agent_evaluation_real.j
 통보 변형 11건에는 표현 변경과 작업 번호 없는 한국어 통보 4건이 포함됩니다. 원본 통보 9건은 세 방식 모두 100%였습니다. L3 영향 작업의 3-A는 Precision 31.8%·Recall 77.8%, 3-C는 Precision 33.3%·Recall 44.4%였습니다. **3-C의 후보 3개 제한은 Precision을 실질적으로 높이지 못하고 Recall을 낮췄습니다.**
 
 3-C 에이전트 워크플로 19건의 원본 채점은 필수 도구 호출 84.2%, 모호 사례 중단 84.2%, 실행 실패 3건입니다. 사람 검토 대기 상태 `NEEDS_APPROVAL`, `PATCH_PROPOSED`, `PATCH_RECHECKED_PENDING_REVIEW`를 정상 종료로 분류해 **같은 실행 결과를 오프라인 재채점**하면 실행 실패 0건, 두 지표 모두 100%입니다. 재채점은 추가 LLM 호출이 아니며 원본 수치를 대체하지 않습니다. 초안에 계산 결과에 없는 날짜·금액은 0%, 미확정 규제를 확정 지연으로 처리한 비율도 0%였습니다.
+
+## 테스트·평가용 시나리오
+
+데모 앞면에는 두 장면만 둡니다. 아래 자료는 회귀 테스트와 평가에 쓰며 화면의 합성 통보 목록에서도 불러올 수 있습니다.
+
+- **H01~H08**(`data/hero_demo/supplier_messages.json`): 협력사 통보 원본 9건. 제작·FAT·반입 지연, 규제 언급(H02), 완료일 미정(H06), 연락처만 변경(H07), 정정 통보(H08).
+- **V01~V11**(`supplier_message_variants.json`): 표현 변형 11건. 작업 번호 없는 한국어 통보(V08 등)는 에이전트가 원문 인용과 함께 작업 후보를 제시하고 사람이 지정한 뒤에만 계산합니다.
+- **X1-A**(EU 역외 설치·시운전 기술자 취업 허가 확인 공지, 근거 RS-001), **X1-B**(헝가리 인허가 처리 지연, 여유로 흡수되어 기록만), **X2-대조**(사유가 달라 연결하지 않음): `data/hero_demo/external_loop_signals.json`.
+- **REPLAN_demo_inputs.xlsx**: 직접 업로드 예시(20개 작업, E01~E05)이자 REPLAY 16개 검사 입력.
+- 감시 계획·공휴일·기상·등록 공지의 설정과 한계: [외부 변화 워크플로](docs/EXTERNAL_RISK_WORKFLOW.md), 운영 연동 범위: [연동 매트릭스](docs/INTEGRATION_MATRIX.md).
 
 ## 범위와 주의
 
