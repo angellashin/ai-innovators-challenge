@@ -13,6 +13,7 @@ from itertools import combinations
 from typing import Any
 from urllib.parse import urlparse
 
+from .adapters.llm import agent_enabled, llm_mode
 from .events import normalize_event
 from .storage import Store, digest, identifier, utcnow
 
@@ -106,6 +107,8 @@ def _candidate_options(options: list[dict[str, Any]], unavailable: set[str]) -> 
 
 def _reserve_paid_attempt(db: Store, run_id: str) -> str:
     """Reserve before network I/O so crash recovery cannot silently double-charge."""
+    if llm_mode() == "replay":
+        return "reserved"  # recorded responses cost nothing and are not counted
     limit = max(0, int(os.environ.get("REPLAN_MAX_PAID_RUNS_PER_DAY", "20")))
     today = utcnow()[:10]
     with db.transaction() as conn:
@@ -334,7 +337,7 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         return {"status": "STALE", "summary": "기준 일정이 바뀌었습니다. 외부 소스를 다시 확인하세요.", "scenario_ids": []}
     if not event.get("patch") and event.get("channel") == "registered_public_source":
         # Interpret source evidence before the early NEEDS_INPUT return.
-        if all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
+        if agent_enabled():
             paid_state = _reserve_paid_attempt(db, run["id"])
             if paid_state == "reserved":
                 from .external_risks import interpret_notice
@@ -351,7 +354,7 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     if event.get("channel") == "supplier_message":
         from .risk_signals import evidence_for_supplier
         if not event.get("patch") and event.get("classification_status") != "NO_SCHEDULE_IMPACT":
-            if all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
+            if agent_enabled():
                 paid_state = _reserve_paid_attempt(db, run["id"])
                 if paid_state == "reserved":
                     paid_reserved = True
@@ -389,7 +392,7 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         db.put_json("events", event_row["id"], event, project_id=run["project_id"],
                     fingerprint=event_row["fingerprint"], created_at=event_row["created_at"])
 
-        if all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
+        if agent_enabled():
             if paid_reserved or _reserve_paid_attempt(db, run["id"]) == "reserved":
                 supplier_agent = _run_supplier_agent(db, run, project, tasks, options, event)
                 _record_usage(db, run["id"], supplier_agent)
@@ -488,7 +491,7 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         scenario_results.append({"id": scenario_id, **record})
 
     agent_output: dict[str, Any] = supplier_agent if event.get("channel") == "supplier_message" else {"status": "llm_unavailable", "summary": "LLM 설정이 없어 계산 결과만 제공합니다."}
-    if event.get("channel") != "supplier_message" and os.environ.get("API_KEY") and os.environ.get("LLM_MODEL") and os.environ.get("LLM_BASE_URL") and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
+    if event.get("channel") != "supplier_message" and agent_enabled():
         paid_state = _reserve_paid_attempt(db, run["id"])
         if paid_state != "reserved":
             agent_output = {"status": paid_state, "summary": "유료 호출 한도 또는 중복 실행 방지로 계산 결과만 제공합니다."}
@@ -836,7 +839,7 @@ def enqueue_due_scans(db: Store, now: datetime | None = None) -> int:
 
 
 def _run_watch_plan_enrichment(db: Store, run: dict[str, Any]) -> dict[str, Any]:
-    if not all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) or os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() != "true":
+    if not agent_enabled():
         return {"status": "rules_only", "summary": "LLM 보강이 꺼져 있어 규칙 제안을 유지합니다."}
     version = db.get_json("versions", run["version_id"], run["project_id"])
     watch = db.get_json("watch_plans", run["project_id"])

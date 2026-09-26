@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from openpyxl import Workbook
 from pydantic import BaseModel, Field
 
+from .adapters.llm import agent_enabled, llm_mode
 from .events import normalize_event
 from .storage import Store, digest, identifier, utcnow
 
@@ -708,7 +709,7 @@ def confirm_import(project_id: str, import_id: str, value: ConfirmInput) -> dict
     db.put_json("projects", project_id, profile)
     suggestion = suggest_watch_plan(profile, tasks)
     db.put_json("watch_plans", project_id, suggestion)
-    if suggestion["proposal_items"] and all(os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")) and os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true":
+    if suggestion["proposal_items"] and agent_enabled():
         db.create_run(project_id, "watch_plan_enrich", None, version_id,
                       f"watch-plan-enrich:{version_id}", {})
     return {"version_id": version_id, "version_hash": digest(snapshot), "task_count": len(tasks), "watch_plan_suggestion": suggestion}
@@ -1199,5 +1200,6 @@ def usage() -> dict[str, Any]:
         "known_cost_usd": known_cost,
         "cost_unknown": any(item["cost_status"] != "KNOWN" for item in items),
         "paid_calls_enabled": os.environ.get("REPLAN_PAID_CALLS_ENABLED", "false").lower() == "true",
+        "llm_mode": llm_mode(),
         "daily_paid_run_limit": int(os.environ.get("REPLAN_MAX_PAID_RUNS_PER_DAY", "20")),
     }
