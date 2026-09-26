@@ -3,13 +3,14 @@
 import { useEffect, useState } from "react";
 
 type Row = Record<string, any>;
-type Props = { plan: Row; tasks: Row[]; disabled: boolean; onSave: (plan: Row) => Promise<void>; onScan: () => void };
+type FeedRow = { id: string; title: string; published: string; source: string; synthetic: boolean; related: string };
+type Props = { plan: Row; tasks: Row[]; disabled: boolean; onSave: (plan: Row) => Promise<void>; onScan: () => void; feed?: FeedRow[] };
 
 const PROPOSAL_KIND: Record<string, string> = {
   outdoor: "야외 작업", holiday: "공휴일 달력", weather: "현장 기상", source: "공지 출처", supplier_calendar: "협력사 달력",
 };
 
-export function ExternalWatch({ plan, tasks, disabled, onSave, onScan }: Props) {
+export function ExternalWatch({ plan, tasks, disabled, onSave, onScan, feed = [] }: Props) {
   const [draft, setDraft] = useState<Row>(plan);
   const [editing, setEditing] = useState(false);
   const [message, setMessage] = useState("");
@@ -40,6 +41,13 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan }: Props) 
   return <div className="watch-card external-watch">
     <b>외부 변화 감시</b><span className={plan.enabled ? "pill ok" : "pill"}>{plan.enabled ? "주기 감시 중" : "꺼짐"}</span>
     <p>날씨·공휴일은 지정 작업에 연결해 계산하고, 공지·뉴스는 근거와 적용 후보를 검토합니다.</p>
+    {feed.length > 0 && <div className="watch-feed" aria-label="감시 피드에서 들어온 신호">
+      <b>감시 피드에서 들어온 신호 {feed.length}건</b>
+      <ul>{feed.map((row) => <li key={row.id}>
+        <span className={`status-chip${row.related ? "" : " warn"}`}>{row.related ? "관련 있음" : "검토 필요"}</span> {row.title}
+        <small>{row.source}{row.synthetic ? " · 합성 공지" : ""} · 발행 {row.published} · {row.related || "연결된 협력사 통보 없음 · 변경 카드에서 검토"}</small>
+      </li>)}</ul>
+    </div>}
     {proposals.length > 0 && <p className="watch-progress">감시 제안 {proposals.length}개 중 {undecided ? `${undecided}개를 아직 결정하지 않았습니다. 모두 수락·수정·제외해야 활성화할 수 있습니다.` : "모두 결정했습니다."}</p>}
     <details>
       <summary>감시 제안 검토·작업 연결 설정</summary>

@@ -402,3 +402,21 @@ def test_demo_external_notice_enters_through_the_scan_path(client):
     assert "T042" in event["related_task_ids"]
     runs = [row for row in Store().list_json("runs", project_id) if row["kind"] == "analysis"]
     assert len(runs) == 1 and runs[0]["data"]["auto_detected"] is True
+
+
+def test_linked_notice_and_real_cases_carry_display_details(client):
+    project_id, baseline = hero_baseline(client)
+    notice_id = request(client, "post", f"/api/projects/{project_id}/demo/external-signals/N-X2")["event_ids"][0]
+    x2 = next(item for item in baseline["demo_events"] if item["event_id"] == "X2")
+    event_id = request(client, "post", f"/api/projects/{project_id}/events", json=x2)["event_id"]
+    project = request(client, "get", f"/api/projects/{project_id}")
+    signal = project["related_signals"][event_id][0]
+    assert signal["event_id"] == notice_id and signal["reason_terms"]
+    assert signal["source_host"] == "environment.ec.europa.eu" and signal["basis_risk_id"] == "RS-019"
+    assert signal["data_origin"] == "SYNTHETIC"
+    # Cases show on the card before any analysis stores them, with outlet and reason.
+    cases = next(row for row in project["events"] if row["id"] == event_id)["data"]["risk_signal_evidence"]
+    assert {row["risk_id"] for row in cases} == {"RS-019", "RS-010", "RS-007", "RS-009"}
+    assert all(row["source_name"] and row["why"] for row in cases)
+    assert next(row for row in cases if row["risk_id"] == "RS-019")["source_name"] == "CNBC"
+    assert "risk_signal_evidence" not in Store().get_json("events", event_id, project_id)["data"]

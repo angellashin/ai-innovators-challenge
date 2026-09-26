@@ -40,6 +40,7 @@ export type ProjectRecords = {
   runs?: Row[];
   approvals?: Row[];
   versions?: Row[];
+  related_signals?: Record<string, Dict[]>;
 };
 
 export type NextAction = { label: string; section: SectionId; detail: string };
@@ -73,16 +74,26 @@ export function runScenarioCount(run?: Row) {
   return Array.isArray(ids) ? ids.length : 0;
 }
 
-export function deriveProgress(state: ProjectRecords): Progress {
-  const events = (state.events || []).filter((item) => !INACTIVE.has(String(item.data?.review_status)));
+/** External notices shown inside a supplier card because they share its tasks and its stated cause. */
+export function linkedSignalIds(state: ProjectRecords) {
+  return new Set(Object.values(state.related_signals || {}).flat()
+    .filter((row) => Array.isArray(row.reason_terms) && row.reason_terms.length > 0)
+    .map((row) => String(row.event_id)));
+}
+
+/** preferEventId: the change whose result is on screen (comparison and execution screens). */
+export function deriveProgress(state: ProjectRecords, preferEventId = ""): Progress {
+  const linked = linkedSignalIds(state);
+  const events = (state.events || []).filter((item) => !INACTIVE.has(String(item.data?.review_status)) && !linked.has(String(item.id)));
   // Follow the change the person last analysed, unless a newer change arrived since.
   const userRuns = (state.runs || []).filter((item) => item.kind === "analysis" && !isPreview(item)
     && !(item.data as Dict | undefined)?.auto_detected)
     .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
   const actedEvent = userRuns.length ? events.find((item) => item.id === userRuns[0].event_id) : undefined;
   const newestEvent = events[0];
-  const focusEvent = actedEvent && (!newestEvent || String(userRuns[0].created_at || "") >= String(newestEvent.created_at || ""))
-    ? actedEvent : newestEvent;
+  const preferred = preferEventId ? events.find((item) => item.id === preferEventId) : undefined;
+  const focusEvent = preferred || (actedEvent && (!newestEvent || String(userRuns[0].created_at || "") >= String(newestEvent.created_at || ""))
+    ? actedEvent : newestEvent);
   const focusData = focusEvent?.data || {};
   const runs = (state.runs || []).filter((item) => item.kind === "analysis" && focusEvent && item.event_id === focusEvent.id)
     .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));

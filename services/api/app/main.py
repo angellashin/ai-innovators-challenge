@@ -590,7 +590,7 @@ def get_project(project_id: str) -> dict[str, Any]:
         "project": project["data"],
         "version": version,
         "watch_plan": watch["data"] if watch else None,
-        "events": db.list_json("events", project_id),
+        "events": _events_view(db.list_json("events", project_id), version),
         "source_snapshots": db.list_json("source_snapshots", project_id, 10),
         "runs": db.list_json("runs", project_id, 20),
         "actions": db.list_json("actions", project_id),
@@ -612,19 +612,49 @@ def get_project(project_id: str) -> dict[str, Any]:
 
 
 def _related_signals_by_event(db: Store, project_id: str, version: dict[str, Any] | None) -> dict[str, Any]:
+    from .hero_demo import loop_notice
     from .investigation import related_signals
 
     if not version:
         return {}
     rows = db.list_json("events", project_id, 1000)
+    by_id = {row["id"]: row["data"] for row in rows}
     found = {}
     for row in rows:
         data = row["data"]
         if data.get("channel") == "supplier_message" and data.get("patch") and data.get("review_status") not in {"REJECTED", "SUPERSEDED"}:
             signals = related_signals(data, rows, version["id"])["signals"]
+            for signal in signals:  # display-only source details; the worker reads related_signals directly
+                source = by_id.get(signal["event_id"], {})
+                url = str((source.get("evidence") or {}).get("url") or source.get("source_label") or "")
+                signal.update({"source_url": url if url.startswith("https://") else "",
+                               "source_host": url.split("/")[2] if url.startswith("https://") else str(source.get("source_label") or ""),
+                               "data_origin": source.get("data_origin"),
+                               "basis_risk_id": (loop_notice(str(source.get("demo_signal_id"))) or {}).get("basis_risk_id")
+                               if source.get("demo_signal_id") else None})
             if signals:
                 found[row["id"]] = signals
     return found
+
+
+def _events_view(rows: list[dict[str, Any]], version: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Adds outlet names and a one-line reason to stored real cases (display only, never model input).
+
+    Before the first analysis stores them, a supplier notice shows the same cases the analysis will store."""
+    from .risk_signals import case_relevance, evidence_for_supplier
+
+    tasks = (version or {}).get("data", {}).get("tasks") or []
+    for row in rows:
+        data = row["data"]
+        cases = data.get("risk_signal_evidence")
+        if cases is None and data.get("channel") == "supplier_message" and data.get("related_task_ids") and tasks:
+            cases = evidence_for_supplier(str(data.get("content") or ""), tasks, list(data["related_task_ids"]),
+                                          str(data.get("published_at") or data.get("received_at") or ""))
+        if isinstance(cases, list) and cases:
+            content = str(data.get("content") or "")
+            row["data"] = {**data, "risk_signal_evidence": [{**case, **case_relevance(content, str(case.get("risk_id")))}
+                                                             for case in cases if isinstance(case, dict)]}
+    return rows
 
 
 @app.post("/api/projects/{project_id}/demo/hero-baseline", dependencies=[Depends(authorize)])

@@ -94,3 +94,25 @@ def evidence_for_supplier(content: str, tasks: list[dict], related_task_ids: lis
         if future:
             item["usage_note"] = "통보 시점 이후 발행된 후향적 참고 사례입니다. 당시 판단·일정 계산의 근거로 사용하지 않습니다."
     return unique
+
+
+KIND_LABEL = {"regulation": "규제", "permitting": "인허가·허가", "labor": "인력", "logistics": "물류·통관"}
+
+
+def case_relevance(content: str, risk_id: str) -> dict:
+    """Outlet name and a one-line reason a stored case sits next to this notice (display only)."""
+    record = next((row for row in _records() if row.get("risk_id") == risk_id), None)
+    if not record:
+        return {}
+    lowered = content.lower()
+    text = " ".join(str(record.get(key) or "") for key in
+                    ("title", "event_summary", "risk_category", "risk_subcategory", "project_type", "country", "region")).lower()
+    category = str(record.get("risk_category") or "").lower()
+    why = ""
+    for kind in mentioned_risk_types(content):
+        if kind in category or any(word in text for word in CAUSE_WORDS[kind]):
+            words = [word for word in CAUSE_WORDS[kind] if word in lowered][:2]
+            quoted = "·".join(f"‘{word}’" for word in words)
+            why = f"통보에 나온 {quoted} → 같은 {KIND_LABEL[kind]} 위험 유형의 실제 사례"
+            break
+    return {"source_name": record.get("source_name"), "why": why}

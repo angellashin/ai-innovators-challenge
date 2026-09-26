@@ -2769,3 +2769,17 @@ main {
 details.agent-decision > summary { cursor: pointer; }
 .rules-only-note { font-size: 13px; color: #4a565c; }
 .inline-check { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+
+/* Related external signals under a supplier notice, and the watch feed list */
+.related-signals { margin-top: 10px; border-top: 1px solid #e3e8e6; padding-top: 8px; font-size: 12px; }
+.related-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.related-head small { color: #75807e; }
+.related-signals ul, .watch-feed ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 8px; }
+.related-signals li { display: grid; gap: 2px; }
+.related-signals li a, .related-signals li b { font-weight: 700; overflow-wrap: anywhere; }
+.related-signals small { color: #75807e; }
+.related-signals small.why { color: #3f4b52; }
+.signal-kind { justify-self: start; font-size: 10px; font-weight: 800; color: #52606a; background: #eef1f0; border-radius: 999px; padding: 2px 7px; }
+.signal-kind.feed { color: #2f5d73; background: #e3eef4; }
+.watch-feed { margin: 8px 0; font-size: 12px; }
+.watch-feed small { display: block; color: #75807e; margin-top: 2px; }
