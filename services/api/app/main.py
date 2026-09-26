@@ -72,6 +72,9 @@ def notify_project(db: Store, project_id: str, event_type: str, title: str, mess
 def decision_deadline(project: dict[str, Any], scenario: dict[str, Any], option_ids: list[str], options: list[dict[str, Any]]) -> str | None:
     """Calculate a review deadline from an option lead time and scenario start."""
     chosen = [item for item in options if item.get("option_id") in option_ids]
+    declared = [str(item["decision_deadline"])[:10] for item in chosen if item.get("decision_deadline")]
+    if declared:
+        return min(declared)
     lead_days = max([int(item.get("decision_lead_days") or item.get("decision_deadline_days") or 0) for item in chosen] or [0])
     lead_days = lead_days or int(project.get("decision_lead_days") or 3)
     starts = [str(item.get("planned_start"))[:10] for item in scenario.get("schedule", []) if item.get("planned_start")]
@@ -86,7 +89,7 @@ def decision_deadline(project: dict[str, Any], scenario: dict[str, Any], option_
 
 def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str, Any], overrides: "ConfirmInput") -> dict[str, Any]:
     """Bridge workbook labels to the Task and Option fields used by tools."""
-    from .hero_demo import hero_fixture, status_at
+    from .hero_demo import hero_fixture, hero_response_options, status_at
     from .watch_suggestions import outdoor_candidate
 
     hero = hero_fixture(parsed) if overrides.tasks is None else None
@@ -139,6 +142,8 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
             task["duration_semantics"] = "calendar_days_elapsed"
         tasks.append(task)
     raw_options = overrides.options if overrides.options is not None else parsed.get("options", [])
+    if hero and not raw_options:
+        raw_options = hero_response_options(profile, tasks)
     options = []
     for original in raw_options:
         option = dict(original)
@@ -551,6 +556,12 @@ def get_project(project_id: str) -> dict[str, Any]:
     db = store()
     project = project_or_404(db, project_id)
     version = db.current_version(project_id)
+    if version and not version["data"].get("options"):
+        from .hero_demo import hero_response_options
+
+        options = hero_response_options(project["data"], version["data"].get("tasks", []))
+        if options:
+            version = {**version, "data": {**version["data"], "options": options}}
     watch = db.get_json("watch_plans", project_id)
     mail_account = db.get_json("mail_accounts", f"mail-{project_id}", project_id)
     return {
@@ -896,6 +907,8 @@ def get_run(run_id: str) -> dict[str, Any]:
         raise HTTPException(404, "run not found")
     project_or_404(db, run["project_id"])
     scenarios = [item for item in db.list_json("scenarios", run["project_id"]) if item["run_id"] == run_id]
+    scenarios.sort(key=lambda item: (len(item["data"].get("option_ids") or []),
+                                     tuple(item["data"].get("option_ids") or [])))
     return {"run": run, "scenarios": scenarios}
 
 
@@ -932,7 +945,12 @@ def prepare_scenario(scenario_id: str) -> dict[str, Any]:
     event_id = data.get("event_id")
     project = db.get_json("projects", scenario["project_id"])
     version = db.get_json("versions", scenario["version_id"], scenario["project_id"])
-    due_at = decision_deadline(project["data"] if project else {}, data, data.get("option_ids", []), (version or {}).get("data", {}).get("options", []))
+    options = (version or {}).get("data", {}).get("options", [])
+    if project and version and not options:
+        from .hero_demo import hero_response_options
+
+        options = hero_response_options(project["data"], version["data"].get("tasks", []))
+    due_at = decision_deadline(project["data"] if project else {}, data, data.get("option_ids", []), options)
     for condition in data.get("required_confirmations", []):
         action = {"owner": "프로젝트 운영팀", "state": "OPEN", "request": f"{condition} 확인 및 수락", "condition": condition, "due_at": due_at, "scenario_id": scenario_id, "event_id": event_id}
         action_id = identifier()

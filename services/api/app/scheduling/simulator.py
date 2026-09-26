@@ -119,6 +119,15 @@ def simulate(
             for task_id in target_ids:
                 if task_id in task_map:
                     task_map[task_id]["duration_workdays"] = _int_value(option.get("new_value"), default=1)
+        elif operation == "REDUCE_DURATION_WORKDAYS":
+            reduction = _int_value(option.get("reduction_workdays"), default=0)
+            if reduction <= 0:
+                violations.append(f"{option_id or 'option'} reduction_workdays must be positive")
+                continue
+            for task_id in target_ids:
+                if task_id in task_map:
+                    current = _int_value(task_map[task_id].get("duration_workdays"), default=1)
+                    task_map[task_id]["duration_workdays"] = max(1, current - reduction)
         else:
             violations.append(f"{option_id or 'option'} unsupported operation: {operation or '<missing>'}")
             continue

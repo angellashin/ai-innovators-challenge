@@ -97,6 +97,48 @@ def test_bundled_hero_demo_uses_the_upload_baseline_path(client):
     assert repeat.status_code == 409
 
 
+def test_hero_response_catalog_is_synthetic_and_h04_recovery_is_calculated(client):
+    project_id, baseline = hero_baseline(client)
+    options = baseline["version"]["data"]["options"]
+    assert len(options) == 6
+    assert all(option["data_origin"] == "SYNTHETIC" and option["currency"] == "KRW"
+               and option["target_ids"] and option["reduction_workdays"] > 0
+               and option["extra_cost_krw"] > 0 and option["conditions"]
+               and option["decision_deadline"] for option in options)
+    selected = next(item for item in baseline["demo_events"] if item["event_id"] == "H04")
+    event = request(client, "post", f"/api/projects/{project_id}/events", json=selected)
+    queued = request(client, "post", f"/api/projects/{project_id}/analyses",
+                     json={"event_id": event["event_id"], "preview_only": True})
+    assert run_once(Store())
+    scenarios = request(client, "get", f"/api/runs/{queued['run_id']}")["scenarios"]
+    by_option = {tuple(row["data"]["option_ids"]): row["data"] for row in scenarios}
+    assert by_option[()]["finish_date"] == "2028-01-25"
+    assert by_option[()]["extra_cost_krw"] == 0
+    assert by_option[()]["recovery_days_vs_no_response"] == 0
+    assert by_option[("HOPT-05",)]["finish_date"] == "2028-01-11"
+    assert by_option[("HOPT-05",)]["extra_cost_krw"] == 13_000_000
+    assert by_option[("HOPT-05",)]["recovery_days_vs_no_response"] == 14
+    assert all(row["data"]["mode"] == "REPLAY" for row in scenarios)
+
+
+def test_existing_hero_baseline_without_options_gets_catalog_without_reupload(client):
+    project_id, baseline = hero_baseline(client)
+    version = baseline["version"]
+    Store().put_json("versions", version["id"], {**version["data"], "options": []},
+                     project_id=project_id, parent_id=version["parent_id"], status=version["status"],
+                     content_hash=version["content_hash"], created_at=version["created_at"])
+    shown = request(client, "get", f"/api/projects/{project_id}")
+    assert len(shown["version"]["data"]["options"]) == 6
+    assert Store().current_version(project_id)["data"]["options"] == []
+    selected = next(item for item in baseline["demo_events"] if item["event_id"] == "H04")
+    event = request(client, "post", f"/api/projects/{project_id}/events", json=selected)
+    queued = request(client, "post", f"/api/projects/{project_id}/analyses",
+                     json={"event_id": event["event_id"], "preview_only": True})
+    assert run_once(Store())
+    scenarios = request(client, "get", f"/api/runs/{queued['run_id']}")["scenarios"]
+    assert any(row["data"]["option_ids"] == ["HOPT-05"] for row in scenarios)
+
+
 def test_hero_supplier_cases_match_reviewed_synthetic_answers():
     parsed = parse_upload(HERO.name, HERO.read_bytes())
     snapshot = normalize_import_snapshot(parsed, {"name": "Hero", "mode": "REPLAY"}, ConfirmInput())

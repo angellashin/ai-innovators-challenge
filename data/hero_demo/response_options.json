@@ -1,0 +1,80 @@
+[
+  {
+    "option_id": "HOPT-01",
+    "name": "[합성] 설치팀 추가 투입",
+    "target_ids": ["T046", "T047"],
+    "operation": "REDUCE_DURATION_WORKDAYS",
+    "reduction_workdays": 6,
+    "extra_cost_krw": 24000000,
+    "currency": "KRW",
+    "conditions": "협력사 추가 설치 인력과 현장 작업 구역의 병행 사용을 사람이 확인해야 합니다.",
+    "approval_state": "협력사·현장 승인 전",
+    "decision_deadline": "2026-12-20",
+    "data_origin": "SYNTHETIC"
+  },
+  {
+    "option_id": "HOPT-02",
+    "name": "[합성] 야간·주말 설치 작업",
+    "target_ids": ["T048", "T049"],
+    "operation": "REDUCE_DURATION_WORKDAYS",
+    "reduction_workdays": 4,
+    "extra_cost_krw": 16000000,
+    "currency": "KRW",
+    "conditions": "현지 근로시간 규정, 소음 제한과 협력사 인력 가용성을 확인해야 합니다. 계산은 동일 작업의 기간 단축 가정입니다.",
+    "approval_state": "현지 규정·인력 확인 전",
+    "decision_deadline": "2027-01-05",
+    "data_origin": "SYNTHETIC"
+  },
+  {
+    "option_id": "HOPT-03",
+    "name": "[합성] 설비 분할 반입",
+    "target_ids": ["T045"],
+    "operation": "REDUCE_DURATION_WORKDAYS",
+    "reduction_workdays": 2,
+    "extra_cost_krw": 9000000,
+    "currency": "KRW",
+    "conditions": "분할 출하 가능 수량과 부분 인수 기준을 물류사·설치팀이 확인해야 합니다.",
+    "approval_state": "분할 인수 협의 전",
+    "decision_deadline": "2026-12-10",
+    "data_origin": "SYNTHETIC"
+  },
+  {
+    "option_id": "HOPT-04",
+    "name": "[합성] 통관 서류 사전처리",
+    "target_ids": ["T042", "T043"],
+    "operation": "REDUCE_DURATION_WORKDAYS",
+    "reduction_workdays": 2,
+    "extra_cost_krw": 5500000,
+    "currency": "KRW",
+    "conditions": "선적 서류와 현지 통관 대행사의 사전 접수 가능 여부를 확인해야 합니다.",
+    "approval_state": "통관사 확인 전",
+    "decision_deadline": "2026-01-15",
+    "data_origin": "SYNTHETIC"
+  },
+  {
+    "option_id": "HOPT-05",
+    "name": "[합성] 제어 통합·교정 집중 투입",
+    "target_ids": ["T050", "T051"],
+    "operation": "REDUCE_DURATION_WORKDAYS",
+    "reduction_workdays": 4,
+    "extra_cost_krw": 13000000,
+    "currency": "KRW",
+    "conditions": "제어 엔지니어와 교정 장비의 추가 투입, 선행 검사 완료를 확인해야 합니다.",
+    "approval_state": "전문 인력 확보 전",
+    "decision_deadline": "2027-02-20",
+    "data_origin": "SYNTHETIC"
+  },
+  {
+    "option_id": "HOPT-06",
+    "name": "[합성] 시운전·통합시험 병행 준비",
+    "target_ids": ["T053", "T054", "T055"],
+    "operation": "REDUCE_DURATION_WORKDAYS",
+    "reduction_workdays": 5,
+    "extra_cost_krw": 19000000,
+    "currency": "KRW",
+    "conditions": "안전 검사와 선행 시험의 완료 기준을 유지하고 별도 시험 인력을 확보해야 합니다. 작업 순서 자체는 변경하지 않습니다.",
+    "approval_state": "시험 계획 승인 전",
+    "decision_deadline": "2027-04-25",
+    "data_origin": "SYNTHETIC"
+  }
+]

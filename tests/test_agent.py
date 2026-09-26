@@ -156,6 +156,87 @@ def test_invalid_tool_args_are_rejected_before_execution():
     assert calls == []
 
 
+def test_matching_redundant_project_id_is_ignored_for_project_scoped_tool():
+    gateway = FakeGateway([
+        ChatResult(content=json.dumps({"action": "tool", "tool": "get_project_context",
+                                       "args": {"project_id": "P-123"}})),
+        ChatResult(content=json.dumps({"summary": "done", "status": "completed"})),
+    ])
+
+    result = run_agent({"_llm_gateway": gateway, "project": {"project_id": "P-123"}},
+                       {"content": "일정 확인"}, {"get_project_context": lambda: {"task_count": 2}})
+
+    assert result["status"] == "completed"
+    assert result["tool_log"][0]["args"] == {}
+    assert result["tool_log"][0]["result"] == {"task_count": 2}
+
+
+def test_other_project_id_is_rejected_before_tool_execution():
+    gateway = FakeGateway([
+        ChatResult(content=json.dumps({"action": "tool", "tool": "get_project_context",
+                                       "args": {"project_id": "P-OTHER"}})),
+    ])
+    calls = []
+
+    def get_project_context():
+        calls.append(True)
+        return {}
+
+    result = run_agent({"_llm_gateway": gateway, "project": {"project_id": "P-123"}},
+                       {"content": "일정 확인"}, {"get_project_context": get_project_context})
+
+    assert result["status"] == "invalid_tool_args"
+    assert calls == []
+
+
+def test_draft_numbers_and_post_notice_regulatory_evidence_are_filtered():
+    gateway = FakeGateway([
+        ChatResult(content=json.dumps({"action": "tool", "tool": "simulate_schedule", "args": {}})),
+        ChatResult(content=json.dumps({"action": "tool", "tool": "search_risk_signals", "args": {}})),
+        ChatResult(content=json.dumps({
+            "status": "completed", "summary": "검토 완료",
+            "email_draft": {"subject": "협의 초안", "body": "완료일 2026-12-28, 추가 9일과 999원 검토"},
+            "regulatory_assessment": {"likelihood": "높음", "reason": "규정 사례 참고",
+                                      "human_check": "적용 조항 확인", "evidence_risk_ids": ["RS-FUTURE"]},
+        }, ensure_ascii=False)),
+    ])
+
+    def simulate_schedule():
+        return {"finish_date": "2026-12-28", "finish_shift_days": 9}
+
+    def search_risk_signals():
+        return {"results": [{"risk_id": "RS-FUTURE", "published_date": "2026-01-01"}]}
+
+    result = run_agent({"_llm_gateway": gateway},
+                       {"published_at": "2025-08-21", "content": "규정 적용 여부는 확인되지 않았습니다."},
+                       {"simulate_schedule": simulate_schedule, "search_risk_signals": search_risk_signals})
+    assert "2026-12-28" in result["email_draft"]["body"]
+    assert "9일" in result["email_draft"]["body"]
+    assert "999" not in result["email_draft"]["body"]
+    assert result["regulatory_assessment"]["likelihood"] == "불확실"
+    assert result["regulatory_assessment"]["evidence_risk_ids"] == []
+    assert result["regulatory_assessment"]["reference_only_risk_ids"] == ["RS-FUTURE"]
+
+
+def test_structured_agent_summary_uses_calculator_and_unrelated_regulation_is_hidden():
+    gateway = FakeGateway([
+        ChatResult(content=json.dumps({"action": "tool", "tool": "recheck_shifted_schedule", "args": {}})),
+        ChatResult(content=json.dumps({"summary": {"change": "untrusted 99 days"},
+                                       "regulatory_assessment": {"likelihood": "높음", "reason": "unrelated"},
+                                       "status": "completed"})),
+    ])
+
+    def recheck_shifted_schedule():
+        return {"finish_date": "2028-01-25", "target_met": False, "supplier_finish_shift_days": 21}
+
+    result = run_agent({"_llm_gateway": gateway}, {"content": "설비 반입이 지연됩니다."},
+                       {"recheck_shifted_schedule": recheck_shifted_schedule})
+
+    assert result["summary"] == "통보의 일정 영향을 검토했습니다. 계산된 완료 예정일은 2028-01-25이며, 목표일을 충족하지 못합니다."
+    assert result["regulatory_assessment"] is None
+    assert "99" not in result["summary"]
+
+
 class FakeResponse:
     def __init__(self, status_code):
         self.status_code = status_code
