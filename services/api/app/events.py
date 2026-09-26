@@ -158,15 +158,6 @@ def infer_event_patch(value: dict[str, Any], project: dict[str, Any], tasks: lis
     ):
         return {"patch": {}, "related_task_ids": related, "facts": [], "classification_status": "NO_SCHEDULE_IMPACT"}
 
-    # Names and translated descriptions are retrieval clues, not stable WBS
-    # identifiers.  Do not let a fuzzy rule silently choose one or several
-    # tasks; the agent may suggest quoted candidates and an operator confirms.
-    if value.get("channel") == "supplier_message" and not direct_ids and (dates or any(word in lowered for word in (
-            "변경", "지연", "늦", "delay", "late", "unavailable", "불가능"))):
-        return {"patch": {}, "related_task_ids": [], "facts": [],
-                "classification_status": "NEEDS_INPUT",
-                "missing_fields": ["후보 작업을 검토하고 기준 일정의 작업을 선택해 주세요."]}
-
     production_tasks = _matching_tasks(
         tasks, direct_ids,
         ("fabrication", "manufactur", "production", "제작", "제조", "생산", "완료"),
@@ -270,6 +261,11 @@ def infer_event_patch(value: dict[str, Any], project: dict[str, Any], tasks: lis
 
     task_order = {_task_id(task): index for index, task in enumerate(tasks)}
     related = sorted(dict.fromkeys(item for item in related if item), key=lambda item: task_order.get(item, len(task_order)))
+    ambiguous_facts = [fact for fact in facts if len(fact.get("task_ids") or []) > 1]
+    if patch and not direct_ids and ambiguous_facts:
+        return {"patch": {}, "related_task_ids": [], "facts": [],
+                "classification_status": "NEEDS_INPUT",
+                "missing_fields": ["후보 작업을 검토하고 기준 일정의 작업을 선택해 주세요."]}
     if patch:
         return {
             "patch": patch,
