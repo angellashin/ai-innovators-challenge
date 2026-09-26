@@ -139,6 +139,13 @@ def test_e01_budget_replan_approval_commit_and_export(client):
     assert committed["version_id"] != baseline_version["version_id"]
     assert request(client, "post", f"/api/scenarios/{scenario_id}/commit")["duplicate"]
 
+    state = request(client, "get", f"/api/projects/{project_id}")
+    assert [item["status"] for item in state["versions"]] == ["committed", "baseline"]
+    assert state["versions"][0]["scenario_id"] == scenario_id
+    assert state["versions"][0]["parent_id"] == baseline_version["version_id"]
+    assert [(item["scenario_id"], item["event_id"], item["run_id"]) for item in state["approvals"]] == [
+        (scenario_id, event_id, new_run["run_id"])]
+
     response = client.get(f"/api/projects/{project_id}/export?version_id={committed['version_id']}", headers={"Authorization": "Bearer test-token"})
     assert response.status_code == 200
     book = load_workbook(io.BytesIO(response.content), read_only=True)
