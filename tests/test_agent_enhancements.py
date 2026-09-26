@@ -14,7 +14,7 @@ from app.supplier_interpreter import interpret_supplier_message
 from app.task_retrieval import retrieve_related_tasks
 from app.watch_suggestions import outdoor_candidate
 from app.worker import run_once
-from scripts.evaluate_agent import evaluate, evaluate_l3
+from scripts.evaluate_agent import _calculator_claims, _draft_claims, evaluate, evaluate_l3, evaluate_workflow
 from scripts.evaluation_mocks import MockEvaluationGateway
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,8 +80,9 @@ def test_mock_agent_workflow_metrics_cover_hero_and_variants():
     report = evaluate("mock")
     workflow = report["agent_workflow"]
     assert workflow["cases"] == 19
-    assert workflow["required_tool_rate"] == 1
-    assert workflow["ambiguous_stop_rate"] == 1
+    assert workflow["execution_failures"] == 9
+    assert workflow["required_tool_rate"] == 0.5263
+    assert workflow["ambiguous_stop_rate"] == 0.5263
     assert workflow["unsupported_draft_numeric_rate"] == 0
     assert workflow["unconfirmed_regulation_as_confirmed_delay_rate"] == 0
     by_id = {row["case_id"]: row for row in workflow["rows"]}
@@ -89,9 +90,46 @@ def test_mock_agent_workflow_metrics_cover_hero_and_variants():
                                            "search_risk_signals", "simulate_regulatory_condition", "list_response_options"]
     assert by_id["H04"]["tool_order"] == ["simulate_schedule", "recheck_shifted_schedule",
                                            "list_response_options"]
+    assert by_id["H04"]["rejected_tool_calls"] == []
+    assert by_id["V03"]["rejected_tool_calls"][0]["tool"] == "simulate_schedule"
+    assert by_id["V03"]["rejected_tool_calls"][0]["args"]["unused_argument"] is True
+    assert by_id["V03"]["rejected_tool_calls"][0]["reason"]
+    assert by_id["V03"]["execution_failed"] is False
+    assert by_id["H06"]["execution_failed"] is True
+    assert by_id["H06"]["unresolved_items"]
+    assert by_id["H06"]["summary"]
     retrieval = report["l3_affected_task_retrieval"]["agent_included"]
     assert retrieval["precision"] > 0.32
     assert retrieval["recall"] >= 0.75
+
+
+def test_workflow_accepts_recheck_as_calculation_and_excludes_empty_tool_runs(monkeypatch):
+    import scripts.evaluate_agent as evaluation
+
+    _, project, tasks = _hero()
+    monkeypatch.setattr(evaluation, "run_agent", lambda _context, _event, _tools, **_kwargs: {
+        "status": "completed", "tool_log": [{"tool": "recheck_shifted_schedule", "status": "ok",
+                                              "result": {"finish_date": "2027-01-01"}}]})
+    workflow = evaluate_workflow(project, tasks, [], MockEvaluationGateway())
+    h04 = next(row for row in workflow["rows"] if row["case_id"] == "H04")
+    assert h04["required_tools_called"] is True
+
+    monkeypatch.setattr(evaluation, "run_agent", lambda _context, _event, _tools, **_kwargs: {
+        "status": "completed", "tool_log": []})
+    failed = evaluate_workflow(project, tasks, [], MockEvaluationGateway())
+    assert failed["execution_failures"] == 19
+    assert failed["required_tool_rate"] == 0
+    assert failed["ambiguous_stop_rate"] == 0
+
+
+def test_draft_claims_count_dates_and_quantities_without_incidental_digits():
+    draft = {"body": "T045 일정 2027-01-03, 추가 9일, 비용 1,200원과 $500. 선택지 1을 검토합니다."}
+    claims = _draft_claims(draft)
+    assert claims == ["2027-01-03", "9", "1200", "500"]
+    allowed = _calculator_claims({"finish_date": "2027-01-03", "finish_shift_days": 9,
+                                  "cost": 1200, "foreign_cost": 500, "other_value": 19})
+    assert all(claim in allowed for claim in claims)
+    assert "90" not in allowed
 
 
 def test_generic_outdoor_suggestions_and_review_gate(tmp_path, monkeypatch):
