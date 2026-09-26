@@ -14,6 +14,8 @@ from app.scheduling import simulate
 from app.storage import Store
 from app.worker import run_once
 from app.shifted_external import bundled_hu_calendars, recheck_shifted_schedule
+from app.supplier_interpreter import interpret_supplier_message
+from scripts.evaluation_mocks import MockEvaluationGateway
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,9 +32,15 @@ def request(client, method, path, **kwargs):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    from app.adapters import sources
+
+    def network_forbidden(*_args, **_kwargs):
+        raise AssertionError("hero demo attempted an external holiday request")
+
     monkeypatch.setenv("REPLAN_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("REPLAN_DEMO_TOKEN", "test-token")
     monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.setattr(sources, "fetch_holidays", network_forbidden)
     return TestClient(app)
 
 
@@ -133,6 +141,20 @@ def test_hero_supplier_cases_match_reviewed_synthetic_answers():
                 assert (after[task_id]["planned_start"], after[task_id]["planned_finish"]) == tuple(constraint["changed_window"])
             for blocked in constraint["dates"]:
                 assert not (baseline[task_id]["planned_start"] <= blocked < baseline[task_id]["planned_finish"])
+
+
+def test_numberless_supplier_variants_offer_quoted_candidates_without_patch():
+    parsed = parse_upload(HERO.name, HERO.read_bytes())
+    snapshot = normalize_import_snapshot(parsed, {"name": "Hero", "mode": "REPLAY"}, ConfirmInput())
+    variants = json.loads((ROOT / "data/hero_demo/supplier_message_variants.json").read_text(encoding="utf-8"))["events"][-4:]
+    truths = json.loads((ROOT / "data/hero_demo/supplier_message_variants_ground_truth.json").read_text(encoding="utf-8"))["cases"][-4:]
+    for source, truth in zip(variants, truths):
+        result = interpret_supplier_message(source, snapshot["project"], snapshot["tasks"], MockEvaluationGateway())
+        assert result["status"] == "task_confirmation_required"
+        assert result["patch"] == {}
+        assert result["related_task_ids"] == truth["direct_task_ids"]
+        assert all(candidate["quote"] in source["content"] for candidate in result["task_candidates"])
+        assert result["questions"]
 
 
 def test_reviewed_external_truth_matches_independent_calendar_dates():

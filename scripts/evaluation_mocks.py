@@ -40,7 +40,19 @@ class MockEvaluationGateway:
         lowered = text.lower()
         tasks = payload["tasks"]
         selected = []
-        if "installation" in lowered or "commissioning work" in lowered:
+        if "셀 설비 제작" in text:
+            selected = [row for row in tasks if str(row.get("name") or "").lower() == "cell equipment manufacturing"]
+            quote = "셀 설비 제작"
+        elif "모듈 설비 제작" in text:
+            selected = [row for row in tasks if str(row.get("name") or "").lower() == "module/pack equipment manufacturing"]
+            quote = "모듈 설비 제작"
+        elif "셀 설비 인수시험" in text:
+            selected = [row for row in tasks if str(row.get("name") or "").lower() == "factory acceptance test - cell equipment"]
+            quote = "셀 설비 인수시험"
+        elif "설비가 현장에 도착" in text:
+            selected = [row for row in tasks if str(row.get("name") or "").lower() == "equipment delivery to site"]
+            quote = "설비가 현장에 도착"
+        elif "installation" in lowered or "commissioning work" in lowered:
             selected = [row for row in tasks if "equipment installation" in str(row.get("name") or "").lower()]
             quote = "installation" if "installation" in lowered else "commissioning work"
         elif "clearing trees" in lowered:

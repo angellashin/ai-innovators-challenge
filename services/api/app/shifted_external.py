@@ -14,16 +14,27 @@ ROOT = Path(__file__).resolve().parents[3]
 MAX_RECHECK_ITERATIONS = 12
 
 
-def bundled_hu_calendars(tasks: list[dict[str, Any]]) -> list[tuple[dict, dict]]:
-    """The synthetic hero has a reproducible, explicitly scoped calendar."""
-    task_ids = [str(task["task_id"]) for task in tasks
-                if str(task.get("country") or task.get("country_code") or "").casefold() in {"hungary", "hu", "헝가리"}]
+def bundled_hero_calendars(tasks: list[dict[str, Any]]) -> list[tuple[dict, dict]]:
+    """Return the checked-in calendars needed by every hero task and shift."""
+    aliases = {
+        "DE": {"germany", "de", "독일"},
+        "HU": {"hungary", "hu", "헝가리"},
+        "KR": {"south korea", "republic of korea", "korea", "kr", "한국", "대한민국"},
+    }
     rows = []
-    # H04 can carry the final launch tasks into January 2028.
-    for year in (2025, 2026, 2027, 2028):
-        source = json.loads((ROOT / "data" / "external" / f"hu-{year}-holidays.json").read_text(encoding="utf-8"))
-        rows.append(({"country_code": "HU", "year": year, "task_ids": task_ids}, source))
+    for country_code, names in aliases.items():
+        task_ids = [str(task["task_id"]) for task in tasks
+                    if str(task.get("country") or task.get("country_code") or "").casefold() in names]
+        for path in sorted((ROOT / "data" / "external").glob(f"{country_code.lower()}-*-holidays.json")):
+            source = json.loads(path.read_text(encoding="utf-8"))
+            rows.append(({"country_code": country_code, "year": int(path.name.split("-")[1]),
+                          "task_ids": task_ids}, source))
     return rows
+
+
+def bundled_hu_calendars(tasks: list[dict[str, Any]]) -> list[tuple[dict, dict]]:
+    """Backward-compatible name retained for evaluation callers."""
+    return [row for row in bundled_hero_calendars(tasks) if row[0]["country_code"] == "HU"]
 
 
 def _schedule_map(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -104,7 +115,10 @@ def recheck_shifted_schedule(
             years_by_country.setdefault(config["country_code"], set()).add(config["year"])
         for row in current["schedule"]:
             country = str(row.get("country_code") or row.get("country") or "").casefold()
-            code = "HU" if country in {"hu", "hungary", "헝가리"} else "DE" if country in {"de", "germany", "독일"} else None
+            code = ("HU" if country in {"hu", "hungary", "헝가리"}
+                    else "DE" if country in {"de", "germany", "독일"}
+                    else "KR" if country in {"kr", "south korea", "republic of korea", "korea", "한국", "대한민국"}
+                    else None)
             if code in years_by_country:
                 span = range(date.fromisoformat(row["planned_start"]).year, date.fromisoformat(row["planned_finish"]).year + 1)
                 if any(year not in years_by_country[code] for year in span):
