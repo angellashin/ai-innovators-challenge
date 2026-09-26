@@ -907,7 +907,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
             <button onClick={createEventFromDemo} disabled={!project.demo_events?.length || busy}>hero 합성 통보 불러오기</button>
             <button className="secondary" onClick={analyzeLatestEvent} disabled={!project.events?.length || busy}>영향 분석 시작</button>
           </div>
-          <small>보조 입력: 협력사 메일 내용 또는 변경 통보 (샘플은 합성 데이터). 입력 후 영향 미리보기가 자동으로 표시됩니다.</small>
+          <small>협력사 변경 통보를 입력하세요. 데모 샘플은 합성 데이터입니다. 입력 후 영향 미리보기가 자동으로 표시됩니다.</small>
           <textarea aria-label="협력사 변경 통보" value={manualMessage} onChange={(event) => setManualMessage(event.target.value)} rows={4} />
           <button className="secondary" onClick={createManualEvent} disabled={!project.version || busy}>변경 메시지 등록</button>
 

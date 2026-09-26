@@ -3,7 +3,7 @@
 ## Source of truth
 
 - Status: Active direction; the light editorial workspace and flat operational illustrations are the current visual baseline, pending responsive and accessibility QA.
-- Last refreshed: 2026-09-24.
+- Last refreshed: 2026-09-26.
 - Primary surfaces: onboarding, Overview, Changes, Schedule, Scenarios, Actions, History.
 - Evidence reviewed: `REPLAN_PROJECT_MASTER.md`, the current `/workspaces`, `/workspaces/new`, and project workspace implementations, `apps/web/app/styles.css`, `assets/brand/README.md`, `apps/web/public/images/workspace/`, the local Lazyweb REPLAN UX/UI research, and the product-owner decision that one internal project operations team operates the project through a shared account.
 - This file is the portable implementation brief. The local research folder contains third-party reference screenshots and is not part of the repository.
@@ -26,9 +26,10 @@
 - The demo is deliberately narrower than generic project-risk management: one equipment package moving through delivery, site readiness, installation, testing/commissioning, and handover.
 - The core unit is a change-response decision, not a four-party collaboration network. External suppliers, battery companies, EPCs, and construction partners remain evidence sources or confirmation targets while the internal team owns the decision.
 - A believable change does not add the same delay to every task. Arrival, site readiness, qualified people, approvals, and reserved supplier capacity are separate conditions that must be linked before the schedule is recalculated.
-- The primary response loop is `external source scan → evidence and applicability candidates → provisional impact analysis → confirm missing applicability/dates → conditional options → execution-condition evidence → approval → new schedule/export → continued monitoring`.
-- Supplier messages remain an optional supplementary input. Forecasts, public calendars, notices, synthetic examples and confirmed execution facts have distinct labels. Provisional calculation is permitted before applicability confirmation; approval is not.
-- AI may interpret a message, suggest affected tasks, and ask for missing facts. The deterministic scheduler remains responsible for dates, dependencies, capacity, and calculated costs. Unknown quoted cost is shown as unknown, never as zero.
+- Supplier notices received by the team and periodic external monitoring are parallel change triggers. The initial monitoring plan proposes weather checks every 6 hours and registered notices/public news every 12 hours; the team accepts or adjusts it. Supplier messages are handled on receipt (manual entry in the MVP; automatic email ingestion is not connected). These are initial proposals, not source update guarantees.
+- The primary response loop is `Excel upload → agent-proposed monitoring plan and human acceptance → supplier notice or newly detected external change → interpretation and affected-task confirmation (ask if ambiguous) → deterministic schedule calculation → holiday and weather recheck over the shifted period → L2 evidence → response comparison → condition confirmation → human approval → revised Excel → continued monitoring`.
+- The demo supplier notices are synthetic; supplier notices are nevertheless a core trigger. Forecasts, public calendars, registered notices, synthetic examples and confirmed execution facts need distinct labels. Do not calculate from an unconfirmed task/date; an applicability-dependent scenario remains conditional, never an approved fact.
+- AI interprets and links evidence, asks questions, and drafts responses. Deterministic tools own dates, dependencies, schedule and cost calculations. Humans confirm assumptions, approve schedule changes and send external messages. Unknown quoted cost is shown as unknown, never as zero.
 
 ## Personas and jobs
 
@@ -41,9 +42,9 @@
 
 - Primary navigation: Overview / Changes / Schedule / Scenarios / Actions / History. This sidebar is the single navigation model; do not duplicate it with a second horizontal stepper. Each destination presents one focused work surface, while Overview only summarizes the current decision queue and links to the relevant surface.
 - Workspace ownership: one 프로젝트 운영팀 account owns projects, baselines, decisions, and commits. External organizations are project data, not navigation tenants or invited users.
-- First-use flow: Upload → Map → Review → Monitor → Overview.
-- Repeated flow: detect change → show impact and evidence → compare scenarios → confirm assumptions → approve → create actions and Excel output.
-- First demo flow: create a project, connect a baseline, bind external sources to tasks, inspect a dated external change and its evidence, compare available catalog responses, confirm conditions, approve and export.
+- First-use flow: Upload → Map → Review → accept the agent-proposed monitoring plan → Overview.
+- Repeated flow: receive a supplier notice or detect an external change → confirm affected tasks and dates → calculate and recheck the shifted period → show impact and L2 evidence → compare scenarios → confirm conditions → approve → create actions and revised Excel → keep monitoring.
+- First demo flow: create a project, connect a baseline, accept monitoring sources, inspect a supplier notice and its task evidence, compare available catalog responses, confirm conditions, approve and export. A newly detected external change enters the same analysis flow.
 - Overview hierarchy: decision needed today, new changes, largest impacts, active actions, then overall project status. Lead with actionable language rather than abstract health scores.
 
 ## Design principles
