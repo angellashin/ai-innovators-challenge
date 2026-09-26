@@ -139,11 +139,8 @@ def test_repeated_tool_call_guard_blocks_duplicate_call():
 
 def test_invalid_tool_args_are_rejected_before_execution():
     gateway = FakeGateway(
-        [
-            ChatResult(
-                content=json.dumps({"action": "tool", "tool": "inspect_task", "args": {"unknown": "T03"}})
-            )
-        ]
+        [ChatResult(content=json.dumps({"action": "tool", "tool": "inspect_task",
+                                        "args": {"unknown": "T03"}})) for _ in range(3)]
     )
     calls = []
 
@@ -154,6 +151,45 @@ def test_invalid_tool_args_are_rejected_before_execution():
 
     assert result["status"] == "invalid_tool_args"
     assert calls == []
+    assert len(gateway.requests) == 3
+    assert len(result["tool_log"]) == 3
+    assert all(entry["status"] == "invalid_tool_args" and entry["tool"] == "inspect_task"
+               and entry["args"] == {"unknown": "T03"} and entry["error"] for entry in result["tool_log"])
+
+
+def test_invalid_tool_args_can_be_corrected_within_tool_limit():
+    gateway = FakeGateway([
+        ChatResult(content=json.dumps({"action": "tool", "tool": "inspect_task",
+                                       "args": {"task_id": "T03", "unused": True}})),
+        ChatResult(content=json.dumps({"action": "tool", "tool": "inspect_task",
+                                       "args": {"task_id": "T03"}})),
+        ChatResult(content=json.dumps({"status": "completed", "summary": "done"})),
+    ])
+    calls = []
+
+    def inspect_task(task_id):
+        calls.append(task_id)
+        return {"task_id": task_id}
+
+    result = run_agent({"_llm_gateway": gateway}, {"content": "T03 확인"},
+                       {"inspect_task": inspect_task}, max_steps=3)
+
+    assert result["status"] == "completed"
+    assert calls == ["T03"]
+    assert [entry["status"] for entry in result["tool_log"]] == ["invalid_tool_args", "ok"]
+    assert any("unused" in message.get("content", "") and "invalid_tool_args" in message.get("content", "")
+               for message in gateway.requests[1]["messages"])
+
+
+def test_invalid_arg_retry_respects_tool_call_limit():
+    gateway = FakeGateway([
+        ChatResult(content=json.dumps({"action": "tool", "tool": "inspect_task",
+                                       "args": {"unused": True}})) for _ in range(2)
+    ])
+    result = run_agent({"_llm_gateway": gateway}, {}, {"inspect_task": lambda task_id: None}, max_steps=1)
+    assert result["status"] == "invalid_tool_args"
+    assert len(result["tool_log"]) == 1
+    assert len(gateway.requests) == 1
 
 
 def test_matching_redundant_project_id_is_ignored_for_project_scoped_tool():
@@ -175,6 +211,10 @@ def test_other_project_id_is_rejected_before_tool_execution():
     gateway = FakeGateway([
         ChatResult(content=json.dumps({"action": "tool", "tool": "get_project_context",
                                        "args": {"project_id": "P-OTHER"}})),
+        ChatResult(content=json.dumps({"action": "tool", "tool": "get_project_context",
+                                       "args": {"project_id": "P-OTHER"}})),
+        ChatResult(content=json.dumps({"action": "tool", "tool": "get_project_context",
+                                       "args": {"project_id": "P-OTHER"}})),
     ])
     calls = []
 
@@ -187,6 +227,8 @@ def test_other_project_id_is_rejected_before_tool_execution():
 
     assert result["status"] == "invalid_tool_args"
     assert calls == []
+    assert result["tool_log"][0]["args"] == {"project_id": "P-OTHER"}
+    assert result["tool_log"][0]["error"] == "project_id does not match the active project"
 
 
 def test_draft_numbers_and_post_notice_regulatory_evidence_are_filtered():

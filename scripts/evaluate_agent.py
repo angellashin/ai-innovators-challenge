@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -42,6 +43,37 @@ def _scores(predicted: set[str], expected: set[str]) -> tuple[int, int, int]:
 
 def _rate(numerator: int, denominator: int) -> float:
     return round(numerator / denominator, 4) if denominator else 0.0
+
+
+_DRAFT_CLAIM = re.compile(
+    r"(?<![\w])\d{4}-\d{2}-\d{2}(?![\d-])|"
+    r"(?<![\w])(?:[$€£₩]\s*\d[\d,]*(?:\.\d+)?|"
+    r"\d[\d,]*(?:\.\d+)?\s*(?:일간?|days?|개월|months?|원|달러|USD|KRW|EUR|%))",
+    re.IGNORECASE,
+)
+_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+_DATE = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
+
+
+def _draft_claims(draft: dict) -> list[str]:
+    claims = []
+    for match in _DRAFT_CLAIM.finditer(json.dumps(draft, ensure_ascii=False)):
+        value = match.group().strip()
+        claims.append(value if _DATE.fullmatch(value) else _NUMBER.search(value).group().replace(",", ""))
+    return claims
+
+
+def _calculator_claims(value: object) -> set[str]:
+    if isinstance(value, dict):
+        return set().union(*(_calculator_claims(child) for child in value.values()))
+    if isinstance(value, list):
+        return set().union(*(_calculator_claims(child) for child in value))
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return {str(value)}
+    if isinstance(value, str):
+        dates = set(_DATE.findall(value))
+        return dates | {match.group().replace(",", "") for match in _NUMBER.finditer(_DATE.sub("", value))}
+    return set()
 
 
 def _summarize(rows: list[dict]) -> dict:
@@ -235,37 +267,50 @@ def evaluate_workflow(project: dict, tasks: list[dict], options: list[dict], gat
                                    event={**event, "patch": combine_patches([event.get("patch") or {}, conditional])}),
                         "conditional": True, "approval_required": True}
 
-            output = run_agent({"_llm_gateway": gateway, "related_tasks": [task for task in tasks
+            output = run_agent({"_llm_gateway": gateway, "project": project,
+                                "related_tasks": [task for task in tasks
                                 if task["task_id"] in event.get("related_task_ids", [])],
-                                "task_candidates": event.get("task_candidates") or []}, event,
+                                "task_candidates": event.get("task_candidates") or [],
+                                "risk_signal_evidence": event.get("risk_signal_evidence") or []}, event,
                                {"find_task_candidates": find_task_candidates,
                                 "simulate_schedule": simulate_schedule,
                                 "recheck_shifted_schedule": recheck_shifted_schedule_tool,
                                 "simulate_regulatory_condition": simulate_regulatory_condition,
                                 "search_risk_signals": search_risk_signals_tool,
                                 "list_response_options": lambda: {"options": options}}, max_steps=8)
-            tools = [entry["tool"] for entry in output.get("tool_log") or []]
+            tool_log = output.get("tool_log") or []
+            tools = [entry["tool"] for entry in tool_log if entry.get("status") == "ok"]
+            execution_failed = (not tools or output.get("status") not in {"completed", "needs_input"}
+                                or any(entry.get("status") == "error" for entry in tool_log))
             needs_calculation = truth["expected_outcome"] == "IMPACT" and bool(event.get("patch"))
             ambiguous = not event.get("patch") and event.get("classification_status") != "NO_SCHEDULE_IMPACT"
             draft = output.get("email_draft") or {}
-            calculator_text = json.dumps([entry.get("result") for entry in output.get("tool_log") or []
-                                          if entry["tool"] in {"simulate_schedule", "recheck_shifted_schedule", "simulate_regulatory_condition"}],
-                                         ensure_ascii=False)
-            numeric = __import__("re").findall(r"(?<![A-Za-z])\d{4}-\d{2}-\d{2}|(?<![A-Za-z\d])\d[\d,]*", json.dumps(draft, ensure_ascii=False))
-            unsupported = [token for token in numeric if token not in calculator_text]
+            calculator_claims = _calculator_claims([entry.get("result") for entry in tool_log
+                                                    if entry.get("status") == "ok" and entry["tool"] in
+                                                    {"simulate_schedule", "recheck_shifted_schedule", "simulate_regulatory_condition"}])
+            numeric = _draft_claims(draft)
+            unsupported = [token for token in numeric if token not in calculator_claims]
             unconfirmed = "확인되지" in str(raw.get("content") or "")
             assessment = output.get("regulatory_assessment") or {}
             rows.append({"case_id": case_id, "tool_order": tools,
-                         "required_tools_called": not needs_calculation or all(name in tools for name in
-                                                   ("simulate_schedule", "recheck_shifted_schedule")),
-                         "ambiguous_stopped": not ambiguous or not any(name in tools for name in
-                                               ("simulate_schedule", "recheck_shifted_schedule")),
+                         "execution_failed": execution_failed,
+                         "required_tools_called": not execution_failed and (not needs_calculation or any(name in tools for name in
+                                                   ("simulate_schedule", "recheck_shifted_schedule"))),
+                         "ambiguous_stopped": not execution_failed and (not ambiguous or not any(name in tools for name in
+                                               ("simulate_schedule", "recheck_shifted_schedule"))),
                          "draft_numeric_claims": len(numeric), "unsupported_draft_numeric_claims": len(unsupported),
                          "unconfirmed_regulation": unconfirmed,
                          "unconfirmed_as_confirmed_delay": bool(unconfirmed and assessment.get("confirmed_delay_days")),
-                         "status": output.get("status")})
+                         "status": output.get("status"), "summary": output.get("summary"),
+                         "stop_reason": output.get("stop_reason"),
+                         "unresolved_items": output.get("unresolved_items") or [],
+                         "rejected_tool_calls": [{"tool": entry["tool"], "args": entry.get("args"),
+                                                  "reason": entry.get("error")}
+                                                 for entry in tool_log if entry.get("status") == "invalid_tool_args"]})
     return {"cases": len(rows), "required_tool_rate": _rate(sum(row["required_tools_called"] for row in rows), len(rows)),
             "ambiguous_stop_rate": _rate(sum(row["ambiguous_stopped"] for row in rows), len(rows)),
+            "execution_failures": sum(row["execution_failed"] for row in rows),
+            "execution_failure_rate": _rate(sum(row["execution_failed"] for row in rows), len(rows)),
             "unsupported_draft_numeric_rate": _rate(sum(row["unsupported_draft_numeric_claims"] for row in rows),
                                                     sum(row["draft_numeric_claims"] for row in rows)),
             "unconfirmed_regulation_as_confirmed_delay_rate": _rate(sum(row["unconfirmed_as_confirmed_delay"] for row in rows),

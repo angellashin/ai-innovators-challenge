@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from ..adapters.llm import ChatResult, LLMUnavailable, OpenAICompatibleLLM
 
 MAX_TOOL_CALLS = 8
+MAX_INVALID_ARG_RETRIES = 2
 MAX_ARG_BYTES = 8_192
 BLOCKED_TOOL_PARTS = ("commit", "send")
 
@@ -36,17 +37,19 @@ def run_agent(
     seen_calls = set()
     usage: Dict[str, Any] = {}
     max_calls = min(MAX_TOOL_CALLS, max(0, max_steps) * 2)
+    invalid_arg_retries = 0
 
     try:
         gateway = _gateway(context)
     except LLMUnavailable as exc:
         return _unavailable(str(exc))
 
-    for _step in range(max(1, max_steps)):
+    for step in range(max(1, max_steps)):
         try:
             reply = gateway.chat(messages, tools=tool_schemas, response_format={"type": "json_object"})
         except LLMUnavailable as exc:
-            return _unavailable(str(exc))
+            return _result(status="llm_unavailable", summary="LLM agent is unavailable because the gateway cannot be reached.",
+                           unresolved_items=[str(exc)], tool_log=tool_log, usage=usage)
         except Exception as exc:  # pragma: no cover - exercised through runtime behavior, exact clients vary.
             return _result(
                 status="failed",
@@ -61,6 +64,12 @@ def run_agent(
         if action:
             outcome = _execute_action(action, allowed_tools, seen_calls, tool_log, max_calls, context)
             if outcome:
+                if (outcome["status"] == "invalid_tool_args"
+                        and invalid_arg_retries < MAX_INVALID_ARG_RETRIES
+                        and len(tool_log) < max_calls and step + 1 < max_steps):
+                    invalid_arg_retries += 1
+                    messages.extend(_tool_result_messages(action, tool_log[-1]))
+                    continue
                 return _result(tool_log=tool_log, usage=usage, **outcome)
             messages.extend(_tool_result_messages(action, tool_log[-1]))
             continue
@@ -187,7 +196,7 @@ def _next_action(reply: ChatResult) -> Optional[Dict[str, Any]]:
         call = reply.tool_calls[0]
         return {
             "tool": call.get("name"),
-            "args": call.get("arguments") or {},
+            "args": call.get("arguments", {}),
             "tool_call_id": call.get("id"),
         }
     try:
@@ -195,10 +204,10 @@ def _next_action(reply: ChatResult) -> Optional[Dict[str, Any]]:
     except json.JSONDecodeError:
         return None
     if payload.get("action") == "tool":
-        return {"tool": payload.get("tool"), "args": payload.get("args") or {}}
+        return {"tool": payload.get("tool"), "args": payload.get("args", {})}
     tool_call = payload.get("tool_call")
     if isinstance(tool_call, dict):
-        return {"tool": tool_call.get("name") or tool_call.get("tool"), "args": tool_call.get("args") or {}}
+        return {"tool": tool_call.get("name") or tool_call.get("tool"), "args": tool_call.get("args", {})}
     return None
 
 
@@ -213,7 +222,7 @@ def _tool_result_messages(action: Dict[str, Any], result: Dict[str, Any]) -> Lis
                     {
                         "id": tool_call_id,
                         "type": "function",
-                        "function": {"name": action["tool"], "arguments": _encode(action.get("args") or {})},
+                        "function": {"name": action["tool"], "arguments": _encode(action.get("args"))},
                     }
                 ],
             },
@@ -231,7 +240,7 @@ def _execute_action(
     context: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
     name = str(action.get("tool") or "")
-    args = action.get("args") or {}
+    args = action.get("args", {})
     if len(tool_log) >= max_calls:
         return {
             "status": "max_tool_calls_reached",
@@ -255,20 +264,12 @@ def _execute_action(
             project = context.get("project") or {}
             expected = str(project.get("project_id") or "") if isinstance(project, dict) else ""
             if not expected or str(args["project_id"]) != expected:
-                return {
-                    "status": "invalid_tool_args",
-                    "summary": "Agent requested a tool with invalid arguments.",
-                    "unresolved_items": ["project_id does not match the active project"],
-                }
+                return _invalid_args(tool_log, name, args, "project_id does not match the active project")
             args = {key: value for key, value in args.items() if key != "project_id"}
             action["args"] = args
     ok, reason = _validate_args(tools[name], args)
     if not ok:
-        return {
-            "status": "invalid_tool_args",
-            "summary": "Agent requested a tool with invalid arguments.",
-            "unresolved_items": [reason],
-        }
+        return _invalid_args(tool_log, name, args, reason)
     fingerprint = (name, _encode(args))
     if fingerprint in seen_calls:
         return {
@@ -284,6 +285,12 @@ def _execute_action(
     except Exception as exc:
         tool_log.append({"tool": name, "args": args, "status": "error", "error": str(exc)})
     return None
+
+
+def _invalid_args(tool_log: List[Dict[str, Any]], name: str, args: Any, reason: str) -> Dict[str, Any]:
+    tool_log.append({"tool": name, "args": args, "status": "invalid_tool_args", "error": reason})
+    return {"status": "invalid_tool_args", "summary": "Agent requested a tool with invalid arguments.",
+            "unresolved_items": [reason]}
 
 
 def _validate_args(func: Callable[..., Any], args: Any) -> Tuple[bool, str]:

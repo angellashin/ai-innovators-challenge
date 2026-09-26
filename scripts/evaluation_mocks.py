@@ -30,24 +30,30 @@ class MockEvaluationGateway:
         event = initial["event"]
         called = [json.loads(row["content"][13:]) for row in messages
                   if row.get("role") == "user" and row.get("content", "").startswith("Tool result: ")]
+        completed = [row for row in called if row.get("status") == "ok"]
         if not event.get("patch"):
             return {"status": "needs_input", "summary": "작업과 변경 날짜 확인이 필요합니다.",
                     "stop_reason": "작업 또는 날짜가 불명확합니다.",
                     "unresolved_items": ["영향 작업과 변경 날짜를 확인해 주세요."]}
         risk = any(word in event.get("content", "") for word in ("규제", "규정", "인허가", "허가"))
         sequence = ["simulate_schedule", "recheck_shifted_schedule"] + (["search_risk_signals", "simulate_regulatory_condition"] if risk else []) + ["list_response_options"]
-        if len(called) < len(sequence):
-            name = sequence[len(called)]
+        if len(completed) < len(sequence):
+            name = sequence[len(completed)]
             args = {"option_ids": []} if name in {"simulate_schedule", "recheck_shifted_schedule", "simulate_regulatory_condition"} else {"risk_type": "regulation"} if name == "search_risk_signals" else {}
+            case_id = event.get("event_id")
+            if case_id == "H04" and not completed:
+                args["project_id"] = initial["context"]["project"]["project_id"]
+            if case_id == "V03" and not completed and not called:
+                args["unused_argument"] = True
             return {"action": "tool", "tool": name, "args": args}
-        calculator = called[1].get("result") or {}
+        calculator = completed[1].get("result") or {}
         draft = f"변경 통보를 확인했습니다. 계산 결과의 완료 예정일 {calculator.get('finish_date', '')}을 기준으로 대응안을 협의하고 싶습니다."
         return {"status": "completed", "summary": "도구 결과를 검토했습니다.",
                 "email_draft": {"subject": "일정 변경 협의 초안", "body": draft},
                 "option_explanations": ["일정 단축안은 승인 조건과 비용을 확인해야 합니다."],
                 "regulatory_assessment": {"likelihood": "불확실", "reason": "적용 여부가 확인되지 않았습니다.",
                     "human_check": "관할 기관과 적용 조항을 확인해 주세요.",
-                    "evidence_risk_ids": [row["risk_id"] for row in (called[2].get("result") or {}).get("results", [])] if risk else []}}
+                    "evidence_risk_ids": [row["risk_id"] for row in (completed[2].get("result") or {}).get("results", [])] if risk else []}}
 
     def _supplier(self, payload: dict) -> dict:
         body = payload["message"]
