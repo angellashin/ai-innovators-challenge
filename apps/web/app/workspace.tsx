@@ -357,6 +357,12 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       if (loaded.event_ids[0]) go("changes", `review-${loaded.event_ids[0]}`);
       return;
     }
+    if (item.event_id === "X2" && !(project.events || []).some((row) => row.data?.demo_signal_id === "N-X2")) {
+      // The lead demo needs its same-period notice on the board first, in the order it was recorded.
+      const notice = await guarded("같은 시기 외부 공지(N-X2) 불러오기", () => callApi<{ event_ids: string[] }>(
+        `/api/projects/${projectId}/demo/external-signals/N-X2`, { method: "POST" }));
+      if (!notice) return;
+    }
     await createEvent({
       event_id: text(item.event_id, "hero-change"),
       corrects_event_id: item.corrects_event_id ? text(item.corrects_event_id) : undefined,
@@ -747,7 +753,12 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
               {demoEvents.length > 0 && <>
                 <label>합성 통보<select aria-label="합성 통보 선택" value={selectedDemoIndex} onChange={(event) => setSelectedDemoIndex(Number(event.target.value))}>
                   <option value={-1}>통보를 고르세요</option>
-                  {demoEvents.map((item, index) => <option key={`${text(item.event_id)}-${index}`} value={index}>{text(item.event_id)} · {text(item.source_label)}{demoEvents.slice(0, index).some((earlier) => earlier.event_id === item.event_id) ? " (중복 수신)" : ""}{item.corrects_event_id ? ` (${text(item.corrects_event_id)} 정정)` : ""}</option>)}
+                  <optgroup label="대표 데모">
+                    {demoEvents.map((item, index) => item.event_id === "X2" ? <option key="lead-X2" value={index}>X2 · 대표 데모 · 협력사 통보에 없던 숨은 위험 찾기 (같은 시기 외부 공지 N-X2도 함께 불러옴)</option> : null)}
+                  </optgroup>
+                  <optgroup label="테스트용">
+                    {demoEvents.map((item, index) => item.event_id === "X2" ? null : <option key={`${text(item.event_id)}-${index}`} value={index}>{text(item.event_id)} · {text(item.source_label)}{demoEvents.slice(0, index).some((earlier) => earlier.event_id === item.event_id) ? " (중복 수신)" : ""}{item.corrects_event_id ? ` (${text(item.corrects_event_id)} 정정)` : ""}</option>)}
+                  </optgroup>
                 </select></label>
                 <button className={intakePrimary ? "" : "secondary"} onClick={createEventFromDemo} disabled={selectedDemoIndex < 0 || busy}>합성 통보 불러오기</button>
               </>}
