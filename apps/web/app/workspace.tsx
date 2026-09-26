@@ -31,6 +31,8 @@ type ProjectState = {
   site_prep_items?: Row[];
   supplier_calendars?: Row[];
   demo_events?: Dict[];
+  agent_enabled?: boolean;
+  related_signals?: Record<string, Dict[]>;
   versions?: Row[];
   approvals?: Row[];
 };
@@ -343,6 +345,17 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   async function createEventFromDemo() {
     const item = project.demo_events?.[selectedDemoIndex];
     if (!item) return;
+    if (item.channel === "registered_public_source") {
+      // External notices enter the way a registered-source scan records them.
+      const loaded = await guarded("외부 공지 불러오기", () => callApi<{ event_ids: string[]; duplicate: boolean }>(
+        `/api/projects/${projectId}/demo/external-signals/${encodeURIComponent(text(item.signal_id))}`, { method: "POST" }));
+      setSelectedDemoIndex(-1);
+      if (!loaded) return;
+      await refresh();
+      setNotice(loaded.duplicate ? "이미 불러온 외부 공지입니다." : "외부 공지를 변경 카드로 등록했습니다. 규칙 후보만 표시하며, '조사 시작'을 눌러야 에이전트가 조사합니다.");
+      if (loaded.event_ids[0]) go("changes", `review-${loaded.event_ids[0]}`);
+      return;
+    }
     await createEvent({
       event_id: text(item.event_id, "hero-change"),
       corrects_event_id: item.corrects_event_id ? text(item.corrects_event_id) : undefined,
@@ -390,6 +403,14 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
         body: JSON.stringify({ confirmed: true, ...payload }),
       }));
     if (reviewed) await startAnalysis(eventId);
+  }
+
+  async function startInvestigation(eventId: string) {
+    const queued = await guarded("조사 시작", () => callApi<{ run_id: string }>(
+      `/api/projects/${projectId}/events/${eventId}/investigations`, { method: "POST" }));
+    if (!queued) return;
+    await refresh();
+    setNotice("조사를 시작했습니다. 결과는 이 변경 카드에 표시됩니다.");
   }
 
   async function reviewExternalEvent(eventId: string, payload: Dict) {
@@ -756,6 +777,9 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
               <ChangeCard key={text(event.id)} event={event} tasks={tasks} taskNames={taskNames} busy={busy}
                 isFocus={event.id === progress.focusEvent?.id}
                 runs={(project.runs || []).filter((item) => item.kind === "analysis" && item.event_id === event.id)}
+                investigations={(project.runs || []).filter((item) => item.kind === "investigation" && item.event_id === event.id)}
+                relatedSignals={(project.related_signals || {})[text(event.id)] || []} agentEnabled={Boolean(project.agent_enabled)}
+                onInvestigate={startInvestigation}
                 onConfirm={confirmEvent} onAnalyze={startAnalysis} onReviewExternal={reviewExternalEvent}
                 onOpenResult={() => go("scenarios")} />
             ))}</div> : <div className="empty focus-empty">아직 변경이 없습니다. 왼쪽에서 통보를 불러오세요.</div>}
@@ -976,8 +1000,8 @@ function firstIsoDate(value: string) {
   return /(20\d{2}-\d{2}-\d{2})/.exec(value)?.[1] || "";
 }
 
-function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, onConfirm, onAnalyze, onReviewExternal, onOpenResult }: {
-  event: Row; tasks: Dict[]; taskNames: Record<string, string>; busy: boolean; isFocus: boolean; runs: Row[];
+function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, investigations, relatedSignals, agentEnabled, onInvestigate, onConfirm, onAnalyze, onReviewExternal, onOpenResult }: {
+  event: Row; tasks: Dict[]; taskNames: Record<string, string>; busy: boolean; isFocus: boolean; runs: Row[]; investigations: Row[]; relatedSignals: Dict[]; agentEnabled: boolean; onInvestigate: (eventId: string) => void;
   onConfirm: (eventId: string, payload?: Dict) => Promise<void>; onAnalyze: (eventId: string) => Promise<void>;
   onReviewExternal: (eventId: string, payload: Dict) => Promise<void>; onOpenResult: () => void;
 }) {
@@ -1014,6 +1038,9 @@ function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, onConfirm, o
       {candidates.length > 0 && <div className="event-interpretation"><b>에이전트가 찾은 작업 후보</b><ul>{candidates.map((candidate, index) => <li key={`${text(candidate.task_id)}-${index}`}><span>{text(candidate.task_id)}</span> {taskNames[text(candidate.task_id)] || ""}{candidate.quote ? <q>{text(candidate.quote)}</q> : null}{candidate.reason ? <small> {text(candidate.reason)}</small> : null}</li>)}</ul></div>}
       {Array.isArray(data.risk_signal_evidence) && data.risk_signal_evidence.length > 0 && <details className="event-evidence"><summary>유사 위험 실제 사례 {(data.risk_signal_evidence as Dict[]).length}건 · 지연 일수는 계산에 쓰지 않음</summary>{(data.risk_signal_evidence as Dict[]).map((caseRow) => <p key={text(caseRow.risk_id)}><a href={text(caseRow.source_url)} target="_blank" rel="noreferrer">{text(caseRow.title)}</a><small>발행 {text(caseRow.published_date)} · {text(caseRow.country)} · {text(caseRow.risk_type)}{caseRow.temporal_status === "POST_AS_OF_REFERENCE" ? " · 통보 이후 발행: 후향적 참고만 가능" : ""}</small></p>)}</details>}
 
+      <InvestigationPanel external={Boolean(data.evidence)} inactive={inactive} signals={relatedSignals}
+        runs={investigations} agentEnabled={agentEnabled} busy={busy} onStart={() => onInvestigate(eventId)} />
+
       {data.evidence ? <EvidenceReview event={data} tasks={tasks} disabled={busy} onReview={(payload) => onReviewExternal(eventId, payload)} onAnalyze={() => onAnalyze(eventId)} />
         : inactive ? <p className="muted">{status === "SUPERSEDED" ? "정정 통보로 대체되어 계산하지 않습니다." : "보류된 변경입니다."}</p>
         : interpreting ? <p className="muted">통보를 해석하고 있습니다…</p>
@@ -1032,6 +1059,78 @@ function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, onConfirm, o
         : <button className={primary} onClick={() => onAnalyze(eventId)} disabled={busy}>영향 분석 시작</button>}
     </article>
   );
+}
+
+const STOP_LABEL: Record<string, string> = {
+  M1: "관련 없음 · 기록만", M2: "완료일 영향 없음 · 기록만", M3: "사람 확인 대기 · 기간 확인", M4: "사람 확인 대기",
+  M5: "계산할 수 없음", done: "대응안 비교 완료",
+};
+const CHECK_LABEL: Record<string, string> = {
+  find_procurement_items: "구매 품목 찾기", check_schedule_slack: "여유 계산", simulate_conditional: "조건부 일정 계산",
+  get_task_facts: "작업 속성 확인", narrow_candidates: "후보 추리기", search_risk_signals: "유사 사례 검색",
+  compare_responses: "대응안 비교",
+};
+
+function checkResult(entry: Dict) {
+  const result = (entry.result || {}) as Dict;
+  if (entry.status === "error") return `도구 오류: ${text(entry.error)}`;
+  if (result.status === "rejected") return `거절: ${text(result.reason)}`;
+  const rows = (key: string) => (Array.isArray(result[key]) ? result[key] : []) as Dict[];
+  switch (text(entry.tool)) {
+    case "find_procurement_items":
+      return rows("items").map((item) => `${text(item.item_id)} ${text(item.item_name)} → ${text(item.needed_for_task_id)}(${text(item.needed_by)} 필요, ${text(item.planned_arrival)} 도착)`).join(" · ") || "해당 품목 없음";
+    case "check_schedule_slack":
+      return rows("tasks").map((row) => `${text(row.task_id)} 여유 ${text(row.float_calendar_days)}일${row.absorbs_bound === true ? " (기간 상한 흡수)" : row.absorbs_bound === false ? " (기간 상한 초과)" : ""}${row.on_critical_path ? " · 주공정" : ""}`).join(" · ");
+    case "simulate_conditional":
+      return [`완료 ${text(result.finish_date)} (보고된 변경만 반영 ${text(result.finish_with_reported_change_only)} 대비 +${text(result.added_shift_days_vs_reported_change)}일)`,
+        ...rows("changes").filter((row) => row.latest_action_date).map((row) => `${text(row.item_id || row.task_id)} 행동 기한 ${text(row.latest_action_date)}`)].join(" · ");
+    case "get_task_facts":
+      return rows("tasks").map((row) => `${text(row.task_id)} 원산지 ${((row.supplier_origin_countries || []) as string[]).join("/") || text(row.origin_country)}${row.customs_required ? " · 통관" : ""}`).join(" · ");
+    case "narrow_candidates":
+      return `후보 ${rows("candidates").length}개: ${rows("candidates").map((row) => text(row.task_id)).join(", ")}`;
+    case "search_risk_signals":
+      return `유사 사례 ${rows("results").length}건`;
+    case "compare_responses":
+      return `대응안 ${rows("scenarios").length}개 계산`;
+    default:
+      return "";
+  }
+}
+
+function InvestigationPanel({ external, inactive, signals, runs, agentEnabled, busy, onStart }: {
+  external: boolean; inactive: boolean; signals: Dict[]; runs: Row[]; agentEnabled: boolean; busy: boolean; onStart: () => void;
+}) {
+  const latest = runs.slice().sort((a, b) => text(b.created_at, "").localeCompare(text(a.created_at, "")))[0];
+  if ((!external && !signals.length) || (inactive && !latest)) return null;
+  const running = latest && !["succeeded", "failed"].includes(text(latest.status));
+  const data = (latest?.data || {}) as Dict;
+  const agent = (data.agent || {}) as Dict;
+  const record = (agent.investigation || {}) as Dict;
+  const log = (Array.isArray(agent.tool_log) ? agent.tool_log : []) as Dict[];
+  const link = record.cause_link as Dict | undefined;
+  const email = agent.email_draft as Dict | undefined;
+  const stop = text(data.status, "");
+  const quiet = stop === "M1" || stop === "M2";
+  const reasoning = log.length > 0 && <ol className="investigation-checks">{log.map((entry, index) => <li key={index}>
+    <b>{CHECK_LABEL[text(entry.tool)] || text(entry.tool)}</b>
+    {entry.args && (entry.args as Dict).reason ? <span className="why">왜: {text((entry.args as Dict).reason)}</span> : null}
+    <small>→ {checkResult(entry)}</small></li>)}</ol>;
+  return <div className="investigation" aria-label="외부 신호 조사">
+    <b>외부 신호 조사</b>
+    {signals.length > 0 && <p>같은 시기 외부 공지 {signals.length}건이 같은 작업({signals.map((row) => ((row.overlapping_task_ids || []) as string[]).join(", ")).join(" · ")})에 걸려 있습니다: {signals.map((row) => text(row.title)).join(" · ")}</p>}
+    {!agentEnabled ? <small>에이전트가 꺼져 있어 조사할 수 없습니다.</small>
+      : running ? <p className="muted">조사 중입니다…</p>
+      : !inactive && <button className="secondary" onClick={onStart} disabled={busy}>{latest ? "다시 조사" : "조사 시작"}</button>}
+    {latest && !running && latest.status === "failed" && <p className="event-question">조사가 실패했습니다. 이력에서 실행 기록을 확인하세요.</p>}
+    {latest && latest.status === "succeeded" && <div className="investigation-result">
+      <p><span className="status-chip">{STOP_LABEL[stop] || text(data.summary)}</span> {text(data.summary, "")}</p>
+      {link && link.supplier_quote ? <p className="cause-link">원인 연결: 통보 <q>{text(link.supplier_quote)}</q> ↔ 공지 <q>{text(link.signal_quote)}</q></p> : null}
+      {record.question ? <p className="event-question">확인 요청: {text(record.question)}</p> : null}
+      {email && email.body ? <div className="agent-note email-draft"><h4>협력사 메일 초안 · 발송 전</h4><p><b>{text(email.to, "")}{email.to ? " · " : ""}{text(email.subject, "확인 요청")}</b></p><p className="draft-body">{text(email.body)}</p></div> : null}
+      {quiet ? <details><summary>영향 없음 · 이유 보기</summary>{reasoning}</details>
+        : reasoning && <div className="investigation-log"><h4>판단 기록 · 에이전트가 고른 확인 순서</h4>{reasoning}</div>}
+    </div>}
+  </div>;
 }
 
 function ImpactDetail({ data, taskNames }: { data: Dict; taskNames: Record<string, string> }) {

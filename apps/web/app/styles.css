@@ -2729,3 +2729,12 @@ main {
 .workspace-directory button.decision-item:hover:not(:disabled) { background: #f1f5f1; color: var(--replan-ink); }
 .human-workspace .text-button:hover:not(:disabled) { background: transparent; color: var(--replan-mint-ink); text-decoration: underline; }
 .agent-decision.rules-only { padding: 12px 20px; border-color: #d3d9d6; border-left-color: #9aa7ad; background: #f5f6f4; color: #4a565c; }
+.investigation { margin-top: 12px; padding: 12px 14px; border: 1px solid #b8cbd4; border-left: 3px solid #467f9d; border-radius: 10px; background: #f1f6f8; color: #253f4c; }
+.investigation > b { display: block; margin-bottom: 6px; }
+.investigation p { margin: 6px 0; }
+.investigation .cause-link q { font-style: italic; }
+.investigation-log h4 { margin: 10px 0 4px; }
+.investigation-checks { margin: 6px 0 0; padding-left: 20px; }
+.investigation-checks li { margin: 6px 0; }
+.investigation-checks .why { display: block; }
+.investigation-checks small { display: block; color: #4a565c; }
