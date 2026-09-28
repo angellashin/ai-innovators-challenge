@@ -78,6 +78,8 @@ REPLAN_MAX_PAID_RUNS_PER_DAY=20
 
 `API_KEY`는 LLM 게이트웨이 키이고 `REPLAN_DEMO_TOKEN`은 REPLAN API 보호용 값입니다. 서로 다른 값을 사용합니다.
 
+심사위원용 공개 시연은 `REPLAN_LLM_MODE=replay`로 띄웁니다. 녹화된 LLM 응답만 쓰므로 서버에 `API_KEY`가 필요 없고 비용이 0이며, 데모 가이드의 흐름이 항상 같은 결과로 재현됩니다. `record`·`live`는 녹화본 재생도 하루 한도(`REPLAN_MAX_PAID_RUNS_PER_DAY`)를 소모하므로 여러 사람이 쓰는 공개 주소에서는 한도를 먼저 정합니다. 데모 토큰은 `openssl rand -hex 32`로 서버에서 만들고 화면에 출력하지 않습니다.
+
 ## 5. Compose 실행
 
 ```sh
@@ -91,17 +93,17 @@ API는 `healthy`, web·worker는 `running` 상태여야 합니다. 세 컨테이
 
 ## 6. Nginx 연결
 
-도메인의 DNS A 레코드를 EC2 Public IPv4로 연결한 뒤:
+설정 예시는 `default_server`라 도메인 없이 `http://EC2_PUBLIC_IP`로도 열립니다. Ubuntu 기본 사이트가 먼저 응답하지 않도록 지웁니다.
 
 ```sh
 sudo cp deploy/aws/nginx/replan.conf.example /etc/nginx/sites-available/replan
-sudo nano /etc/nginx/sites-available/replan
+sudo rm -f /etc/nginx/sites-enabled/default
 sudo ln -s /etc/nginx/sites-available/replan /etc/nginx/sites-enabled/replan
 sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-`server_name`을 실제 도메인으로 바꿉니다. 공개 시연 전에는 HTTP 대신 HTTPS를 설정합니다.
+도메인을 연결하면 `server_name`을 실제 도메인으로 바꾸고 HTTPS를 설정합니다. Elastic IP가 없으면 인스턴스를 중지·시작할 때 공인 IP가 바뀝니다(재부팅은 유지). 제출한 주소를 지키려면 Elastic IP를 붙이거나 중지하지 않습니다.
 
 ## 7. GitHub main 자동 배포
 

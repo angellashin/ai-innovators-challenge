@@ -1,9 +1,10 @@
-# Copy to /etc/nginx/sites-available/replan and replace server_name.
+# Copy to /etc/nginx/sites-available/replan, enable it and remove sites-enabled/default.
 # Keep Docker Compose ports bound to 127.0.0.1; Nginx is the public entry point.
+# default_server with server_name _ answers on the public IP too; put a domain here once DNS points at it.
 server {
-    listen 80;
-    listen [::]:80;
-    server_name replan.example.com;
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
 
     client_max_body_size 50m;
 
