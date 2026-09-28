@@ -42,7 +42,7 @@ AI Innovators Challenge @ AI Tech Day 2026 예선(PoC 온라인 심사). 주제:
 | 사람의 확인·승인 흐름 | `apps/web/app/workspace.tsx`(해석 확인, 조건 확인, 승인, 새 버전 확정), `services/api/app/main.py`의 승인·확정 API |
 | 화면 구조 | `apps/web/app/stages.ts`(7단계 한 목록), `inbox.tsx`, `risk-panels.tsx` |
 | 오류·한도 상황 | "에이전트 연결 확인 필요", "자동 추리기 한도 초과 · 규칙 결과만" 표시(`risk-panels.tsx`, `workspace.tsx`) |
-| 배포 | [AWS 배포 안내](../deploy/aws/README.md), `compose.yaml` |
+| 배포 | http://13.209.206.223 (AWS EC2 서울, Docker Compose + Nginx, Elastic IP), [AWS 배포 안내](../deploy/aws/README.md), `compose.yaml` |
 
 ## 제출 코드 (10)
 
