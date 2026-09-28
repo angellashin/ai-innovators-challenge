@@ -70,8 +70,8 @@ export default function WorkspacesPage() {
 
   const progressById = Object.fromEntries(Object.entries(records).map(([id, detail]) => [id, deriveProgress(detail)]));
   const known = Object.values(progressById);
-  const waitingChange = known.filter((item) => item.current === 2 && item.focusEvent).length;
-  const waitingApproval = known.filter((item) => item.current === 3 || item.current === 4).length;
+  const waitingChange = known.filter((item) => item.current === 3 && item.focusEvent).length;
+  const waitingApproval = known.filter((item) => item.current === 4 || item.current === 5).length;
   const committedCount = known.filter((item) => item.allDone).length;
   const queue = projects.filter((project) => progressById[text(project.id)] && !progressById[text(project.id)].allDone).slice(0, 5);
 

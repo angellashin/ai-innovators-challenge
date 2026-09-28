@@ -17,12 +17,9 @@ function friendlyError(value: string) {
 }
 
 const STEPS = [
-  ["BRIEF", "프로젝트 맥락", "이름 정하기"],
-  ["IMPORT", "기준 일정", "hero 데모 또는 Excel 연결"],
-  ["DETECT", "변경 감지", "협력사 통보 해석 확인"],
-  ["COMPARE", "대응안 비교", "일정·비용 영향 비교"],
-  ["APPROVE", "조건 승인", "조건 확인 후 승인"],
-  ["EXECUTE", "일정 반영·실행", "새 일정 버전과 Excel"],
+  ["준비", "일정 연결", "프로젝트 이름을 정하고 Excel 일정을 연결"],
+  ["확인", "위험 확인", "통보와 관련 공지를 보고 일정 영향 확인"],
+  ["결정", "대응 결정", "조건을 확인·승인하고 새 일정 내보내기"],
 ];
 
 export default function NewWorkspacePage() {
@@ -63,7 +60,7 @@ export default function NewWorkspacePage() {
           <Image src="/brand/replan-wordmark.png" alt="REPLAN" width={1500} height={350} priority />
         </Link>
         <div className="project-create-nav-actions">
-          <span><i aria-hidden="true" /> DEMO WORKSPACE</span>
+          <span><i aria-hidden="true" /> PROJECT WORKSPACE</span>
           <Link href="/workspaces">← 프로젝트 목록</Link>
         </div>
       </header>
@@ -74,7 +71,7 @@ export default function NewWorkspacePage() {
           <h1 id="project-create-title">새 프로젝트</h1>
           <p>프로젝트의 최소 정보만 먼저 입력하세요. 생성 후 기준 Excel을 연결하면 일정·비용·자원 영향을 같은 맥락에서 비교할 수 있습니다.</p>
           <ol className="project-create-steps" aria-label="프로젝트 진행 단계">
-            {STEPS.map(([code, label, detail], index) => <li key={code} className={index === 0 ? "active" : undefined}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{label}</b><small>{code} · {detail}</small></div></li>)}
+            {STEPS.map(([code, label, detail], index) => <li key={code} className={index === 0 ? "active" : undefined}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{label}</b><small>{detail}</small></div></li>)}
           </ol>
         </section>
 

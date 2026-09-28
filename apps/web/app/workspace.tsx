@@ -671,22 +671,25 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
 
   // ---- Step rail -----------------------------------------------------
   const stepRail = (
-    <nav className="stage-rail" aria-label="진행 단계">
-      <ol>
-        {STAGES.map((stage, index) => {
-          const state = progress.done[index] ? "done" : index === progress.current ? "current" : "todo";
-          return (
-            <li key={stage.code} className={`stage-step ${state}${stage.section === activeSection ? " here" : ""}`}>
-              <a href={`#${stage.section}`} aria-current={state === "current" ? "step" : undefined}>
-                <span className="stage-code">{index + 1} · {stage.code}</span>
-                <b>{stage.label}</b>
-                <small>{state === "done" ? "완료" : state === "current" ? "지금 할 단계" : "대기"}</small>
-              </a>
-            </li>
-          );
-        })}
-      </ol>
-    </nav>
+    <details className="stage-rail">
+      <summary>전체 진행 과정 <b>{progress.done.filter(Boolean).length}/{STAGES.length} 완료</b><span>단계 보기</span></summary>
+      <nav aria-label="진행 단계">
+        <ol>
+          {STAGES.map((stage, index) => {
+            const state = progress.done[index] ? "done" : index === progress.current ? "current" : "todo";
+            return (
+              <li key={stage.code} className={`stage-step ${state}${stage.section === activeSection ? " here" : ""}`}>
+                <a href={`#${stage.section}`} aria-current={state === "current" ? "step" : undefined}>
+                  <span className="stage-code">{index + 1}단계</span>
+                  <b>{stage.label}</b>
+                  <small>{state === "done" ? "완료" : state === "current" ? "지금 할 단계" : "대기"}</small>
+                </a>
+              </li>
+            );
+          })}
+        </ol>
+      </nav>
+    </details>
   );
 
   const nextCallout = (label: string, section: SectionId, detail: string) => (
