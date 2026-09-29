@@ -113,7 +113,10 @@ def hero_client(tmp_path, monkeypatch):
     monkeypatch.setenv("REPLAN_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("REPLAN_DEMO_TOKEN", "test-token")
     monkeypatch.delenv("API_KEY", raising=False)
-    return TestClient(app)
+    client = TestClient(app)
+    registered = client.post("/api/auth/register", json={"username": "hero_api_user", "password": "StrongPass123!"})
+    assert registered.status_code == 200, registered.text
+    return client
 
 
 def _request(client, method, path, **kwargs):

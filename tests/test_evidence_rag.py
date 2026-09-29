@@ -39,6 +39,15 @@ def make_store(tmp_path) -> Store:
     return db
 
 
+def authenticated_client(db: Store) -> TestClient:
+    client = TestClient(app)
+    registered = client.post("/api/auth/register", json={"username": "evidence_user", "password": "StrongPass123!"})
+    assert registered.status_code == 200, registered.text
+    project = db.get_json("projects", "P")
+    db.put_json("projects", "P", {**project["data"], "owner_user_id": registered.json()["user"]["id"]}, created_at=project["created_at"])
+    return client
+
+
 def test_collected_notice_is_indexed_and_returns_cited_project_passages(tmp_path):
     db = make_store(tmp_path)
     source = {"source_id": "authority:notice-42", "url": "https://authority.example/notices/42",
@@ -121,7 +130,7 @@ def test_document_rag_llm_review_then_approval_commit_and_export(tmp_path, monke
     assert run_once(db)
     event_id = db.list_json("events", "P")[0]["id"]
 
-    client = TestClient(app)
+    client = authenticated_client(db)
     headers = {"Authorization": "Bearer test"}
     first = client.post(f"/api/projects/P/analyses", headers=headers, json={"event_id": event_id})
     assert first.status_code == 202
@@ -179,7 +188,7 @@ def test_document_candidate_selection_gates_agent_research_scope(tmp_path, monke
     assert event["candidate_selection"]["status"] == "REVIEW_REQUIRED"
     assert event["candidate_selection"]["candidate_task_ids"] == ["T042"]
 
-    client = TestClient(app)
+    client = authenticated_client(db)
     headers = {"Authorization": "Bearer test"}
     blocked = client.post(f"/api/projects/P/events/{event_id}/investigations", headers=headers)
     assert blocked.status_code == 409

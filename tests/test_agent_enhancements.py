@@ -203,6 +203,8 @@ def test_generic_outdoor_suggestions_are_ready_to_start(tmp_path, monkeypatch):
     monkeypatch.setenv("REPLAN_DEMO_TOKEN", "test-token")
     monkeypatch.delenv("API_KEY", raising=False)
     client = TestClient(app)
+    registered = client.post("/api/auth/register", json={"username": "outdoor_user", "password": "StrongPass123!"})
+    assert registered.status_code == 200
     header = {"Authorization": "Bearer test-token"}
     project_id = client.post("/api/projects", headers=header, json={"mode": "REPLAY"}).json()["project_id"]
     imported = client.post(f"/api/projects/{project_id}/imports", headers=header,
@@ -211,7 +213,7 @@ def test_generic_outdoor_suggestions_are_ready_to_start(tmp_path, monkeypatch):
     proposal = confirmed["watch_plan_suggestion"]
     assert len(proposal["holiday_calendars"]) == 7
     db = Store()
-    db.put_json("projects", "AUTO", {"mode": "LIVE"})
+    db.put_json("projects", "AUTO", {"mode": "LIVE", "owner_user_id": registered.json()["user"]["id"]})
     db.put_json("versions", "AUTO-V", {"project": {}, "tasks": []}, project_id="AUTO", parent_id=None,
                 status="baseline", content_hash="baseline")
     db.put_json("watch_plans", "AUTO", {"enabled": False, "activation_mode": "ready", "source_allowlist": []})
@@ -228,6 +230,7 @@ def test_hero_variant_llm_fallback_reaches_existing_external_recheck(tmp_path, m
     monkeypatch.setenv("REPLAN_DEMO_TOKEN", "test-token")
     monkeypatch.delenv("API_KEY", raising=False)
     client = TestClient(app)
+    assert client.post("/api/auth/register", json={"username": "fallback_user", "password": "StrongPass123!"}).status_code == 200
     header = {"Authorization": "Bearer test-token"}
     project_id = client.post("/api/projects", headers=header, json={"mode": "REPLAY"}).json()["project_id"]
     imported = client.post(f"/api/projects/{project_id}/imports", headers=header,
@@ -318,6 +321,7 @@ def test_paid_watch_enrichment_changes_reasons_only(tmp_path, monkeypatch):
     monkeypatch.setenv("REPLAN_DEMO_TOKEN", "test-token")
     monkeypatch.delenv("API_KEY", raising=False)
     client = TestClient(app)
+    assert client.post("/api/auth/register", json={"username": "watch_user", "password": "StrongPass123!"}).status_code == 200
     header = {"Authorization": "Bearer test-token"}
     project_id = client.post("/api/projects", headers=header, json={"mode": "REPLAY"}).json()["project_id"]
     imported = client.post(f"/api/projects/{project_id}/imports", headers=header,

@@ -3,7 +3,8 @@
 REPLAN_LLM_MODE selects how requests are served:
 - live (default): call the gateway.
 - record: answer from REPLAN_LLM_CASSETTE when the request is there; otherwise call the gateway
-  and save the response.
+  and save the response. Set REPLAN_REFRESH_LLM_CASSETTE=true only during an explicit
+  evaluation run to replace matching recordings with current gateway responses.
 - replay: answer from REPLAN_LLM_CASSETTE only; no key, no network, no cost.
 Replay matches on the request body with run-specific IDs and timestamps masked,
 so a prompt or tool change is a replay miss and needs a new recording.
@@ -116,7 +117,8 @@ class OpenAICompatibleLLM:
         if response_format:
             payload["response_format"] = response_format
 
-        recorded = self._recorded(payload) if mode == "record" else None
+        refresh_recordings = os.environ.get("REPLAN_REFRESH_LLM_CASSETTE", "false").lower() == "true"
+        recorded = self._recorded(payload) if mode == "record" and not refresh_recordings else None
         if mode == "replay":
             data = self._replay(payload)
         elif recorded is not None:

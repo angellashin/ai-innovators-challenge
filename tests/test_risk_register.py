@@ -25,7 +25,10 @@ def client(tmp_path, monkeypatch):
     for key in ("REPLAN_LLM_MODE", "API_KEY", "LLM_MODEL", "LLM_BASE_URL"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(sources, "fetch_holidays", lambda *_a, **_k: pytest.fail("no network in hero demo"))
-    return TestClient(app)
+    result = TestClient(app)
+    registered = result.post("/api/auth/register", json={"username": "risk_user", "password": "StrongPass123!"})
+    assert registered.status_code == 200, registered.text
+    return result
 
 
 def call(client, method, path, **kwargs):

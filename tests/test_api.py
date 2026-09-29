@@ -204,6 +204,9 @@ def test_revised_excel_requires_diff_confirmation(client):
 
 
 def test_demo_token_is_read_only(client):
+    # The fixture has a logged-in user's cookie.  Clear it so this request proves
+    # that the public demo credential itself cannot create a project.
+    client.cookies.clear()
     assert client.post("/api/projects", headers={"Authorization": "Bearer demo-token"}, json={"mode": "LIVE"}).status_code == 401
 
 

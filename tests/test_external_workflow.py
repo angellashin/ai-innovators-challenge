@@ -45,7 +45,12 @@ def setup(tmp_path, monkeypatch):
     snapshot = {"project": PROJECT, "tasks": TASKS, "options": []}
     db.put_json("versions", "V", snapshot, project_id="P", parent_id=None, status="baseline", content_hash=digest(snapshot))
     db.put_json("watch_plans", "P", PLAN)
-    return db, TestClient(app)
+    client = TestClient(app)
+    registered = client.post("/api/auth/register", json={"username": "external_user", "password": "StrongPass123!"})
+    assert registered.status_code == 200, registered.text
+    project = db.get_json("projects", "P")
+    db.put_json("projects", "P", {**project["data"], "owner_user_id": registered.json()["user"]["id"]}, created_at=project["created_at"])
+    return db, client
 
 
 def req(client, method, path, expected=200, **kwargs):

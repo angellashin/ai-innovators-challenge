@@ -326,6 +326,10 @@ class Store:
         """Capture mutable project inputs before an asynchronous run is queued."""
         project = self.get_json("projects", project_id)
         profile = dict(project["data"] if project else {})
+        # Account ownership is access-control metadata, not scheduling evidence.  It
+        # must neither invalidate an analysis nor enter an LLM/replay context.
+        profile.pop("owner_user_id", None)
+        profile.pop("owner_username", None)
         calendars = [item["data"] for item in self.list_json("supplier_calendars", project_id)]
         watch = self.get_json("watch_plans", project_id)
         context = {"project": profile, "supplier_calendars": calendars,

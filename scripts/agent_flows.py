@@ -122,7 +122,10 @@ def run_flow(flow: str, mode: str, project_name: str = "에이전트 흐름 확�
     from app.worker import run_once
 
     client = TestClient(api.app)
-    headers = {"Authorization": f"Bearer {os.environ['REPLAN_DEMO_TOKEN']}"}
+    registered = client.post("/api/auth/register", json={"username": f"evaluation_{flow.lower().replace('-', '_')}", "password": "StrongPass123!"})
+    if registered.status_code >= 400:
+        raise RuntimeError(f"test user registration -> {registered.status_code}: {registered.text[:300]}")
+    headers: dict[str, str] = {}
 
     def call(method: str, path: str, body: Any = None) -> Any:
         response = client.request(method, path, json=body, headers=headers)
@@ -208,14 +211,18 @@ def run_flow(flow: str, mode: str, project_name: str = "에이전트 흐름 확�
             runs["investigation"]["risk_link"] = call("GET", f"/api/runs/{runs['investigation']['run_id']}")["run"]["data"].get("risk_link")
         if flow == "X2-resolved":
             # A person confirms P-C is affected; the schedule is recalculated with its hold.
-            resolved = call("POST", f"/api/projects/{project_id}/investigations/{runs['investigation']['run_id']}/resolve",
-                            {"decision": "applies", "note": "협력사 회신: P-C도 선적별 수출 허가 대상"})
-            drain()
-            run = call("GET", f"/api/runs/{resolved['analysis_run_id']}")
-            runs["recalculated"] = {"agent": run["run"]["data"].get("agent"), "status": run["run"]["data"].get("status"),
-                                    "scenarios": [{key: row["data"].get(key) for key in (
-                                        "label", "option_ids", "finish_date", "recovery_days_vs_no_response",
-                                        "extra_cost_krw")} for row in run["scenarios"]]}
+            # An LLM can correctly conclude there is no open question (M1/M2/M5).  Only an
+            # M3/M4 investigation can be resolved; preserve that result rather than making
+            # the evaluation runner fail with a 409.
+            if runs["investigation"].get("status") in {"M3", "M4"}:
+                resolved = call("POST", f"/api/projects/{project_id}/investigations/{runs['investigation']['run_id']}/resolve",
+                                {"decision": "applies", "note": "협력사 회신: P-C도 선적별 수출 허가 대상"})
+                drain()
+                run = call("GET", f"/api/runs/{resolved['analysis_run_id']}")
+                runs["recalculated"] = {"agent": run["run"]["data"].get("agent"), "status": run["run"]["data"].get("status"),
+                                        "scenarios": [{key: row["data"].get(key) for key in (
+                                            "label", "option_ids", "finish_date", "recovery_days_vs_no_response",
+                                            "extra_cost_krw")} for row in run["scenarios"]]}
     elif flow in {"X1-A", "X1-B"}:
         event_id = call("POST", f"/api/projects/{project_id}/demo/external-signals/{flow}")["event_ids"][0]
         drain()

@@ -78,26 +78,25 @@ async def authorize(
     expected = os.environ.get("REPLAN_DEMO_TOKEN")
     if not expected:
         raise HTTPException(503, "REPLAN_DEMO_TOKEN must be configured")
-    if authorization == f"Bearer {expected}":
-        principal = {"kind": "demo", "id": "demo"}
-        CURRENT_PRINCIPAL.set(principal)
-        return principal
     token = x_replan_session or replan_session or (
         authorization.removeprefix("Bearer ").strip()
         if authorization and authorization.startswith("Bearer ")
         else ""
     )
-    if not token:
-        raise HTTPException(401, "login required")
-    with store().connection() as conn:
-        row = conn.execute(
-            "SELECT sessions.user_id, users.username FROM sessions JOIN users ON users.id=sessions.user_id "
-            "WHERE sessions.token_hash=? AND sessions.revoked_at IS NULL", (_token_hash(token),)).fetchone()
-    if not row:
-        raise HTTPException(401, "invalid session")
-    principal = {"kind": "user", "id": row["user_id"], "username": row["username"]}
-    CURRENT_PRINCIPAL.set(principal)
-    return principal
+    if token:
+        with store().connection() as conn:
+            row = conn.execute(
+                "SELECT sessions.user_id, users.username FROM sessions JOIN users ON users.id=sessions.user_id "
+                "WHERE sessions.token_hash=? AND sessions.revoked_at IS NULL", (_token_hash(token),)).fetchone()
+        if row:
+            principal = {"kind": "user", "id": row["user_id"], "username": row["username"]}
+            CURRENT_PRINCIPAL.set(principal)
+            return principal
+    if authorization == f"Bearer {expected}":
+        principal = {"kind": "demo", "id": "demo"}
+        CURRENT_PRINCIPAL.set(principal)
+        return principal
+    raise HTTPException(401, "invalid session" if token else "login required")
 
 
 def project_or_404(db: Store, project_id: str) -> dict[str, Any]:
@@ -1084,8 +1083,21 @@ def confirm_import(project_id: str, import_id: str, value: ConfirmInput) -> dict
         event["id"] = event_id
         db.put_json("events", event_id, event, project_id=project_id, fingerprint=fingerprint)
         return {"event_id": event_id, "event": event, "diff": difference, "import_kind": "change"}
-    profile = {**snapshot["project"], "project_id": project_id}
-    snapshot = {**snapshot, "project": profile, "import_id": import_id}
+    # Keep access-control fields on the project record only.  A version is a
+    # portable schedule snapshot and is passed to analysis/replay paths, so it
+    # must not carry a user identity.
+    snapshot_profile = {
+        key: item for key, item in snapshot["project"].items()
+        if key not in {"owner_user_id", "owner_username"}
+    }
+    snapshot_profile["project_id"] = project_id
+    ownership = {
+        key: current_project["data"].get(key)
+        for key in ("owner_user_id", "owner_username")
+        if current_project["data"].get(key)
+    }
+    profile = {**snapshot_profile, **ownership}
+    snapshot = {**snapshot, "project": snapshot_profile, "import_id": import_id}
     version_id = identifier()
     db.put_json("versions", version_id, snapshot, project_id=project_id, parent_id=None, status="baseline", content_hash=digest(snapshot))
     db.put_json("projects", project_id, profile)
