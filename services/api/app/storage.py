@@ -270,6 +270,27 @@ class Store:
             result.append(item)
         return result
 
+    def reset_project_records(self, project_id: str) -> None:
+        """Remove all mutable records for one project while leaving accounts untouched."""
+        project_tables = (
+            "imports", "versions", "watch_plans", "source_snapshots", "evidence_documents",
+            "evidence_passages", "retrieval_runs", "events", "runs", "scenarios", "actions",
+            "approvals", "risks", "documents", "mail_accounts", "public_feeds",
+            "supplier_calendars", "notification_channels", "notifications", "site_prep_items",
+        )
+        with self.transaction() as db:
+            db.execute(
+                "DELETE FROM usage_ledger WHERE run_id IN (SELECT id FROM runs WHERE project_id=?)",
+                (project_id,),
+            )
+            db.execute(
+                "DELETE FROM auto_usage_ledger WHERE run_id IN (SELECT id FROM runs WHERE project_id=?)",
+                (project_id,),
+            )
+            for table in project_tables:
+                db.execute(f"DELETE FROM {table} WHERE project_id=?", (project_id,))
+            db.execute("DELETE FROM projects WHERE id=?", (project_id,))
+
     def find_document_by_hash(self, project_id: str, content_hash: str) -> dict[str, Any] | None:
         """Return the newest document with the same content in a project."""
         with self.connection() as db:

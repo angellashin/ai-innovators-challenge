@@ -527,31 +527,26 @@ def archive_project(project_id: str, value: ProjectArchiveInput) -> dict[str, An
 
 @app.post("/api/demo/hero-project", dependencies=[Depends(authorize)])
 async def ensure_hero_project() -> dict[str, Any]:
-    """Return one stable representative project instead of creating a new demo per visit."""
+    """Reset and return one stable representative project for every demo visit."""
     from .hero_demo import HERO_PROJECT_ID
 
     db = store()
-    created = False
-    project = db.get_json("projects", HERO_PROJECT_ID)
-    if not project:
-        profile = ProjectInput(
-            project_id=HERO_PROJECT_ID,
-            name="배터리 공장 건설",
-            mode="REPLAY",
-            region="헝가리 데브레첸",
-        ).model_dump(mode="json")
-        profile["data_origin"] = "SYNTHETIC"
-        db.put_json("projects", HERO_PROJECT_ID, profile)
-        created = True
-
-    baseline_created = False
-    if not db.current_version(HERO_PROJECT_ID):
-        await import_hero_demo_baseline(HERO_PROJECT_ID)
-        baseline_created = True
+    had_project = db.get_json("projects", HERO_PROJECT_ID) is not None
+    db.reset_project_records(HERO_PROJECT_ID)
+    profile = ProjectInput(
+        project_id=HERO_PROJECT_ID,
+        name="배터리 공장 건설",
+        mode="REPLAY",
+        region="헝가리 데브레첸",
+    ).model_dump(mode="json")
+    profile["data_origin"] = "SYNTHETIC"
+    db.put_json("projects", HERO_PROJECT_ID, profile)
+    await import_hero_demo_baseline(HERO_PROJECT_ID)
     return {
         "project_id": HERO_PROJECT_ID,
-        "created": created,
-        "baseline_created": baseline_created,
+        "created": not had_project,
+        "reset": had_project,
+        "baseline_created": True,
     }
 
 

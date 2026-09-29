@@ -824,7 +824,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   );
   const watchView = (
     <section className="workspace-view risk-workflow" id="risk" aria-labelledby="risk-title">
-      <div className="view-heading"><div><p className="eyebrow">RISK WORKFLOW</p><h2 id="risk-title">리스크 탐색</h2><p>외부 신호를 찾고, 후보를 확인한 뒤, 선택한 항목만 일정 영향 분석으로 보냅니다.</p><ol className="risk-stepper" aria-label="리스크 탐색 단계"><li><button type="button" onClick={() => document.getElementById("risk-discover")?.scrollIntoView({ behavior: "smooth", block: "start" })}>1. 외부 신호 탐색</button></li><li><button type="button" onClick={() => document.getElementById("risk-review")?.scrollIntoView({ behavior: "smooth", block: "start" })}>2. 후보 검토</button></li><li><button type="button" onClick={() => document.getElementById("risk-analysis")?.scrollIntoView({ behavior: "smooth", block: "start" })}>3. 일정 영향 분석</button></li></ol></div><span className="view-context">{started ? "감시 중" : "감시 시작 전"}{feedEvents.length ? ` · 새 항목 ${feedEvents.length}건` : ""}</span></div>
+      <div className="view-heading"><div><p className="eyebrow">RISK WORKFLOW</p><h2 id="risk-title">리스크 탐색</h2><p>외부 신호를 찾고, 후보를 확인한 뒤, 선택한 항목만 일정 영향 분석으로 보냅니다.</p><p className="risk-flow-label" aria-label="리스크 탐색 단계">외부 신호 탐색 <span>→</span> 후보 검토 <span>→</span> 일정 영향 분석</p></div><span className="view-context">{started ? "감시 중" : "감시 시작 전"}{feedEvents.length ? ` · 새 항목 ${feedEvents.length}건` : ""}</span></div>
       {!project.version ? (loaded ? nextCallout("기준 일정 연결", "schedule", "브리핑과 감시에는 기준 일정이 필요합니다.") : null) : <>
         <div id="risk-discover" className="risk-anchor" />
         {isHero && <div className="watch-status-strip" role="status">

@@ -107,10 +107,18 @@ def test_bundled_hero_demo_uses_the_upload_baseline_path(client):
 
 def test_representative_demo_is_a_single_stable_project(client):
     first = request(client, "post", "/api/demo/hero-project")
+    request(client, "post", "/api/projects/HERO-BAT-HU-001/watch/start")
+    progressed = request(client, "get", "/api/projects/HERO-BAT-HU-001")
+    assert progressed["events"]
+    assert progressed["project"]["watch_started_at"]
     second = request(client, "post", "/api/demo/hero-project")
     assert first["project_id"] == second["project_id"] == "HERO-BAT-HU-001"
     assert first["created"] is True and first["baseline_created"] is True
-    assert second["created"] is False and second["baseline_created"] is False
+    assert second["created"] is False and second["reset"] is True and second["baseline_created"] is True
+    reset = request(client, "get", "/api/projects/HERO-BAT-HU-001")
+    assert reset["events"] == []
+    assert "watch_started_at" not in reset["project"]
+    assert [row["status"] for row in reset["versions"]] == ["baseline"]
     projects = request(client, "get", "/api/projects")["projects"]
     assert [(row["id"], row["name"], row["mode"]) for row in projects] == [
         ("HERO-BAT-HU-001", "배터리 공장 건설", "REPLAY")]
