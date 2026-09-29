@@ -60,7 +60,11 @@ BUILTIN_DATE_FORMATS = {
 }
 
 HEADER_ALIASES = {
-    "supplier_id": {"supplier_id", "공급사id", "공급사", "owner_company"},
+    "supplier_id": {"supplier_id", "공급사id", "공급사"},
+    "accountable_party": {"accountable_party", "일정책임주체", "책임주체"},
+    "performing_party": {"performing_party", "수행주체", "owner_company"},
+    "external_constraint_parties": {"external_constraint_parties", "외부제약주체", "외부기관"},
+    "schedule_role": {"schedule_role", "일정역할"},
     "equipment_id": {"equipment_id", "설비id", "설비번호"},
     "country": {"country", "국가"},
     "country_code": {"country_code", "국가코드"},
@@ -70,8 +74,8 @@ HEADER_ALIASES = {
     "task_id": {"작업id", "작업ID", "taskid", "task_id", "id", "작업번호"},
     "phase": {"단계", "phase"},
     "name": {"작업명", "taskname", "task_name", "name", "작업"},
-    "planned_start": {"계획시작", "start", "plannedstart", "planned_start", "시작일"},
-    "planned_finish": {"계획종료", "finish", "plannedfinish", "planned_finish", "plannedend", "planned_end", "종료일", "완료일"},
+    "planned_start": {"계획시작", "기준시작", "기준일정시작", "baseline_start", "start", "plannedstart", "planned_start", "시작일"},
+    "planned_finish": {"계획종료", "기준종료", "기준일정종료", "baseline_finish", "baseline_end", "finish", "plannedfinish", "planned_finish", "plannedend", "planned_end", "종료일", "완료일"},
     "duration_days": {"durationdays", "duration_days"},
     "duration_workdays": {"작업일수", "기간작업일", "duration", "duration_workdays", "기간"},
     "owner": {"담당조직", "owner", "담당", "조직"},
@@ -529,7 +533,7 @@ def _coerce_by_key(key: str, value: Any) -> Any:
         return _coerce_int(value)
     if key == "progress":
         return _coerce_float(value)
-    if key == "predecessor_ids":
+    if key in {"predecessor_ids", "external_constraint_parties"}:
         return _split_ids(value)
     if key == "target_id" and isinstance(value, str) and "," in value:
         return _split_ids(value)

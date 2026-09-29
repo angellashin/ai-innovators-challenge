@@ -97,7 +97,7 @@ export function Inbox({ messages, selectedId, importedIds, busy, hint, onSelect,
       })}
     </ul>
     {selected && <div className="inbox-reader" aria-label="선택한 통보">
-      <div className="inbox-reader-head"><b>{selected.subject}</b><small>{selected.from} · {received(selected.receivedAt)}{selected.source === "demo" ? " · 합성 메일" : ""}</small></div>
+      <div className="inbox-reader-head"><b>{selected.subject}</b><small>{selected.from} · {received(selected.receivedAt)}{selected.source === "demo" ? " · 대표 사례" : ""}</small></div>
       <p>{selected.body}</p>
       {hint && selected.tag === "lead" && <small className="inbox-hint">{hint}</small>}
       <button onClick={() => onImport(selected)} disabled={busy}>변경으로 등록</button>

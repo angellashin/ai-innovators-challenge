@@ -1,4 +1,4 @@
-"""Project-scoped evidence retrieval for external-change review.
+"""Project-scoped evidence retrieval for external-risk review.
 
 This module deliberately retrieves only text the server has already collected or
 received as an uploaded document. It never gives an LLM a browser or arbitrary
@@ -146,6 +146,18 @@ def _task_matches(text: str, tasks: list[dict[str, Any]]) -> list[str]:
     return sorted(set(matches))
 
 
+def _entity_hits(text: str, tasks: list[dict[str, Any]]) -> list[str]:
+    """Prefer exact project entities over generic keyword overlap."""
+    lowered = text.casefold()
+    hits: list[str] = []
+    for task in tasks:
+        for key in ("task_id", "equipment_id", "supplier_id", "country", "country_code", "location"):
+            value = _clean_text(task.get(key))
+            if len(value) >= 2 and value.casefold() in lowered:
+                hits.append(value)
+    return _unique(hits, 32)
+
+
 def retrieve_evidence(
     db: Store,
     project_id: str,
@@ -154,8 +166,9 @@ def retrieve_evidence(
     tasks: list[dict[str, Any]],
     document_ids: set[str] | None = None,
     limit: int = MAX_RETRIEVED_PASSAGES,
+    legacy_lexical: bool = False,
 ) -> dict[str, Any]:
-    """Return project-scoped passages with transparent lexical ranking metadata."""
+    """Return project-scoped passages with transparent entity and lexical ranking."""
     terms = _unique(query_terms)
     query_tokens = _tokens(" ".join(terms))
     query_counts = Counter(query_tokens)
@@ -169,28 +182,35 @@ def retrieve_evidence(
         counts = Counter(_tokens(text))
         matching_tokens = sorted(token for token in query_counts if token in counts)
         phrase_hits = [term for term in terms if len(term) >= 3 and term.casefold() in text_lower]
-        score = sum(min(counts[token], 3) for token in matching_tokens) + 4 * len(phrase_hits)
+        lexical_score = sum(min(counts[token], 3) for token in matching_tokens) + 4 * len(phrase_hits)
         task_ids = _task_matches(text, tasks)
-        score += 3 * len(task_ids)
+        entity_hits = _entity_hits(text, tasks) if not legacy_lexical else []
+        entity_score = 5 * len(entity_hits) + 3 * len(task_ids)
+        score = lexical_score + entity_score
         if score <= 0:
             continue
-        ranked.append({
+        row = {
             "passage_id": passage["passage_id"], "citation_id": passage["citation_id"],
             "document_id": passage["document_id"], "text": text,
             "title": passage.get("title"), "source_url": passage.get("source_url"),
             "published_at": passage.get("published_at"), "score": score,
             "match_terms": phrase_hits[:12] or matching_tokens[:12], "task_ids": task_ids,
-        })
+        }
+        if not legacy_lexical:
+            row.update({"entity_hits": entity_hits, "lexical_hits": phrase_hits[:12] or matching_tokens[:12],
+                        "entity_score": entity_score, "lexical_score": lexical_score})
+        ranked.append(row)
     ranked.sort(key=lambda item: (-item["score"], str(item["citation_id"])))
     selected = ranked[:max(1, min(limit, MAX_RETRIEVED_PASSAGES))]
     retrieval_id = digest({"project_id": project_id, "terms": terms, "passages": [item["passage_id"] for item in selected]})[:32]
     db.put_json("retrieval_runs", retrieval_id, {
-        "retrieval_id": retrieval_id, "strategy": "lexical-v1", "query_terms": terms,
+        "retrieval_id": retrieval_id, "strategy": "lexical-v1" if legacy_lexical else "hybrid-entity-lexical-v1", "query_terms": terms,
         "passage_ids": [item["passage_id"] for item in selected],
         "citation_ids": [item["citation_id"] for item in selected],
         "created_at": utcnow(),
     }, project_id=project_id)
-    return {"retrieval_id": retrieval_id, "strategy": "lexical-v1", "query_terms": terms, "passages": selected}
+    strategy = "lexical-v1" if legacy_lexical else "hybrid-entity-lexical-v1"
+    return {"retrieval_id": retrieval_id, "strategy": strategy, "query_terms": terms, "passages": selected}
 
 
 def _merge_candidates(existing: list[dict[str, Any]], retrieved: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -219,6 +239,7 @@ def ground_external_source(
     evidence_kind: str,
     snapshot_id: str | None,
     origin: str,
+    legacy_lexical: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Index one collected document, retrieve citations, and make review-only task candidates."""
     from .external_risks import evidence, match_notice
@@ -226,7 +247,7 @@ def ground_external_source(
     document = index_evidence(db, project_id, source, origin=origin)
     retrieval = retrieve_evidence(
         db, project_id, query_terms=build_project_query(tasks, watch_plan), tasks=tasks,
-        document_ids={document["document_id"]},
+        document_ids={document["document_id"]}, legacy_lexical=legacy_lexical,
     )
     matched = match_notice(source, tasks, (watch_plan or {}).get("source_rules", []))
     candidates = _merge_candidates(list(matched.get("candidates") or []), retrieval["passages"])

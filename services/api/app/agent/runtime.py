@@ -49,6 +49,7 @@ def run_agent(
     usage: Dict[str, Any] = {}
     max_calls = min(MAX_TOOL_CALLS, max(0, max_steps) * 2)
     invalid_arg_retries = 0
+    schedule_fallback_used = False
 
     try:
         gateway = _gateway(context)
@@ -99,6 +100,22 @@ def run_agent(
             continue
 
         final = _parse_final(reply.content)
+        # A model may return a polished answer before calling the deterministic
+        # calculator. Never let a confirmed patch reach the user without at
+        # least one schedule calculation when that tool is available. Retry
+        # once with the calculator result in context; the normal tool loop and
+        # its limits still govern the follow-up answer.
+        if (event.get("patch") and "simulate_schedule" in allowed_tools and
+                not schedule_fallback_used and
+                not any(entry.get("tool") in SCHEDULE_TOOLS and entry.get("status") == "ok"
+                        for entry in tool_log)):
+            fallback = {"action": "tool", "tool": "simulate_schedule", "args": {"option_ids": []}}
+            outcome = _execute_action(fallback, allowed_tools, seen_calls, tool_log, max_calls, context)
+            if outcome:
+                return _result(tool_log=tool_log, usage=usage, **outcome)
+            schedule_fallback_used = True
+            messages.extend(_tool_result_messages([(fallback, tool_log[-1])]))
+            continue
         final["tool_log"] = tool_log
         final["usage"] = usage
         final.setdefault("status", "completed")

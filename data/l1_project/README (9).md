@@ -42,9 +42,13 @@ Start of production) is well covered by the 8-phase WBS below before any task wa
 - **15 milestones** (e.g. Land acquired, Construction permit approved, Structure topped out,
   Building enclosed, Equipment delivered, Commissioning completed, Trial production started, Start of
   Production).
-- Dates were **not** hand-picked: every `planned_start`/`planned_end` was computed by a forward-pass
-  schedule engine from `predecessor_ids`, `dependency_type` (FS/SS), and `duration_days`, seeded only by
-  the project start date. `planned_end - planned_start` equals `duration_days` exactly for every task.
+- During synthetic project planning, the dates were derived once by a forward-pass schedule engine from
+  `predecessor_ids`, `dependency_type` (FS/SS), and `duration_days`. They are now the **approved,
+  frozen integrated baseline**: all 64 work packages retain a fixed `baseline_start` and
+  `baseline_finish`, and each finish minus start equals `duration_days` exactly.
+- REPLAN treats this baseline as an input fact. It assesses external risks against the existing dates;
+  it does not regenerate the plan. Only an approved response scenario can create a separate revised
+  working schedule, while the original baseline remains auditable.
 - `criticality` was **not** hand-labeled either. It was computed via a full forward/backward-pass CPM
   float calculation (float ≤ 0 days → `critical`, ≤ 10 → `high`, ≤ 30 → `medium`, else `low`), so the
   30/64 critical-path tasks reflect the schedule's actual dependency structure (a largely
@@ -79,6 +83,22 @@ Provider, Regulatory Authority, Environmental Consultant, Automation Integrator,
 all synthetic. The two-vendor equipment structure (Vendor A / Vendor B) intentionally creates a real
 parallel-track dependency pattern in Phase 6, so an agent can be tested on whether a delay in one
 vendor's track propagates only to that track's downstream tasks, not the whole project.
+
+## Integrated schedule authority and parties
+
+This is one integrated project schedule, not 11 separate companies' schedules. In a realistic delivery
+model, **BatteryCo Project Operations Team** is the project sponsor that approves the baseline, while the
+synthetic **Global EPC Project Controls Team** maintains the controlled integrated schedule from a
+synthetic Primavera P6 export. The Global EPC schedule function is therefore the *schedule authority*;
+it is not automatically the accountable party for every work package.
+
+Each WBS row now keeps four separate facts: `accountable_party` (the party responsible for the work
+commitment), `performing_party` (who carries out or issues the activity),
+`external_constraint_parties` (whose decision/service can constrain it), and `supplier_id` (only an
+actual contracted supplier). A regulatory authority or utility provider can appear as an external
+constraint or service performer, but is never treated as a supplier or owner of the integrated
+baseline. This distinction is deliberate so supplier-calendar monitoring and risk investigation do not
+mistakenly target public authorities.
 
 ## How this connects to L2/L3
 

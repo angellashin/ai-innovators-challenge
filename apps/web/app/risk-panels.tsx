@@ -6,7 +6,16 @@ type Dict = Record<string, unknown>;
 
 function text(value: unknown, fallback = "-") {
   if (value === null || value === undefined || value === "") return fallback;
-  return String(value);
+  return String(value).replace(/\[합성\]\s*/g, "");
+}
+
+function bufferText(value: unknown, fallback = "-") {
+  return text(value, fallback)
+    .replaceAll("여유 0일이라 취약", "완충 기간 없음 · 지연 시 완료일 영향")
+    .replace(/여유 (\d+)일이라 취약/g, "일정 완충 $1일 · 영향 가능성 높음")
+    .replaceAll("여유 ", "일정 완충 ")
+    .replaceAll("흡수 여력 있음", "일정 내 흡수 가능")
+    .replaceAll("여유로", "일정 완충 기간으로");
 }
 
 function list(value: unknown) {
@@ -22,7 +31,7 @@ const ACTOR: Record<string, string> = {
 };
 const LEVEL_CLASS: Record<string, string> = { critical: "danger", high: "warn", medium: "", low: "ok", unknown: "" };
 const TOOL: Record<string, string> = {
-  find_procurement_items: "같은 원인 품목 찾기", get_task_facts: "작업 속성 확인", check_schedule_slack: "여유 계산",
+  find_procurement_items: "같은 원인 품목 찾기", get_task_facts: "작업 속성 확인", check_schedule_slack: "일정 완충 기간 계산",
   search_risk_cases: "유사 사례 검색",
 };
 const ATTRIBUTE_LABEL: Record<string, string> = {
@@ -50,7 +59,7 @@ export function BriefingPanel({ briefing, llmMode }: { briefing?: Dict | null; l
   const status = text(briefing.run_status, "");
   if (status === "queued" || status === "running") {
     return <section className="focus-card briefing" aria-label="등록 시 위험 브리핑"><span className="eyebrow">사전 에이전트 · 등록 시 브리핑</span>
-      <h3>기준 일정의 위험을 계산하고 있습니다…</h3><p className="muted">원산지·통관·인허가·야외 속성과 작업 여유로 순위를 정합니다.</p></section>;
+      <h3>기준 일정의 위험을 계산하고 있습니다…</h3><p className="muted">원산지·통관·인허가·야외 속성과 일정 완충 기간으로 순위를 정합니다.</p></section>;
   }
   const result = (briefing.briefing || {}) as Dict;
   const agent = (briefing.agent || {}) as Dict;
@@ -65,9 +74,9 @@ export function BriefingPanel({ briefing, llmMode }: { briefing?: Dict | null; l
     <div className="panel-heading"><div>
       <span className="eyebrow">사전 에이전트 · 등록 시 브리핑 · 일정 기준 {text(result.as_of)} · 근거 기준 {text(result.evidence_as_of || result.as_of)}</span>
       <h3>이 일정에서 먼저 볼 위험 {risks.length}개</h3>
-      <p>순위와 여유 일수는 계산기 결과입니다. 지연 일수를 예측하지 않고, 여유가 얼마나 남았는지로 취약도를 표시합니다.</p>
+        <p>순위와 일정 완충 기간은 계산기 결과입니다. 지연 일수를 예측하지 않고, 작업이 늦어져도 완료일에 영향을 주지 않는 기간을 표시합니다.</p>
     </div><span className={`status-chip${agentReviewed ? " confirm" : ""}`}>{agentReviewed ? "규칙 + 에이전트 확인" : "규칙·계산기만"}</span></div>
-    {!agentReviewed && <p className="muted">{text(agent.summary, "에이전트가 꺼져 있어 규칙 결과만 보여줍니다.")}</p>}
+    {!agentReviewed && <p className="muted">{text(agent.summary, "AI 조사가 연결되지 않아 규칙 결과만 보여줍니다.").replaceAll("에이전트가 꺼져 있어", "AI 조사가 연결되지 않아")}</p>}
     <ol className="briefing-list">{risks.map((risk) => {
       const vulnerability = (risk.vulnerability || {}) as Dict;
       const score = (risk.score || {}) as Dict;
@@ -76,22 +85,22 @@ export function BriefingPanel({ briefing, llmMode }: { briefing?: Dict | null; l
       return <li key={text(risk.risk_id)} className="briefing-risk">
         <div className="briefing-head">
           <span className="rank">{text(risk.rank)}</span>
-          <div><b>{text(risk.title)}</b><small>{text(score.label)} · 근거: {text(risk.basis)}</small></div>
-          <span className={`status-chip ${LEVEL_CLASS[text(vulnerability.level, "")] || ""}`}>{text(vulnerability.label)}</span>
+          <div><b>{text(risk.title)}</b><small>{bufferText(score.label)} · 근거: {bufferText(risk.basis)}</small></div>
+          <span className={`status-chip ${LEVEL_CLASS[text(vulnerability.level, "")] || ""}`}>{bufferText(vulnerability.label)}</span>
         </div>
         <LinkedCause cause={risk.linked_cause as Dict | undefined} />
-        {list(risk.critical_warnings).map((warning, index) => <p key={index} className="critical-warning">{text(warning)}</p>)}
-        {items.length > 0 && <table className="risk-table"><thead><tr><th>품목</th><th>협력사</th><th>원산지</th><th>통관</th><th>허가·인증</th><th>도착 예정</th><th>필요 작업</th><th>여유</th></tr></thead>
+        {list(risk.critical_warnings).map((warning, index) => <p key={index} className="critical-warning">{bufferText(warning)}</p>)}
+        {items.length > 0 && <table className="risk-table"><thead><tr><th>품목</th><th>협력사</th><th>원산지</th><th>통관</th><th>허가·인증</th><th>도착 예정</th><th>필요 작업</th><th>일정 완충</th></tr></thead>
           <tbody>{items.map((row) => <tr key={text(row.item_id)} className={row.float_days === 0 ? "critical" : ""}>
             <td><b>{text(row.item_id)}</b> <small>{text(row.item_name)}</small>{list(risk.added_item_ids).some((id) => text(id) === text(row.item_id)) ? <em className="added"> 에이전트가 추가</em> : null}</td>
             <td>{yesNo(row.supplier_id)}</td><td>{yesNo(row.origin_country)}</td><td>{yesNo(row.customs_required)}</td><td>{yesNo(row.requirement)}</td>
-            <td>{yesNo(row.planned_arrival)}</td><td>{text(row.task_id)}</td><td>{text(((row.vulnerability || {}) as Dict).label)}</td>
+            <td>{yesNo(row.planned_arrival)}</td><td>{text(row.task_id)}</td><td>{bufferText(((row.vulnerability || {}) as Dict).label)}</td>
           </tr>)}</tbody></table>}
-        {tasks.length > 0 && <table className="risk-table"><thead><tr><th>작업</th><th>착수 예정</th>{Object.values(ATTRIBUTE_LABEL).map((label) => <th key={label}>{label}</th>)}<th>여유</th></tr></thead>
+        {tasks.length > 0 && <table className="risk-table"><thead><tr><th>작업</th><th>착수 예정</th>{Object.values(ATTRIBUTE_LABEL).map((label) => <th key={label}>{label}</th>)}<th>일정 완충</th></tr></thead>
           <tbody>{tasks.map((row) => <tr key={text(row.task_id)} className={row.float_days === 0 ? "critical" : ""}>
             <td><b>{text(row.task_id)}</b> <small>{text(row.name)}</small></td><td>{text(row.baseline_start)}</td>
             {Object.keys(ATTRIBUTE_LABEL).map((key) => <td key={key}>{yesNo(row[key])}</td>)}
-            <td>{text(((row.vulnerability || {}) as Dict).label)}</td>
+            <td>{bufferText(((row.vulnerability || {}) as Dict).label)}</td>
           </tr>)}</tbody></table>}
         {Number(risk.task_count) > tasks.length && <small className="muted">작업 {text(risk.task_count)}개 중 {tasks.length}개 표시</small>}
         <div className="risk-actions"><small>선제 행동</small><ul>{list(risk.actions).map((action, index) => <li key={index}>
@@ -126,7 +135,7 @@ function briefingCheck(entry: Dict) {
   const result = (entry.result || {}) as Dict;
   if (result.status === "limit_reached") return "확인 한도(3회)를 넘어 실행하지 않음";
   if (entry.tool === "find_procurement_items") return list(result.items).map((row) => `${text(row.item_id)}(${text(row.needed_for_task_id)})`).join(" · ") || "해당 품목 없음";
-  if (entry.tool === "check_schedule_slack") return list(result.tasks).map((row) => `${text(row.task_id)} 여유 ${text(row.float_calendar_days)}일`).join(" · ");
+  if (entry.tool === "check_schedule_slack") return list(result.tasks).map((row) => `${text(row.task_id)} 일정 완충 ${text(row.float_calendar_days)}일`).join(" · ");
   if (entry.tool === "get_task_facts") return list(result.tasks).map((row) => `${text(row.task_id)} 원산지 ${text(row.origin_country, "속성 없음")}${row.customs_required ? " · 통관" : ""}`).join(" · ");
   if (entry.tool === "search_risk_cases") return `${text(result.label, "")} 사례 ${list(result.results).length}건`;
   return "";
@@ -167,9 +176,9 @@ export function RiskRegister({ risks, busy, onStatus }: { risks: Dict[]; busy: b
 }
 
 const TRIAGE_STATUS: Record<string, string> = {
-  interpreted: "자동 추리 완료", no_candidates: "규칙 후보 0건 · LLM 없이 무관", agent_off: "에이전트 꺼짐 · 규칙 후보만",
+  interpreted: "자동 추리 완료", no_candidates: "규칙 후보 0건 · LLM 없이 무관", agent_off: "AI 조사 미연결 · 규칙 후보만",
   budget_stopped: "자동 추리기 한도 초과 · 규칙 결과만", interpretation_failed: "자동 추리 실패 · 규칙 결과만",
-  already_attempted: "이미 시도함 · 규칙 결과만",
+  already_attempted: "이미 시도함 · 규칙 결과만", ai_running: "AI 분석 실행 중… · 규칙 후보 먼저 표시",
 };
 
 /** The one automatic LLM call on a detected change: related / needs check / unrelated, folded. */
@@ -181,6 +190,7 @@ export function TriagePanel({ triage, taskNames, risks, picked = [], onPick }: {
   const related = list(triage.related);
   const check = list(triage.needs_check);
   const unrelated = list(triage.unrelated);
+  const ruleCandidates = list(triage.rule_candidates);
   const links = list(triage.risk_links);
   const titles = Object.fromEntries(risks.map((risk) => [text(risk.risk_id), text(risk.title)]));
   const toggle = (id: string) => onPick?.(picked.includes(id) ? picked.filter((value) => value !== id) : [...picked, id]);
@@ -188,8 +198,10 @@ export function TriagePanel({ triage, taskNames, risks, picked = [], onPick }: {
     {list(item.reasons).length ? <small> {list(item.reasons).map((reason) => text(reason)).join(" · ")}</small> : null}
     {item.quote ? <q>{text(item.quote)}</q> : null}</li>;
   return <div className="triage" aria-label="변화 자동 추리기">
-    <div className="triage-head"><b>변화 자동 추리기</b><span className={`status-chip${status === "interpreted" ? " confirm" : " warn"}`}>{TRIAGE_STATUS[status] || status}</span>
-      <small>{status === "interpreted" ? `규칙 후보 ${text(triage.rule_candidate_count)}개를 에이전트가 1회 읽어 추림 · 일정은 바꾸지 않음` : text(triage.summary, "")}</small></div>
+    <div className="triage-head"><b>리스크 후보 정리</b><span className={`status-chip${status === "interpreted" ? " confirm" : " warn"}`}>{TRIAGE_STATUS[status] || status}</span>
+      <small>{status === "interpreted" ? `규칙 후보 ${text(triage.rule_candidate_count)}개를 AI가 읽어 분류했습니다 · 일정은 바꾸지 않음` : text(triage.summary, "").replace("에이전트가 꺼져 있어", "AI 조사가 연결되지 않아")}</small></div>
+    {status === "ai_running" && <div className="triage-progress" role="status"><b>규칙 결과</b><span>{ruleCandidates.length}건 먼저 표시됨</span><em>AI 분석 실행 중…</em></div>}
+    {status !== "interpreted" && status !== "ai_running" && ruleCandidates.length > 0 && <div className="triage-rule-candidates"><b>규칙으로 찾은 후보 {ruleCandidates.length}건</b><ul>{ruleCandidates.map(row)}</ul></div>}
     {status === "interpreted" && <>
       <div className="triage-buckets">
         <div><b>관련 있음 {related.length}</b>{related.length ? <ul>{related.map(row)}</ul> : <small className="muted">없음</small>}</div>

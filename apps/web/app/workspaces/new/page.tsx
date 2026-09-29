@@ -17,14 +17,14 @@ function friendlyError(value: string) {
 }
 
 const STEPS = [
-  ["준비", "일정 연결", "프로젝트 이름을 정하고 Excel 일정을 연결"],
-  ["확인", "위험 확인", "통보와 관련 공지를 보고 일정 영향 확인"],
-  ["결정", "대응 결정", "조건을 확인·승인하고 새 일정 내보내기"],
+  ["기준 일정", "Excel에서 작업·기간·선후행 관계를 읽어옵니다"],
+  ["프로젝트 브리핑", "추출한 프로젝트 정보와 일정 구조를 확인합니다"],
+  ["리스크 탐색", "일정에 맞는 감시 범위를 자동으로 준비합니다"],
 ];
 
 export default function NewWorkspacePage() {
   const router = useRouter();
-  const [name, setName] = useState("해외 생산설비 도입 및 시운전");
+  const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -46,7 +46,7 @@ export default function NewWorkspacePage() {
       if (!response.ok) throw new Error(await response.text());
       const value = await response.json() as { project_id: string };
       sessionStorage.setItem("replan.projectId", value.project_id);
-      router.push(`/projects/${value.project_id}#schedule`);
+      router.push(`/projects/${value.project_id}#overview`);
     } catch (caught) {
       setError(friendlyError(caught instanceof Error ? caught.message : ""));
       setBusy(false);
@@ -67,11 +67,11 @@ export default function NewWorkspacePage() {
 
       <div className="project-create-layout">
         <section className="project-create-intro" aria-labelledby="project-create-title">
-          <p className="eyebrow"><span className="flow-indicator" aria-hidden="true" /> NEW PROJECT / 01</p>
+          <p className="eyebrow"><span className="flow-indicator" aria-hidden="true" /> NEW PROJECT</p>
           <h1 id="project-create-title">새 프로젝트</h1>
-          <p>프로젝트의 최소 정보만 먼저 입력하세요. 생성 후 기준 Excel을 연결하면 일정·비용·자원 영향을 같은 맥락에서 비교할 수 있습니다.</p>
+          <p>이름만 정하면 빈 작업공간이 만들어집니다. 다음 화면에서 기준 일정 Excel을 올리면 작업·기간·선후행 관계를 읽어 프로젝트 맥락을 채웁니다.</p>
           <ol className="project-create-steps" aria-label="프로젝트 진행 단계">
-            {STEPS.map(([code, label, detail], index) => <li key={code} className={index === 0 ? "active" : undefined}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{label}</b><small>{detail}</small></div></li>)}
+            {STEPS.map(([label, detail], index) => <li key={label} className={index === 0 ? "active" : undefined}><span aria-hidden="true" /><div><b>{label}</b><small>{detail}</small></div></li>)}
           </ol>
         </section>
 
@@ -79,7 +79,7 @@ export default function NewWorkspacePage() {
           <div className="project-create-form-head">
             <p className="eyebrow">PROJECT SETUP</p>
             <h2>프로젝트 기본 정보</h2>
-            <p>나중에 언제든 수정할 수 있습니다.</p>
+            <p>기준 일정과 리스크 정보는 다음 단계에서 채웁니다.</p>
           </div>
 
           <label className="project-create-field">
@@ -88,7 +88,7 @@ export default function NewWorkspacePage() {
             <small>팀이 목록과 결정 기록에서 구분할 수 있는 이름을 사용하세요.</small>
           </label>
 
-          <div className="project-create-guidance"><b>다음 단계에서 기준 일정 연결</b><small>대응 비용은 변경이 발생하고 대응안을 비교할 때 입력합니다.</small></div>
+          <div className="project-create-guidance"><b>다음 화면에서 기준 일정 Excel 올리기</b><small>REPLAN이 작업·기간·선후행 관계를 미리 읽어오고, 확정 전에는 일정에 반영하지 않습니다.</small></div>
 
           {error && <div className="project-create-error" role="alert">{error}</div>}
 
@@ -96,7 +96,7 @@ export default function NewWorkspacePage() {
             <Link href="/workspaces">취소</Link>
             <button type="submit" disabled={busy || !name.trim()}>{busy ? "프로젝트를 만드는 중…" : "프로젝트 만들고 계속"}<span aria-hidden="true">→</span></button>
           </div>
-          <p className="project-create-next"><span>다음 단계</span> 작업공간의 일정 화면에서 기준 일정을 연결합니다.</p>
+          <p className="project-create-next"><span>다음</span> 프로젝트 브리핑에서 기준 일정 Excel을 올립니다.</p>
         </form>
       </div>
     </main>

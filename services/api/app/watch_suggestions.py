@@ -1,4 +1,9 @@
-"""Workbook-derived watch proposals; all thresholds and outdoor labels need review."""
+"""Workbook-derived, ready-to-start watch plans.
+
+The schedule supplies the scope.  Suggested official sources and long-horizon
+seasonal context are enabled as a reversible default; a person reviews only a
+detected risk before any schedule is changed.
+"""
 
 from __future__ import annotations
 
@@ -38,6 +43,8 @@ def weather_type(task: dict) -> str:
 
 
 def suggest_watch_plan(project: dict, tasks: list[dict]) -> dict:
+    from .source_catalog import source_catalog_for
+
     items = []
     calendars = defaultdict(list)
     outdoor = []
@@ -60,11 +67,14 @@ def suggest_watch_plan(project: dict, tasks: list[dict]) -> dict:
             outdoor.append(task)
             items.append({"id": f"outdoor:{task_id}", "kind": "outdoor", "task_ids": [task_id],
                           "reason": f"{task.get('name')}: 작업명·단계·위험 태그에서 현장 야외 작업 후보로 분류했습니다.",
-                          "decision": "proposed", "weather_type": weather_type(task)})
+                          "decision": "accepted", "auto_accepted": True, "weather_type": weather_type(task)})
         tags = str(task.get("risk_tags") or "").lower()
         if "regulation" in tags or "permitting" in tags:
             regulation[country or "UNSPECIFIED"].append(task_id)
-        supplier = str(task.get("supplier_id") or task.get("owner_company") or task.get("owner") or "").strip()
+        # Supplier calendars are only meaningful for actual contracted suppliers.
+        # Task delivery/approval parties and external authorities are deliberately
+        # kept out of this proposal.
+        supplier = str(task.get("supplier_id") or "").strip()
         if supplier:
             suppliers[supplier].append(task_id)
     holiday_calendars = []
@@ -72,23 +82,24 @@ def suggest_watch_plan(project: dict, tasks: list[dict]) -> dict:
         holiday_calendars.append({"country_code": country, "year": year, "task_ids": ids})
         items.append({"id": f"holiday:{country}:{year}", "kind": "holiday", "task_ids": ids,
                       "reason": f"{country}에서 {year}년에 수행되는 {len(ids)}개 작업의 현지 공휴일을 확인해야 합니다.",
-                      "decision": "proposed"})
+                      "decision": "accepted", "auto_accepted": True})
     weather_ids = [str(task["task_id"]) for task in outdoor]
+    default_weather_limits = {"max_wind_speed_kmh": 30, "max_precipitation_mm": 15}
     if weather_ids:
         items.append({"id": "weather:site", "kind": "weather", "task_ids": weather_ids,
-                      "reason": "야외 작업 후보의 현장 예보를 확인합니다. 좌표와 작업 중단 임계값은 현장 담당자가 확정해야 합니다.",
-                      "decision": "proposed",
+                      "reason": "야외 작업 기간의 과거 계절 노출도를 확인합니다. 단기 예보와 작업 중단 판단은 자동으로 켜지지 않습니다.",
+                      "decision": "accepted", "auto_accepted": True,
                       "threshold_candidates": {"lifting_at_height": {"max_wind_speed_kmh": 25, "max_precipitation_mm": 10},
                                                "earthworks": {"max_wind_speed_kmh": 30, "max_precipitation_mm": 10},
                                                "outdoor_general": {"max_wind_speed_kmh": 30, "max_precipitation_mm": 15}}})
-    source_url = "https://environment.ec.europa.eu/news_en"
+    catalog_sources = source_catalog_for(project, tasks)
     source_rules = []
-    eu_regulation = [task_id for country, ids in regulation.items() if country in EU_COUNTRIES for task_id in ids]
-    if eu_regulation:
-        source_rules.append({"url": source_url, "keywords": ["environmental", "battery", "permit"], "task_ids": eu_regulation})
-        items.append({"id": "source:eu-environment", "kind": "source", "task_ids": eu_regulation,
-                      "reason": "regulation·permitting 태그가 있는 작업의 EU 환경 공지를 적용 후보로 찾습니다. 실제 적용 여부는 확인 대상입니다.",
-                      "decision": "proposed"})
+    for source in catalog_sources:
+        source_rules.append({"url": source["url"], "keywords": source["keywords"], "task_ids": source["task_ids"],
+                             "catalog_source_id": source["id"], "title": source["title"], "reason": source["reason"]})
+        items.append({"id": f"source:{source['id']}", "kind": "source", "task_ids": source["task_ids"],
+                      "reason": source["reason"] + " 실제 적용 여부는 리스크 카드에서 확인합니다.",
+                      "decision": "accepted", "auto_accepted": True, "catalog_source_id": source["id"]})
     for country, ids in sorted(regulation.items()):
         items.append({"id": f"source:local-permit:{country}", "kind": "source_request", "task_ids": ids,
                       "reason": f"{country} 관할 인허가 담당자가 공식 공고 URL과 적용 키워드를 확인해 등록해야 합니다.",
@@ -101,12 +112,16 @@ def suggest_watch_plan(project: dict, tasks: list[dict]) -> dict:
     if project.get("latitude") is not None and project.get("longitude") is not None and weather_ids:
         site = {key: project.get(key) for key in ("latitude", "longitude", "timezone")}
         site["label"] = project.get("region") or "프로젝트 현장"
-    return {"enabled": False, "template_id": "workbook_derived_v1", "proposal_items": items,
-            "weather_site": site, "weather_poll_hours": 6, "notice_poll_hours": 12,
-            "source_allowlist": [source_url] if source_rules else [],
-            "public_search_terms": ["environmental", "battery", "permit"] if source_rules else [],
-            "weather_limits": {}, "seasonal_statistics_enabled": True, "weather_task_ids": weather_ids,
+    seasonal_enabled = bool(site and weather_ids)
+    return {"enabled": False, "activation_mode": "ready", "template_id": "workbook_derived_v2", "proposal_items": items,
+            "weather_site": site, "weather_forecast_enabled": False, "weather_poll_hours": 6, "notice_poll_hours": 12,
+            "source_allowlist": [source["url"] for source in catalog_sources],
+            "source_catalog": [{key: value for key, value in source.items() if key != "countries"} for source in catalog_sources],
+            "public_search_terms": [keyword for source in catalog_sources for keyword in source["keywords"]],
+            "weather_limits": default_weather_limits if seasonal_enabled else {}, "seasonal_statistics_enabled": seasonal_enabled,
+            "seasonal_poll_hours": 24 * 30, "weather_task_ids": weather_ids,
             "holiday_calendars": holiday_calendars, "holiday_poll_hours": 24, "source_rules": source_rules,
+            "onboarding": {"state": "ready", "advanced_settings_available": True},
             "approval_required_for": ["schedule_commit", "extra_cost", "external_send"]}
 
 

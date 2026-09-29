@@ -5,10 +5,10 @@ type Dict = Record<string, unknown>;
 type Row = Dict & { id?: string; data?: Dict; status?: string; kind?: string; event_id?: string; created_at?: string };
 
 export const SECTIONS = [
-  { id: "overview", label: "개요" },
+  { id: "overview", label: "프로젝트 브리핑" },
   { id: "schedule", label: "일정" },
-  { id: "watch", label: "감시" },
-  { id: "changes", label: "변경" },
+  { id: "watch", label: "리스크 탐색" },
+  { id: "changes", label: "리스크 검토" },
   { id: "scenarios", label: "대응안" },
   { id: "execute", label: "실행" },
   { id: "history", label: "이력" },
@@ -17,10 +17,10 @@ export const SECTIONS = [
 export type SectionId = (typeof SECTIONS)[number]["id"];
 
 export const STAGES = [
-  { code: "BRIEF", label: "프로젝트 맥락", section: "overview" },
-  { code: "IMPORT", label: "기준 일정", section: "schedule" },
-  { code: "WATCH", label: "위험 브리핑·감시", section: "watch" },
-  { code: "DETECT", label: "변경 감지", section: "changes" },
+  { code: "BRIEF", label: "프로젝트 한눈에 보기", section: "overview" },
+  { code: "IMPORT", label: "기준 일정 연결", section: "schedule" },
+  { code: "WATCH", label: "리스크 탐색", section: "watch" },
+  { code: "DETECT", label: "리스크 검토", section: "changes" },
   { code: "COMPARE", label: "대응안 비교", section: "scenarios" },
   { code: "APPROVE", label: "조건 승인", section: "scenarios" },
   { code: "EXECUTE", label: "일정 반영·실행", section: "execute" },
@@ -135,18 +135,18 @@ export function deriveProgress(state: ProjectRecords, preferEventId = ""): Progr
 
   let next: NextAction;
   if (current <= 1) {
-    next = { label: "기준 일정 연결", section: "schedule", detail: "hero 데모 일정 또는 Excel로 기준 일정을 연결하세요." };
+    next = { label: "기준 일정 Excel 올리기", section: "schedule", detail: "Excel로 기준 일정을 연결하면 프로젝트의 작업·기간·선후행 관계를 한곳에서 확인할 수 있습니다." };
   } else if (current === 2) {
-    next = { label: "감시 시작", section: "watch", detail: "등록 시 위험 브리핑을 확인하고 감시를 시작하세요. 데모는 수집을 시뮬레이션합니다." };
+    next = { label: "리스크 탐색 시작", section: "watch", detail: "프로젝트에 맞는 외부 리스크 범위를 확인하고 탐색을 시작하세요. 데모는 수집을 시뮬레이션합니다." };
   } else if (current === 3) {
-    if (!focusEvent) next = { label: "변경 불러오기", section: "changes", detail: "받은편지함에서 협력사 통보를 불러오거나 메시지를 붙여 넣으세요." };
-    else if (interpreting) next = { label: "변경 해석 확인", section: "changes", detail: "통보를 해석하고 있습니다. 끝나면 작업·날짜를 확인하세요." };
-    else if (!hasPatch(focusData) && !focusData.evidence) next = { label: "작업·날짜 지정", section: "changes", detail: "통보에서 영향 작업을 찾지 못했습니다. 작업과 날짜를 지정하세요." };
-    else next = { label: "변경 해석 확인", section: "changes", detail: "추출된 작업과 날짜가 맞는지 확인하면 영향 분석이 시작됩니다." };
+    if (!focusEvent) next = { label: "리스크 불러오기", section: "changes", detail: "수집된 신호나 협력사 통보에서 검토할 리스크를 선택하세요." };
+    else if (interpreting) next = { label: "리스크 해석 확인", section: "changes", detail: "리스크와 관련 작업을 해석하고 있습니다. 끝나면 작업·날짜를 확인하세요." };
+    else if (!hasPatch(focusData) && !focusData.evidence) next = { label: "영향 작업·날짜 지정", section: "changes", detail: "리스크의 영향 작업을 찾지 못했습니다. 작업과 날짜를 지정하세요." };
+    else next = { label: "리스크 해석 확인", section: "changes", detail: "추출된 작업과 날짜가 맞는지 확인하면 영향 분석이 시작됩니다." };
   } else if (current === 4) {
     next = pendingAnalysis
       ? { label: "분석 결과 보기", section: "scenarios", detail: "영향을 계산하고 있습니다. 끝나면 대응안이 표시됩니다." }
-      : { label: "영향 분석 시작", section: "changes", detail: "확인한 변경으로 영향 분석을 시작하세요." };
+      : { label: "영향 분석 시작", section: "changes", detail: "확인한 리스크로 영향 분석을 시작하세요." };
   } else if (current === 5) {
     next = { label: "대응안 비교·승인", section: "scenarios", detail: "대응안을 고르고 조건을 확인한 뒤 승인하세요." };
   } else if (current === 6) {
@@ -158,7 +158,7 @@ export function deriveProgress(state: ProjectRecords, preferEventId = ""): Progr
 }
 
 export function stageSummary(progress: Progress) {
-  if (progress.allDone) return `${STAGES.length}단계 완료 · 새 일정 버전 확정됨`;
+  if (progress.allDone) return "새 일정 버전 확정됨";
   const stage = STAGES[progress.current];
-  return `${progress.current + 1}단계 · ${stage.label}`;
+  return stage.label;
 }

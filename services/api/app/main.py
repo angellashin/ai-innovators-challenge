@@ -117,8 +117,16 @@ def normalize_import_snapshot(parsed: dict[str, Any], current_project: dict[str,
         task = dict(original)
         task["baseline_start"] = task.get("baseline_start") or task.get("planned_start")
         task["baseline_finish"] = task.get("baseline_finish") or task.get("planned_finish")
-        task["owner"] = task.get("owner") or task.get("supplier_id")
-        task["supplier_id"] = task.get("supplier_id") or task.get("owner")
+        # A delivery party can own a task without being a supplier.  Keep the legacy
+        # display owner populated, but never turn a regulator, utility, or internal
+        # delivery team into a supplier calendar candidate.
+        task["owner"] = (task.get("owner") or task.get("performing_party")
+                         or task.get("accountable_party") or task.get("supplier_id"))
+        # Older uploads had only owner_company.  Preserve their historical behavior
+        # until users re-import with the explicit party fields, while the new model
+        # opts out of this fallback by declaring accountable_party.
+        if not task.get("supplier_id") and task.get("performing_party") and not task.get("accountable_party"):
+            task["supplier_id"] = task["performing_party"]
         if hero:
             task["status"] = status_at(task, hero["as_of_date"])
             task["status_as_of"] = hero["as_of_date"]
@@ -181,6 +189,10 @@ class ProjectInput(BaseModel):
     data_origin: str = "USER"
 
 
+class ProjectArchiveInput(BaseModel):
+    archived: bool
+
+
 class ConfirmInput(BaseModel):
     project: dict[str, Any] | None = None
     tasks: list[dict[str, Any]] | None = None
@@ -193,6 +205,9 @@ class SourceRule(BaseModel):
     keywords: list[str] = Field(default_factory=list, max_length=20)
     task_ids: list[str] = Field(default_factory=list)
     country_code: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
+    catalog_source_id: str | None = None
+    title: str | None = None
+    reason: str | None = None
 
 
 class HolidayCalendar(BaseModel):
@@ -204,13 +219,17 @@ class HolidayCalendar(BaseModel):
 
 class WatchPlanInput(BaseModel):
     enabled: bool = False
+    activation_mode: str = "manual"
     weather_site: dict[str, Any] | None = None
+    weather_forecast_enabled: bool = False
     weather_poll_hours: int = Field(default=6, ge=1, le=168)
     notice_poll_hours: int = Field(default=12, ge=1, le=168)
     source_allowlist: list[str] = Field(default_factory=list)
+    source_catalog: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
     public_search_terms: list[str] = Field(default_factory=list)
     weather_limits: dict[str, float] = Field(default_factory=dict)
     seasonal_statistics_enabled: bool = True
+    seasonal_poll_hours: int = Field(default=24 * 30, ge=24, le=24 * 366)
     weather_task_ids: list[str] = Field(default_factory=list)
     source_rules: list[SourceRule] = Field(default_factory=list, max_length=20)
     holiday_calendars: list[HolidayCalendar] = Field(default_factory=list, max_length=100)
@@ -253,6 +272,13 @@ class ResolveInput(BaseModel):
 
 class InvestigationInput(BaseModel):
     include_task_ids: list[str] = Field(default_factory=list, max_length=40)
+
+
+class CandidateSelectionInput(BaseModel):
+    """The explicit human gate between document triage and an agent investigation."""
+
+    task_ids: list[str] = Field(min_length=1, max_length=40)
+    review_note: str = Field(default="", max_length=500)
 
 
 class RiskStatusInput(BaseModel):
@@ -330,11 +356,60 @@ def create_project(value: ProjectInput) -> dict[str, Any]:
 
 
 @app.get("/api/projects", dependencies=[Depends(authorize)])
-def list_projects() -> dict[str, Any]:
+def list_projects(include_archived: bool = False) -> dict[str, Any]:
     db = store()
     with db.connection() as conn:
         rows = conn.execute("SELECT id, data FROM projects ORDER BY created_at DESC").fetchall()
-    return {"projects": [{"id": row["id"], **json.loads(row["data"])} for row in rows]}
+    projects = []
+    for row in rows:
+        data = json.loads(row["data"])
+        if data.get("archived_at") and not include_archived:
+            continue
+        projects.append({"id": row["id"], **data})
+    return {"projects": projects}
+
+
+@app.patch("/api/projects/{project_id}/archive", dependencies=[Depends(authorize)])
+def archive_project(project_id: str, value: ProjectArchiveInput) -> dict[str, Any]:
+    """Hide or restore a project without deleting its schedule and audit history."""
+    db = store()
+    project = project_or_404(db, project_id)
+    data = project["data"]
+    if project_id == "HERO-BAT-HU-001" and value.archived:
+        raise HTTPException(409, "대표 사례 프로젝트는 보관할 수 없습니다")
+    updated = {**data, "archived_at": utcnow() if value.archived else None}
+    db.put_json("projects", project_id, updated, created_at=project["created_at"])
+    return {"project_id": project_id, "archived": value.archived, "project": updated}
+
+
+@app.post("/api/demo/hero-project", dependencies=[Depends(authorize)])
+async def ensure_hero_project() -> dict[str, Any]:
+    """Return one stable representative project instead of creating a new demo per visit."""
+    from .hero_demo import HERO_PROJECT_ID
+
+    db = store()
+    created = False
+    project = db.get_json("projects", HERO_PROJECT_ID)
+    if not project:
+        profile = ProjectInput(
+            project_id=HERO_PROJECT_ID,
+            name="헝가리 배터리 공장 건설",
+            mode="REPLAY",
+            region="헝가리 데브레첸",
+        ).model_dump(mode="json")
+        profile["data_origin"] = "SYNTHETIC"
+        db.put_json("projects", HERO_PROJECT_ID, profile)
+        created = True
+
+    baseline_created = False
+    if not db.current_version(HERO_PROJECT_ID):
+        await import_hero_demo_baseline(HERO_PROJECT_ID)
+        baseline_created = True
+    return {
+        "project_id": HERO_PROJECT_ID,
+        "created": created,
+        "baseline_created": baseline_created,
+    }
 
 
 
@@ -727,14 +802,21 @@ def start_watch(project_id: str) -> dict[str, Any]:
         mode, run_id = "demo_simulation", None
     else:
         watch = db.get_json("watch_plans", project_id)
-        if not watch or not watch["data"].get("enabled"):
+        if not watch:
+            raise HTTPException(409, "watch plan is disabled")
+        if not watch["data"].get("enabled") and watch["data"].get("activation_mode") == "ready":
+            active_plan = {**watch["data"], "enabled": True, "activation_mode": "active", "activated_at": utcnow()}
+            db.put_json("watch_plans", project_id, active_plan)
+            watch = {**watch, "data": active_plan}
+        if not watch["data"].get("enabled"):
             raise HTTPException(409, "watch plan is disabled")
         run = db.create_run(project_id, "scan", None, None, f"watch-start:{utcnow()}", {"watch_plan": watch["data"]})
         created, mode, run_id = [], "scan", run["id"]
     started = project["data"].get("watch_started_at") or utcnow()
     db.put_json("projects", project_id, {**project["data"], "watch_started_at": started, "watch_mode": mode},
                 created_at=project["created_at"])
-    return {"mode": mode, "event_ids": created, "run_id": run_id, "watch_started_at": started}
+    return {"mode": mode, "event_ids": created, "run_id": run_id, "watch_started_at": started,
+            "auto_configured": mode == "scan" and bool(watch["data"].get("activation_mode") == "active") if mode == "scan" else False}
 
 
 def _require_hero(db: Store, project_id: str) -> dict[str, Any]:
@@ -885,8 +967,6 @@ def save_watch_plan(project_id: str, value: WatchPlanInput) -> dict[str, Any]:
             raise HTTPException(422, "감시 항목의 선택 상태를 확인하세요")
         if proposed and (item.get("kind") != proposed[item_id].get("kind") or item.get("task_ids") != proposed[item_id].get("task_ids")):
             raise HTTPException(422, "감시 제안의 작업 연결은 설정 편집에서 수정하세요")
-    if data["enabled"] and any(item.get("decision") == "proposed" for item in supplied.values()):
-        raise HTTPException(422, "감시 제안 항목을 각각 수락·수정·제외한 뒤 활성화하세요")
     excluded = {item_id for item_id, item in supplied.items() if item.get("decision") == "excluded"}
     data["holiday_calendars"] = [config for config in data["holiday_calendars"]
                                  if f"holiday:{config['country_code']}:{config['year']}" not in excluded]
@@ -895,10 +975,15 @@ def save_watch_plan(project_id: str, value: WatchPlanInput) -> dict[str, Any]:
         data["weather_task_ids"] = []
     else:
         data["weather_task_ids"] = [task_id for task_id in data["weather_task_ids"] if f"outdoor:{task_id}" not in excluded]
-    if "source:eu-environment" in excluded:
-        data["source_rules"] = [rule for rule in data["source_rules"] if rule["url"] != "https://environment.ec.europa.eu/news_en"]
-        data["source_allowlist"] = [url for url in data["source_allowlist"] if url != "https://environment.ec.europa.eu/news_en"]
-    approved_hosts = {host.strip().lower() for host in os.environ.get("REPLAN_ALLOWED_SOURCE_HOSTS", "environment.ec.europa.eu").split(",") if host.strip()}
+    excluded_catalog_ids = {str(item.get("catalog_source_id") or item_id.removeprefix("source:"))
+                            for item_id, item in supplied.items() if item.get("decision") == "excluded" and item.get("kind") == "source"}
+    catalog_urls = {str(source.get("url")) for source in data.get("source_catalog", [])}
+    data["source_rules"] = [rule for rule in data["source_rules"] if rule.get("catalog_source_id") not in excluded_catalog_ids]
+    used_urls = {rule["url"] for rule in data["source_rules"]}
+    data["source_allowlist"] = [url for url in data["source_allowlist"] if url in used_urls or url not in catalog_urls]
+    data["source_catalog"] = [source for source in data.get("source_catalog", []) if source.get("id") not in excluded_catalog_ids]
+    from .source_catalog import catalog_hosts
+    approved_hosts = catalog_hosts() | {host.strip().lower() for host in os.environ.get("REPLAN_ALLOWED_SOURCE_HOSTS", "").split(",") if host.strip()}
     for url in data["source_allowlist"]:
         parsed_url = urlparse(url)
         if parsed_url.scheme != "https" or parsed_url.hostname not in approved_hosts or parsed_url.username or parsed_url.password:
@@ -928,7 +1013,7 @@ def save_watch_plan(project_id: str, value: WatchPlanInput) -> dict[str, Any]:
             raise HTTPException(422, "현장 위도·경도를 확인하세요")
     if data["enabled"] and not (site or data["source_allowlist"] or data["holiday_calendars"]):
         raise HTTPException(422, "감시할 외부 출처를 하나 이상 지정하세요")
-    if data["enabled"] and site and (not data["weather_limits"] or not data["weather_task_ids"]):
+    if data["enabled"] and site and (data.get("weather_forecast_enabled") or data["weather_limits"]) and (not data["weather_limits"] or not data["weather_task_ids"]):
         raise HTTPException(422, "기상 감시 작업과 작업 중단 기준을 지정하세요")
     db.put_json("watch_plans", project_id, data)
     return {"project_id": project_id, "watch_plan": data}
@@ -1005,17 +1090,28 @@ def start_investigation(project_id: str, event_id: str, value: InvestigationInpu
     if not record or not version:
         raise HTTPException(404, "event not found")
     if not agent_enabled():
-        raise HTTPException(409, "에이전트가 꺼져 있어 조사를 시작할 수 없습니다")
+        raise HTTPException(409, "AI 조사가 연결되지 않아 조사를 시작할 수 없습니다")
     event = record["data"]
     if event.get("review_status") in {"REJECTED", "SUPERSEDED"}:
         raise HTTPException(409, "event rejected or superseded")
-    if event.get("channel") == "supplier_message":
+    requested = sorted(set((value or InvestigationInput()).include_task_ids))
+    if event.get("channel") == "evidence_document":
+        selection = event.get("candidate_selection") or {}
+        selected = {str(task_id) for task_id in selection.get("selected_task_ids") or []}
+        if selection.get("status") != "CONFIRMED" or not selected:
+            raise HTTPException(409, "문서에서 찾은 후보를 먼저 선택해 조사 대상으로 확정하세요")
+        if requested and not set(requested) <= selected:
+            raise HTTPException(422, "확정한 문서 후보만 조사할 수 있습니다")
+        include = requested or sorted(selected)
+    elif event.get("channel") == "supplier_message":
         if not event.get("patch") or not related_signals(event, db.list_json("events", project_id, 1000), version["id"])["signals"]:
             raise HTTPException(409, "같은 기간·같은 작업의 외부 변화가 없어 조사할 것이 없습니다")
+        include = requested
     elif event.get("channel") not in EXTERNAL_CHANNELS:
         raise HTTPException(409, "외부 변화 또는 협력사 통보만 조사할 수 있습니다")
-    include = sorted(set((value or InvestigationInput()).include_task_ids))
-    if include:
+    else:
+        include = requested
+    if include and event.get("channel") != "evidence_document":
         needs_check = {str(row.get("task_id")) for row in (event.get("auto_narrow") or {}).get("needs_check") or []}
         if not set(include) <= needs_check:
             raise HTTPException(422, "자동 추리기의 '확인 필요' 작업만 추가로 고를 수 있습니다")
@@ -1024,6 +1120,33 @@ def start_investigation(project_id: str, event_id: str, value: InvestigationInpu
     run = db.create_run(project_id, "investigation", event_id, version["id"], key,
                         {"project_context_snapshot": db.project_context_snapshot(project_id), "include_task_ids": include})
     return {"run_id": run["id"], "status": run["status"]}
+
+
+@app.patch("/api/projects/{project_id}/events/{event_id}/candidate-selection", dependencies=[Depends(authorize)])
+def select_document_candidates(project_id: str, event_id: str, value: CandidateSelectionInput) -> dict[str, Any]:
+    """Persist the candidate scope a person approves before the research agent may run."""
+    db = store()
+    project_or_404(db, project_id)
+    record = db.get_json("events", event_id, project_id)
+    if not record:
+        raise HTTPException(404, "event not found")
+    event = dict(record["data"])
+    if event.get("channel") != "evidence_document":
+        raise HTTPException(409, "문서에서 만든 후보에만 이 선택을 사용할 수 있습니다")
+    candidate_ids = {str(row.get("task_id")) for row in event.get("candidates") or [] if row.get("task_id")}
+    selected = sorted(set(value.task_ids))
+    if not set(selected) <= candidate_ids:
+        raise HTTPException(422, "문서에서 인용 근거와 함께 찾은 후보만 선택할 수 있습니다")
+    event["candidate_selection"] = {
+        "status": "CONFIRMED",
+        "selected_task_ids": selected,
+        "candidate_task_ids": sorted(candidate_ids),
+        "review_note": value.review_note.strip(),
+        "confirmed_at": utcnow(),
+    }
+    db.put_json("events", event_id, event, project_id=project_id,
+                fingerprint=record["fingerprint"], created_at=record["created_at"])
+    return {"event": event}
 
 
 @app.patch("/api/projects/{project_id}/risks/{risk_id}", dependencies=[Depends(authorize)])

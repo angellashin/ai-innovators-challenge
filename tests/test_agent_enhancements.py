@@ -186,7 +186,7 @@ def test_draft_claims_count_dates_and_quantities_without_incidental_digits():
     assert "90" not in allowed
 
 
-def test_generic_outdoor_suggestions_and_review_gate(tmp_path, monkeypatch):
+def test_generic_outdoor_suggestions_are_ready_to_start(tmp_path, monkeypatch):
     parsed, project, tasks = _hero()
     expected = set(json.loads((ROOT / "data/hero_demo/outdoor_tasks.json").read_text(encoding="utf-8"))["outdoor_task_ids"])
     assert {task["task_id"] for task in parsed["tasks"] if outdoor_candidate(task)} == expected
@@ -196,6 +196,8 @@ def test_generic_outdoor_suggestions_and_review_gate(tmp_path, monkeypatch):
     assert plan["weather_task_ids"] == ["A"]
     assert plan["holiday_calendars"][0] == {"country_code": "HU", "year": 2027, "task_ids": ["A"]}
     assert any(item["kind"] == "supplier_calendar" for item in plan["proposal_items"])
+    assert plan["weather_forecast_enabled"] is False
+    assert plan["source_catalog"][0]["id"] == "eu-environment-news"
 
     monkeypatch.setenv("REPLAN_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("REPLAN_DEMO_TOKEN", "test-token")
@@ -208,9 +210,15 @@ def test_generic_outdoor_suggestions_and_review_gate(tmp_path, monkeypatch):
     confirmed = client.post(f"/api/projects/{project_id}/imports/{imported['import_id']}/confirm", headers=header, json={}).json()
     proposal = confirmed["watch_plan_suggestion"]
     assert len(proposal["holiday_calendars"]) == 7
-    rejected = client.put(f"/api/projects/{project_id}/watch-plan", headers=header, json={**proposal, "enabled": True})
-    assert rejected.status_code == 422
-    proposal["proposal_items"] = [{**item, "decision": "accepted"} for item in proposal["proposal_items"]]
+    db = Store()
+    db.put_json("projects", "AUTO", {"mode": "LIVE"})
+    db.put_json("versions", "AUTO-V", {"project": {}, "tasks": []}, project_id="AUTO", parent_id=None,
+                status="baseline", content_hash="baseline")
+    db.put_json("watch_plans", "AUTO", {"enabled": False, "activation_mode": "ready", "source_allowlist": []})
+    started = client.post("/api/projects/AUTO/watch/start", headers=header)
+    assert started.status_code == 200, started.text
+    assert started.json()["mode"] == "scan"
+    assert started.json()["auto_configured"] is True
     accepted = client.put(f"/api/projects/{project_id}/watch-plan", headers=header, json={**proposal, "enabled": True})
     assert accepted.status_code == 200, accepted.text
 
@@ -328,6 +336,6 @@ def test_paid_watch_enrichment_changes_reasons_only(tmp_path, monkeypatch):
     assert run_once(db)
     after = db.get_json("watch_plans", project_id)["data"]
     assert after["proposal_items"][0]["agent_note"] == "현장 예보 검토"
-    assert after["proposal_items"][0]["decision"] == "proposed"
+    assert after["proposal_items"][0]["decision"] == "accepted"
     assert after["holiday_calendars"] == before["holiday_calendars"]
     assert after["enabled"] is False

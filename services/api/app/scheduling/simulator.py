@@ -98,7 +98,7 @@ def simulate(
     ]
     for calendar in project.get("supplier_calendars", []):
         for task in tasks:
-            supplier = str(task.get("supplier_id") or task.get("supplier") or task.get("owner") or "")
+            supplier = str(task.get("supplier_id") or task.get("supplier") or "")
             if supplier == str(calendar.get("supplier_id")):
                 scoped_blocked_dates.append({"task_id": str(task["task_id"]), "dates": calendar.get("unavailable_dates", [])})
     resource_unavailable: list[dict[str, Any]] = []
@@ -396,7 +396,7 @@ def _is_workday(
 ) -> bool:
     if current.isoformat() in task.get("calendar_nonworking_dates", []) or current.isoformat() in task.get("approved_calendar_nonworking_dates", []):
         return False
-    supplier = str(task.get("supplier_id") or task.get("supplier") or task.get("owner") or "")
+    supplier = str(task.get("supplier_id") or task.get("supplier") or "")
     for calendar in project.get("supplier_calendars", []):
         if supplier == str(calendar.get("supplier_id")) and current.isoformat() in calendar.get("unavailable_dates", []):
             return False

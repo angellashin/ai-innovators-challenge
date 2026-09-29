@@ -28,6 +28,8 @@ def test_hero_import_preserves_schema_and_duration_semantics():
     parsed, snapshot = hero_snapshot()
     tasks = snapshot["tasks"]
 
+    assert parsed["project"]["baseline_start"] == "2025-01-06"
+    assert parsed["project"]["target_finish"] == "2027-12-21"
     assert len(tasks) == 64
     assert [task["task_id"] for task in tasks] == [f"T{number:03d}" for number in range(1, 65)]
     assert all(task.get("name") for task in tasks)
@@ -36,6 +38,10 @@ def test_hero_import_preserves_schema_and_duration_semantics():
     assert sum(task["dependency_type"] == "SS" for task in tasks) == 5
     assert {task["dependency_type"] for task in tasks} == {"FS", "SS"}
     assert validate_tasks(tasks) == []
+
+    # The imported dates are the approved baseline facts. Analysis may create a
+    # scenario, but it must never manufacture a new baseline while importing.
+    assert all(source["planned_start"] and source["planned_finish"] for source in parsed["tasks"])
 
     for source, task in zip(parsed["tasks"], tasks):
         start = date.fromisoformat(task["baseline_start"])
@@ -50,13 +56,30 @@ def test_hero_import_preserves_schema_and_duration_semantics():
         assert task["finish_boundary"] == "exclusive"
 
 
+def test_hero_import_separates_schedule_authority_from_suppliers_and_external_constraints():
+    parsed, snapshot = hero_snapshot()
+    by_id = {task["task_id"]: task for task in snapshot["tasks"]}
+
+    assert parsed["project"]["schedule_authority"] == "Global EPC Project Controls Team"
+    assert parsed["project"]["project_sponsor"] == "BatteryCo Project Operations Team"
+    assert parsed["project"]["source_system"] == "Primavera P6 export (synthetic)"
+    assert by_id["T008"]["accountable_party"] == "Global EPC Delivery Team"
+    assert by_id["T008"]["performing_party"] == "Hungarian Regulatory Authority"
+    assert by_id["T008"]["external_constraint_parties"] == ["Hungarian Regulatory Authority"]
+    assert not by_id["T008"].get("supplier_id")
+    assert by_id["T036"]["supplier_id"] == "Equipment Vendor A"
+    assert by_id["T036"]["performing_party"] == "Equipment Vendor A"
+
+
 def test_hero_baseline_simulation_is_date_stable():
-    _, snapshot = hero_snapshot()
+    parsed, snapshot = hero_snapshot()
     result = simulate(snapshot["project"], snapshot["tasks"])
     by_id = {task["task_id"]: task for task in result["schedule"]}
 
     assert result["violations"] == []
     assert result["finish_date"] == "2027-12-21"
+    assert snapshot["project"]["baseline_start"] == parsed["project"]["baseline_start"]
+    assert snapshot["project"]["target_finish"] == parsed["project"]["target_finish"]
     assert all(
         (task["baseline_start"], task["baseline_finish"])
         == (by_id[task["task_id"]]["planned_start"], by_id[task["task_id"]]["planned_finish"])

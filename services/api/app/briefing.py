@@ -74,18 +74,23 @@ def _shown(value: Any) -> Any:
 
 
 def vulnerability(float_days: int | None) -> dict[str, Any]:
-    """Exposure in words; no delay estimate."""
+    """Exposure in plain language; no delay estimate.
+
+    ``float_days`` is the buffer between a task slipping and the project finish
+    slipping.  The UI calls it an 일정 완충 기간 instead of the scheduling term
+    '여유' so that the signal is understandable without CPM vocabulary.
+    """
     if float_days is None:
-        return {"level": "unknown", "label": "여유 계산 불가"}
+        return {"level": "unknown", "label": "일정 완충 기간 계산 불가"}
     if float_days == 0:
-        return {"level": "critical", "label": "여유 0일이라 취약 (주공정)"}
+        return {"level": "critical", "label": "완충 기간 없음 · 지연 시 완료일 영향"}
     if float_days <= 14:
-        return {"level": "high", "label": f"여유 {float_days}일이라 취약"}
+        return {"level": "high", "label": f"일정 완충 {float_days}일 · 영향 가능성 높음"}
     if float_days <= 60:
-        return {"level": "medium", "label": f"여유 {float_days}일 · 주의"}
+        return {"level": "medium", "label": f"일정 완충 {float_days}일 · 확인 필요"}
     if float_days >= inv.FLOAT_SEARCH_DAYS:
-        return {"level": "low", "label": f"여유 {inv.FLOAT_SEARCH_DAYS}일 이상 · 흡수 여력 있음"}
-    return {"level": "low", "label": f"여유 {float_days}일 · 흡수 여력 있음"}
+        return {"level": "low", "label": f"일정 완충 {inv.FLOAT_SEARCH_DAYS}일 이상 · 일정 내 흡수 가능"}
+    return {"level": "low", "label": f"일정 완충 {float_days}일 · 일정 내 흡수 가능"}
 
 
 _FLOAT_CACHE: dict[str, dict[str, int]] = {}
@@ -224,7 +229,7 @@ def assemble(group: dict[str, Any], project: dict[str, Any], tasks: list[dict[st
     lowest = min(days) if days else None
     ordered = sorted(rows, key=lambda row: (row["float_days"] if row["float_days"] is not None else 10_000,
                                             str(row.get("item_id") or row.get("task_id"))))
-    warnings = [f"{row.get('item_id') or row['task_id']}: 여유 0일이라 취약합니다(주공정). "
+    warnings = [f"{row.get('item_id') or row['task_id']}: 일정 완충 기간이 없습니다. "
                 f"{row.get('task_id')} 착수가 늦어지면 프로젝트 완료일이 바로 밀립니다."
                 for row in ordered if row["float_days"] == 0]
     cases = search_cases(group["case_query"], evidence_as_of or as_of, limit=3)

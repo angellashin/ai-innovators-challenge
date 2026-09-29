@@ -364,7 +364,7 @@ def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     from .shifted_external import recheck_shifted_schedule
 
     if not agent_enabled():
-        return {"status": "disabled", "summary": "에이전트가 꺼져 있어 조사하지 않았습니다."}
+        return {"status": "disabled", "summary": "AI 조사가 연결되지 않아 조사하지 않았습니다."}
     event_row = db.get_json("events", run["event_id"], run["project_id"])
     version = db.get_json("versions", run["version_id"], run["project_id"])
     if not event_row or not version:
@@ -408,11 +408,14 @@ def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     literal_dates = {fact["value"] for fact in facts if fact["kind"] == "date"}
     state: dict[str, Any] = {"slack_checked": set(), "conditional": None, "usage": {}, "risk_searches": 0}
     # A triaged notice is investigated on its related tasks plus the needs-check tasks a person picked;
-    # the other needs-check tasks stay on the card for a person and are not calculated.
+    # a document event is stricter: only its explicitly confirmed candidates enter the agent scope.
     triaged = {} if supplier else (event.get("auto_narrow") or {})
     selected_ids = [str(task_id) for task_id in (run.get("data") or {}).get("include_task_ids") or []]
     scope: set[str] | None = None
-    if triaged.get("status") == "interpreted":
+    document_selection = event.get("candidate_selection") or {}
+    if event.get("channel") == "evidence_document" and document_selection.get("status") == "CONFIRMED":
+        scope = set(selected_ids) & {str(task_id) for task_id in document_selection.get("selected_task_ids") or []}
+    elif triaged.get("status") == "interpreted":
         scope = ({str(row.get("task_id")) for row in triaged.get("related") or []}
                  | ({str(row.get("task_id")) for row in triaged.get("needs_check") or []} & set(selected_ids)))
 
@@ -421,7 +424,7 @@ def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         if not outside:
             return None
         return {"status": "rejected", "outside_scope": outside, "allowed_task_ids": sorted(scope),
-                "reason": "자동 추리기의 '관련 있음' 작업과 사람이 고른 '확인 필요' 작업만 계산합니다."}
+                "reason": "사람이 선택해 확정한 후보 범위 안에서만 계산합니다."}
 
     def find_procurement_items(reason: str, supplier_id: str = "", origin_country: str = "",
                                customs_required: bool = True, arriving_after: str = "") -> dict[str, Any]:
@@ -675,7 +678,7 @@ def _rules_only_agent(run_data: dict[str, Any]) -> dict[str, Any]:
             os.environ.get(key) for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL")):
         status, summary = "llm_unavailable", "LLM 연결 정보가 없어 통보 내용과 계산기로만 분석했습니다."
     else:
-        status, summary = "disabled", "에이전트가 꺼져 있어 통보 내용과 계산기로만 분석했습니다."
+        status, summary = "disabled", "AI 조사가 연결되지 않아 통보 내용과 계산기로만 분석했습니다."
     return {"status": status, "mode": "rules_only", "summary": summary}
 
 
@@ -709,13 +712,14 @@ def _auto_narrow(db: Store, run: dict[str, Any], event: dict[str, Any], snapshot
     from .risk_register import link, model_view
 
     rules = [row for row in event.get("candidates") or [] if row.get("task_id")]
-    record: dict[str, Any] = {"at": utcnow(), "rule_candidate_count": len(rules), "related": [],
+    record: dict[str, Any] = {"at": utcnow(), "rule_candidate_count": len(rules),
+                              "rule_candidates": rules, "related": [],
                               "needs_check": [], "unrelated": [], "risk_links": []}
     if not rules:
         return {**record, "status": "no_candidates",
                 "summary": "규칙 후보가 없어 LLM을 부르지 않고 무관으로 정리했습니다."}
     if not agent_enabled():
-        return {**record, "status": "agent_off", "summary": "에이전트가 꺼져 있어 규칙 후보만 남겼습니다."}
+        return {**record, "status": "agent_off", "summary": "AI 조사가 연결되지 않아 규칙 후보만 남겼습니다."}
     paid_state = _reserve_paid_attempt(db, run["id"], ledger="auto_usage_ledger")
     if paid_state != "reserved":
         return {**record, "status": paid_state, "limit": auto_triage_limit(),
@@ -779,6 +783,21 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         return {"status": "STALE", "summary": "기준 일정이 바뀌었습니다. 외부 소스를 다시 확인하세요.", "scenario_ids": []}
     if (run_data.get("auto_detected") and event.get("channel") == "registered_public_source"
             and not event.get("patch") and not event.get("auto_narrow")):
+        # Persist the deterministic pass before the external model call. A separate worker or
+        # a polling client can therefore show the rule candidates immediately and distinguish
+        # "AI is still reviewing" from "no candidates".
+        rules = [row for row in event.get("candidates") or [] if row.get("task_id")]
+        event["auto_narrow"] = {
+            "at": utcnow(),
+            "status": "ai_running" if agent_enabled() and rules else ("no_candidates" if not rules else "agent_off"),
+            "rule_candidate_count": len(rules),
+            "rule_candidates": rules,
+            "related": [], "needs_check": [], "unrelated": [], "risk_links": [],
+            "summary": "규칙 후보를 먼저 표시했습니다. AI가 관련성과 확인 필요 여부를 검토하고 있습니다."
+            if rules and agent_enabled() else "규칙 후보를 정리했습니다.",
+        }
+        db.put_json("events", event_row["id"], event, project_id=run["project_id"],
+                    fingerprint=event_row["fingerprint"], created_at=event_row["created_at"])
         event["auto_narrow"] = _auto_narrow(db, run, event, snapshot)
         db.put_json("events", event_row["id"], event, project_id=run["project_id"],
                     fingerprint=event_row["fingerprint"], created_at=event_row["created_at"])
@@ -989,7 +1008,12 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_document_ingest(db: Store, run: dict[str, Any]) -> dict[str, Any]:
-    """Parse an uploaded document off the request path and create its review event."""
+    """Parse a document, ground a candidate set, then wait for a person's scope selection.
+
+    This is deliberately not an automatic investigation.  The document triage model may
+    connect a cited passage to schedule tasks, but it cannot spend a second research run
+    or make a schedule decision until a person selects the useful candidates.
+    """
     from .importers import extract_document
     from .main import notify_project
 
@@ -1040,6 +1064,7 @@ def _run_document_ingest(db: Store, run: dict[str, Any]) -> dict[str, Any]:
                     "data_origin": "USER_DOCUMENT", "version_id": version["id"],
                     "evidence": proof, **matched,
                 }
+                _triage_document_candidates(db, run, project, version, event)
             fingerprint = digest({"document_id": document_id, "text": parsed["text"]})
             existing_event = db.find_event_by_fingerprint(run["project_id"], fingerprint)
             if existing_event:
@@ -1065,6 +1090,63 @@ def _run_document_ingest(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         record["failed_at"] = utcnow()
         db.put_json("documents", document_id, record, project_id=run["project_id"], created_at=document["created_at"])
         raise
+
+
+def _triage_document_candidates(db: Store, run: dict[str, Any], project: dict[str, Any] | None,
+                                version: dict[str, Any], event: dict[str, Any]) -> None:
+    """Use the LLM once to turn grounded passages into reviewable task candidates.
+
+    The RAG retrieval and quote validation remain the boundary: the model receives only
+    stored passages and active schedule facts, and its response is discarded unless the
+    exact quote is present.  When the gateway is unavailable the deterministic candidates
+    remain visible, labelled as such rather than being presented as AI reasoning.
+    """
+    from .adapters.llm import OpenAICompatibleLLM
+    from .external_risks import interpret_notice
+    from .risk_register import model_view
+
+    rule_candidates = list(event.get("candidates") or [])
+    triage: dict[str, Any]
+    paid_state = _reserve_paid_attempt(db, run["id"]) if agent_enabled() else "disabled"
+    if paid_state == "reserved":
+        triage = interpret_notice(
+            event,
+            version["data"].get("tasks") or [],
+            OpenAICompatibleLLM(timeout=SORT_TIMEOUT),
+            version["data"].get("procurement") or [],
+            model_view(db, run["project_id"]),
+        )
+        _record_usage(db, run["id"], triage)
+    elif paid_state == "disabled":
+        triage = {
+            "status": "rules_only",
+            "summary": "LLM 연결이 없어 인용 문단과 일정 속성으로 찾은 후보만 표시합니다.",
+            "candidates": rule_candidates,
+        }
+    else:
+        triage = {
+            "status": paid_state,
+            "summary": "자동 호출 한도 때문에 인용 문단과 일정 속성으로 찾은 후보만 표시합니다.",
+            "candidates": rule_candidates,
+        }
+
+    # A failed LLM call must never erase useful, cited deterministic candidates.
+    candidates = list(triage.get("candidates") or rule_candidates)
+    candidate_ids = sorted({str(row.get("task_id")) for row in candidates if row.get("task_id")})
+    event["candidates"] = candidates
+    event["document_triage"] = {
+        "status": triage.get("status"),
+        "summary": triage.get("summary"),
+        "usage": triage.get("usage") or {},
+        "candidate_count": len(candidate_ids),
+        "evidence_document_id": (event.get("evidence") or {}).get("document_id"),
+    }
+    event["candidate_selection"] = {
+        "status": "REVIEW_REQUIRED" if candidate_ids else "NO_CANDIDATES",
+        "candidate_task_ids": candidate_ids,
+        "selected_task_ids": [],
+        "review_note": "",
+    }
 
 
 def _store_source_snapshot(db: Store, project_id: str, result: dict[str, Any]) -> tuple[str, bool]:
@@ -1164,7 +1246,7 @@ def _record_holiday_risks(db: Store, project_id: str, config: dict, source: dict
 
 
 def _record_public_risks(db: Store, project_id: str, plan: dict, result: dict, snapshot_id: str, url: str,
-                         data_origin: str = "PUBLIC") -> list[str]:
+                         data_origin: str = "PUBLIC", legacy_lexical: bool = False) -> list[str]:
     from .external_risks import evidence, match_notice
     version = db.current_version(project_id)
     if not version:
@@ -1189,6 +1271,7 @@ def _record_public_risks(db: Store, project_id: str, plan: dict, result: dict, s
             proof, matched = ground_external_source(
                 db, project_id, source, tasks=version["data"]["tasks"], watch_plan=plan,
                 evidence_kind="PUBLIC_NOTICE", snapshot_id=snapshot_id, origin=data_origin,
+                legacy_lexical=legacy_lexical,
             )
             proof["snapshot_source_id"] = source["snapshot_source_id"]
         event = {
@@ -1202,6 +1285,32 @@ def _record_public_risks(db: Store, project_id: str, plan: dict, result: dict, s
             event["published_at"] = row["published_at"]
         created.extend(_save_external_event(db, project_id, version, f"notice:{url}:{identity}", event, data_origin))
     return created
+
+
+def _seasonal_task_exposure(tasks: list[dict[str, Any]], task_ids: list[str], seasonal: dict[str, Any]) -> list[dict[str, Any]]:
+    """Attach historical month exposure to scheduled outdoor work, never a schedule patch."""
+    months = (seasonal.get("seasonal_statistics") or {}).get("by_month") or {}
+    selected = set(task_ids)
+    exposure: list[dict[str, Any]] = []
+    for task in tasks:
+        task_id = str(task.get("task_id") or "")
+        if task_id not in selected:
+            continue
+        try:
+            start, finish = date.fromisoformat(str(task.get("baseline_start") or task.get("planned_start"))[:10]), date.fromisoformat(str(task.get("baseline_finish") or task.get("planned_finish"))[:10])
+        except ValueError:
+            continue
+        month_numbers: set[int] = set()
+        cursor = date(start.year, start.month, 1)
+        end_month = date(finish.year, finish.month, 1)
+        while cursor <= end_month:
+            month_numbers.add(cursor.month)
+            cursor = date(cursor.year + (cursor.month == 12), 1 if cursor.month == 12 else cursor.month + 1, 1)
+        applicable = sorted({str(month) for month in month_numbers if str(month) in months}, key=int)
+        exposure.append({"task_id": task_id, "months": applicable,
+                         "statistics": {month: months[month] for month in applicable},
+                         "status": "HISTORICAL_EXPOSURE"})
+    return exposure
 
 
 def _run_scan(db: Store, run: dict[str, Any]) -> dict[str, Any]:
@@ -1221,16 +1330,27 @@ def _run_scan(db: Store, run: dict[str, Any]) -> dict[str, Any]:
         return snapshot_id
 
     site = plan.get("weather_site")
-    if site and scope in {"all", "weather"}:
+    # Plans saved before v2 had no explicit forecast flag and therefore retain
+    # their previous threshold-based behaviour. New workbook suggestions set it
+    # to false and use seasonal context only.
+    forecast_enabled = plan.get("weather_forecast_enabled", True)
+    if site and forecast_enabled and scope in {"all", "weather"}:
         try:
             result = fetch_weather(site)
         except Exception as exc:
             result = {"status": "failed", "source_id": "open-meteo", "fetched_at": utcnow(), "error": type(exc).__name__}
         snapshot_id = record(result)
         new_event_ids.extend(_record_weather_risks(db, run["project_id"], plan, result, snapshot_id))
-        if plan.get("seasonal_statistics_enabled") and plan.get("weather_limits"):
+    if site and plan.get("seasonal_statistics_enabled") and plan.get("weather_limits") and scope in {"all", "seasonal"}:
+        try:
             seasonal = fetch_seasonal_statistics(site, plan["weather_limits"])
-            record(seasonal)
+        except Exception as exc:
+            seasonal = {"status": "failed", "source_id": "open-meteo-seasonal", "fetched_at": utcnow(), "error": type(exc).__name__}
+        if seasonal.get("status") == "ok":
+            version = db.current_version(run["project_id"])
+            seasonal["task_exposure"] = _seasonal_task_exposure(
+                (version or {}).get("data", {}).get("tasks", []), plan.get("weather_task_ids") or [], seasonal)
+        record(seasonal)
     if scope in {"all", "holidays"}:
         for config in plan.get("holiday_calendars", []):
             result = fetch_holidays(config["country_code"], config["year"])
@@ -1245,7 +1365,10 @@ def _run_scan(db: Store, run: dict[str, Any]) -> dict[str, Any]:
             result = {"status": "failed", "source_id": url, "fetched_at": utcnow(), "error": type(exc).__name__}
         snapshot_id = record(result)
         if result.get("status") == "ok":
-            new_event_ids.extend(_record_public_risks(db, run["project_id"], plan, result, snapshot_id, url))
+            project = db.get_json("projects", run["project_id"])
+            legacy = (project or {}).get("data", {}).get("data_origin") == "SYNTHETIC"
+            new_event_ids.extend(_record_public_risks(db, run["project_id"], plan, result, snapshot_id, url,
+                                                      legacy_lexical=legacy))
     failures = sum(item["status"] != "ok" for item in source_results)
     return {"status": "partial_failure" if failures else "succeeded", "scope": scope,
             "sources": source_results, "failed_source_count": failures,
@@ -1264,13 +1387,15 @@ def enqueue_due_scans(db: Store, now: datetime | None = None) -> int:
         if not plan.get("enabled"):
             continue
         for scope, configured, field in (
-            ("weather", bool(plan.get("weather_site")), "weather_poll_hours"),
+            ("weather", bool(plan.get("weather_site")) and bool(plan.get("weather_forecast_enabled", True)), "weather_poll_hours"),
+            ("seasonal", bool(plan.get("weather_site")) and bool(plan.get("seasonal_statistics_enabled")), "seasonal_poll_hours"),
             ("notices", bool(plan.get("source_allowlist")), "notice_poll_hours"),
             ("holidays", bool(plan.get("holiday_calendars")), "holiday_poll_hours"),
         ):
             if not configured:
                 continue
-            hours = max(1, min(int(plan.get(field, 6)), 168))
+            max_hours = 24 * 366 if scope == "seasonal" else 168
+            hours = max(1, min(int(plan.get(field, 6)), max_hours))
             with db.connection() as conn:
                 recent = conn.execute(
                     "SELECT status, data, created_at FROM runs WHERE project_id=? AND kind='scan' ORDER BY created_at DESC LIMIT 100",
@@ -1318,7 +1443,7 @@ def _run_baseline_briefing(db: Store, run: dict[str, Any]) -> dict[str, Any]:
                             {"llm_unavailable", "failed"} else None)
     if agent is None:
         mode = {"disabled": "rules_only"}.get(paid_state, paid_state)
-        summary = ("에이전트가 꺼져 있어 규칙과 계산기로만 순위를 정했습니다." if paid_state == "disabled"
+        summary = ("AI 조사가 연결되지 않아 규칙과 계산기로만 순위를 정했습니다." if paid_state == "disabled"
                    else "유료 호출 한도로 규칙과 계산기로만 순위를 정했습니다.")
         agent_view = {"status": mode, "mode": "rules_only", "summary": summary}
     else:

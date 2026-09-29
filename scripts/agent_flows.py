@@ -227,7 +227,9 @@ def run_flow(flow: str, mode: str, project_name: str = "에이전트 흐름 확�
         runs["investigation"]["risk_link"] = call("GET", f"/api/runs/{runs['investigation']['run_id']}")["run"]["data"].get("risk_link")
     else:
         plan = dict(project["watch_plan"])
-        keep = "holiday:HU:2027" if flow == "EXT_HOLIDAY" else "source:"
+        # The recorded notice fixture is an EU environment notice. Keep that one
+        # source explicit even when product defaults add other official catalogs.
+        keep = "holiday:HU:2027" if flow == "EXT_HOLIDAY" else "source:eu-environment"
         plan["proposal_items"] = [{**row, "decision": "accepted" if str(row.get("id")).startswith(keep) else "excluded"}
                                   for row in plan.get("proposal_items", [])]
         plan.update(enabled=True, weather_site=None, weather_task_ids=[])

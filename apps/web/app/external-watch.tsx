@@ -22,6 +22,7 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan, feed = []
   const limits = draft.weather_limits || {};
   const proposals: Row[] = draft.proposal_items || [];
   const undecided = proposals.filter((item) => !item.decision || item.decision === "proposed").length;
+  const catalogSources: Row[] = draft.source_catalog || [];
   const outdoorCandidates = new Set(proposals.filter((item) => item.kind === "outdoor" && item.decision !== "excluded").flatMap((item) => item.task_ids || []));
   async function save(enabled: boolean) {
     setMessage("");
@@ -39,23 +40,23 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan, feed = []
     </select><small>Ctrl 또는 Command 키로 여러 작업을 선택할 수 있습니다.</small></label>;
   }
   return <div className="watch-card external-watch">
-    <b>외부 변화 감시</b><span className={plan.enabled ? "pill ok" : "pill"}>{plan.enabled ? "주기 감시 중" : "꺼짐"}</span>
-    <p>날씨·공휴일은 지정 작업에 연결해 계산하고, 공지·뉴스는 근거와 적용 후보를 검토합니다.</p>
+    <b>자동 리스크 탐색</b><span className={plan.enabled ? "pill ok" : "pill"}>{plan.enabled ? "감시 중" : "시작 전"}</span>
+    <p>기준 일정에서 연결한 공식 출처와 공휴일을 확인합니다. 장기 기상은 작업 기간의 계절 노출도만 보여주며, 단기 예보는 별도로 켜야 합니다.</p>
+    <p className="watch-progress">공식 출처 {catalogSources.length}개 · 공휴일 달력 {holidays.length}개 · 야외 작업 {draft.weather_task_ids?.length || 0}개{draft.seasonal_statistics_enabled ? "의 계절 노출도" : ""}</p>
     {feed.length > 0 && <div className="watch-feed" aria-label="감시 피드에서 들어온 신호">
       <b>감시 피드에서 들어온 신호 {feed.length}건</b>
       <ul>{feed.map((row) => <li key={row.id}>
         <span className={`status-chip${row.related ? "" : " warn"}`}>{row.related ? "관련 있음" : "검토 필요"}</span> {row.title}
-        <small>{row.source}{row.synthetic ? " · 합성 공지" : ""} · 발행 {row.published} · {row.related || "연결된 협력사 통보 없음 · 변경 카드에서 검토"}</small>
+        <small>{row.source}{row.synthetic ? " · 대표 사례" : ""} · 발행 {row.published} · {row.related || "연결된 협력사 통보 없음 · 리스크 검토에서 확인"}</small>
         {row.triage && <small>{row.triage}</small>}
       </li>)}</ul>
     </div>}
-    {proposals.length > 0 && <p className="watch-progress">감시 제안 {proposals.length}개 중 {undecided ? `${undecided}개를 아직 결정하지 않았습니다. 모두 수락·수정·제외해야 활성화할 수 있습니다.` : "모두 결정했습니다."}</p>}
     <details>
-      <summary>감시 제안 검토·작업 연결 설정</summary>
+      <summary>고급 설정 · 감시 범위와 작업 연결 조정</summary>
       {proposals.length > 0 && <fieldset disabled={disabled}>
         <legend>프로젝트 맞춤 감시 제안</legend>
-        <p>각 제안의 근거를 검토하고 수락·수정·제외를 선택하세요. 아래에서 날짜·출처·임계값을 편집할 수 있습니다. 협력사 달력 제안을 수락해도 달력이 자동으로 만들어지지는 않습니다. 휴무일은 실행 화면의 고급 설정에서 입력합니다.</p>
-        {undecided > 0 && <button className="secondary" onClick={() => update({ proposal_items: proposals.map((row) => !row.decision || row.decision === "proposed" ? { ...row, decision: "accepted" } : row) })}>남은 제안 {undecided}개 모두 수락</button>}
+        <p>기준 일정에서 자동 제안된 범위입니다. 협력사 달력처럼 아직 연결할 수 없는 항목만 확인 요청으로 남습니다.</p>
+        {undecided > 0 && <p className="muted">추가 확인 요청 {undecided}개는 감시 시작을 막지 않습니다.</p>}
         {proposals.map((item, index) => <div className="external-config" key={item.id}>
           <b>{PROPOSAL_KIND[item.kind] || item.kind} · {(item.task_ids || []).join(", ") || item.supplier_id || "확인 요청"}</b>
           <small>{item.reason}</small>
@@ -67,8 +68,8 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan, feed = []
         </div>)}
       </fieldset>}
       <fieldset disabled={disabled}>
-        <legend>현장 기상 예보</legend>
-        <label><input type="checkbox" checked={Boolean(draft.weather_site)} onChange={(event) => update({ weather_site: event.target.checked ? { latitude: "", longitude: "", timezone: "UTC", label: "현장" } : null })} />기상 감시 사용</label>
+        <legend>기상 감시</legend>
+        <label><input type="checkbox" checked={Boolean(draft.weather_site)} onChange={(event) => update({ weather_site: event.target.checked ? { latitude: "", longitude: "", timezone: "UTC", label: "현장" } : null })} />현장 위치 등록</label>
         {draft.weather_site && <>
           <label>현장 이름<input value={site.label || ""} onChange={(event) => update({ weather_site: { ...site, label: event.target.value } })} /></label>
           <label>위도<input type="number" step="any" min="-90" max="90" value={site.latitude ?? ""} onChange={(event) => update({ weather_site: { ...site, latitude: event.target.value === "" ? "" : Number(event.target.value) } })} /></label>
@@ -81,7 +82,8 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan, feed = []
               const next = { ...limits }; if (event.target.value === "") delete next[key]; else next[key] = Number(event.target.value);
               update({ weather_limits: next });
             }} /></label>)}
-          <small>현장 승인 기준을 입력하세요. 예보 수치는 작업 중단 확정이 아닙니다.</small>
+          <label><input type="checkbox" checked={Boolean(draft.weather_forecast_enabled)} onChange={(event) => update({ weather_forecast_enabled: event.target.checked })} />단기 예보로 작업 중단 후보도 확인</label>
+          <small>기본값은 장기 계절 노출도입니다. 단기 예보는 작업 중단 확정이 아닙니다.</small>
         </>}
         <label>기상 확인 간격 (시간)<input type="number" min="1" max="168" value={draft.weather_poll_hours || 6} onChange={(event) => update({ weather_poll_hours: Number(event.target.value) })} /></label>
       </fieldset>
@@ -109,7 +111,7 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan, feed = []
         <button className="secondary" onClick={() => update({ source_rules: [...rules, { url: "", keywords: [], task_ids: [] }] })}>출처와 작업 연결</button>
         <label>공지 확인 간격 (시간)<input type="number" min="1" max="168" value={draft.notice_poll_hours || 12} onChange={(event) => update({ notice_poll_hours: Number(event.target.value) })} /></label>
       </fieldset>
-      <button disabled={disabled} className="secondary" onClick={() => save(false)}>설정 저장 · 감시 중지</button>
+      <button disabled={disabled} className="secondary" onClick={() => save(plan.enabled)}>설정 저장</button>
     </details>
     <div className="button-row">
       <button disabled={disabled} className="secondary" onClick={() => save(true)}>설정 저장 · 감시 활성화</button>
@@ -159,4 +161,3 @@ export function EvidenceReview({ event, tasks, disabled, onReview, onAnalyze }: 
     {invalid && <p>보류되었거나 최신 근거로 대체되어 승인할 수 없습니다.</p>}
   </div>;
 }
-

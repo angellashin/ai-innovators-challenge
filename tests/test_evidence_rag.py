@@ -151,3 +151,52 @@ def test_document_rag_llm_review_then_approval_commit_and_export(tmp_path, monke
     committed = client.post(f"/api/scenarios/{scenario_id}/commit", headers=headers)
     assert committed.status_code == 200
     assert client.get(f"/api/projects/P/export?version_id={committed.json()['version_id']}", headers=headers).status_code == 200
+
+
+def test_document_candidate_selection_gates_agent_research_scope(tmp_path, monkeypatch):
+    """A raw uploaded document cannot start costly research until a person selects its cited scope."""
+    monkeypatch.setenv("REPLAN_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("REPLAN_DEMO_TOKEN", "test")
+    monkeypatch.setenv("API_KEY", "contract-test")
+    monkeypatch.setenv("LLM_MODEL", "contract-model")
+    monkeypatch.setenv("LLM_BASE_URL", "https://llm.example/v1")
+    monkeypatch.setenv("REPLAN_PAID_CALLS_ENABLED", "true")
+    monkeypatch.setattr("app.adapters.llm.OpenAICompatibleLLM", ContractLLM)
+    db = make_store(tmp_path)
+    document_id = "c" * 32
+    content = NOTICE.encode()
+    db.save_upload(document_id, content)
+    db.put_json("documents", document_id, {
+        "document_id": document_id, "filename": "new-export-rule.txt", "status": "QUEUED",
+        "sha256": __import__("hashlib").sha256(content).hexdigest(), "size_bytes": len(content),
+    }, project_id="P")
+    db.create_run("P", "document_ingest", None, "V", "document-rag-selection", {"document_id": document_id})
+    assert run_once(db)
+    event_row = db.list_json("events", "P")[0]
+    event_id = event_row["id"]
+    event = event_row["data"]
+    assert event["document_triage"]["status"] == "interpreted"
+    assert event["candidate_selection"]["status"] == "REVIEW_REQUIRED"
+    assert event["candidate_selection"]["candidate_task_ids"] == ["T042"]
+
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer test"}
+    blocked = client.post(f"/api/projects/P/events/{event_id}/investigations", headers=headers)
+    assert blocked.status_code == 409
+    assert "먼저 선택" in blocked.json()["detail"]
+
+    confirmed = client.patch(
+        f"/api/projects/P/events/{event_id}/candidate-selection", headers=headers,
+        json={"task_ids": ["T042"], "review_note": "이번 공지의 적용 대상을 확인함"},
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["event"]["candidate_selection"]["status"] == "CONFIRMED"
+
+    rejected_scope = client.post(
+        f"/api/projects/P/events/{event_id}/investigations", headers=headers,
+        json={"include_task_ids": ["T043"]},
+    )
+    assert rejected_scope.status_code == 422
+    queued = client.post(f"/api/projects/P/events/{event_id}/investigations", headers=headers)
+    assert queued.status_code == 202
+    assert db.get_json("runs", queued.json()["run_id"], "P")["data"]["include_task_ids"] == ["T042"]

@@ -59,7 +59,7 @@ export default function LandingPage() {
             <Link className="landing-primary-button" href="/demo">52일 위험 사례 보기 <span aria-hidden="true">→</span></Link>
             <a className="landing-quiet-link" href="#workflow">이용 흐름 보기</a>
           </div>
-          <small className="landing-demo-note">52일 사례는 합성 데이터와 녹화된 AI 응답을 사용하는 데모입니다.</small>
+          <small className="landing-demo-note">대표 사례와 녹화된 AI 응답으로 서비스 흐름을 확인할 수 있습니다.</small>
         </div>
 
         <div className="landing-hero-index" aria-hidden="true"><span>01</span><i /><span>03</span></div>
@@ -71,7 +71,7 @@ export default function LandingPage() {
           <p className="landing-overline">메일에 적히지 않은 위험까지</p>
           <h2>영향 없는 통보처럼 보여도<br />다른 품목은 늦어질 수 있습니다.</h2>
           <p className="landing-statement-copy">
-            메일에 적힌 부품의 지연은 기존 일정에 흡수됩니다. 하지만 같은 수출 허가를 기다리는 다른 부품은 여유가 없을 수 있습니다. REPLAN은 이 연결을 찾아 담당자가 확인할 질문과 기한을 제시합니다.
+            한 품목의 지연은 기존 일정 안에서 흡수될 수 있습니다. 하지만 같은 수출 허가를 기다리는 다른 품목은 일정 완충 기간이 없을 수 있습니다. REPLAN은 이 연결을 찾아 담당자가 확인할 질문과 기한을 제시합니다.
           </p>
         </div>
       </section>
@@ -96,16 +96,16 @@ export default function LandingPage() {
       <section className="landing-product-story" id="use-case">
         <div className="landing-story-copy">
           <div className="landing-section-label"><span>03</span> 대표 사례</div>
-          <p className="landing-overline">합성 프로젝트 데모</p>
+          <p className="landing-overline">대표 사례 데모</p>
           <h2>0일에서<br />52일로.</h2>
           <p>협력사 메일에 적힌 부품만 계산하면 완료일은 그대로입니다. REPLAN은 같은 허가가 필요한 다른 부품을 찾아 최악의 경우 52일 지연될 수 있음을 보여줍니다.</p>
           <Link className="landing-inline-link" href="/demo">사례 직접 살펴보기 <span aria-hidden="true">↗</span></Link>
         </div>
 
-        <div className="landing-product-card" aria-label="REPLAN 합성 데모의 영향 분석 요약">
+        <div className="landing-product-card" aria-label="REPLAN 대표 사례의 영향 분석 요약">
           <div className="product-card-topline">
             <div><span className="live-dot" /> 협력사 통보 분석</div>
-            <span>합성 데이터 예시</span>
+            <span>대표 사례 데이터</span>
           </div>
           <div className="product-card-change">
             <span>희토류 자석 부품 · 수출 허가 지연</span>

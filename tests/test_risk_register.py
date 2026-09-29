@@ -78,9 +78,9 @@ def test_rules_brief_the_rare_earth_items_with_a_critical_path_warning(client):
     first = risks[0]
     assert first["risk_id"] == "R-import-CN" and first["item_ids"] == ["P-A1", "P-B", "P-C"]
     by_item = {row["item_id"]: row for row in first["items"]}
-    assert by_item["P-C"]["float_days"] == 0 and by_item["P-C"]["vulnerability"]["label"] == "여유 0일이라 취약 (주공정)"
+    assert by_item["P-C"]["float_days"] == 0 and by_item["P-C"]["vulnerability"]["label"] == "완충 기간 없음 · 지연 시 완료일 영향"
     assert by_item["P-B"]["float_days"] == 245
-    assert any(warning.startswith("P-C: 여유 0일이라 취약합니다(주공정)") for warning in first["critical_warnings"])
+    assert any(warning.startswith("P-C: 일정 완충 기간이 없습니다.") for warning in first["critical_warnings"])
     assert first["actions"][0] == {"target": "P-C", "what": "P-C의 원산지 증명, 교정 성적서 준비 상황을 "
                                    "Equipment Vendor A에 확인", "by": "2027-03-26", "basis": "도착 예정일"}
     # The workbook states neutral facts only; the rules never read a risk out of it.

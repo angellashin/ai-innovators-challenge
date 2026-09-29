@@ -5,7 +5,7 @@ import Image from "next/image";
 import { ExternalWatch, EvidenceReview } from "./external-watch";
 import { Inbox, InboxMessage, demoInbox, toEventPayload } from "./inbox";
 import { BriefingPanel, RiskLinkNote, RiskRegister, TriagePanel } from "./risk-panels";
-import { STAGES, SectionId, deriveProgress, hasPatch, isFeedSignal, isPreview, linkedSignalIds, runScenarioCount, sectionFromHash, stageSummary, watchStarted } from "./stages";
+import { SectionId, deriveProgress, hasPatch, isFeedSignal, isPreview, linkedSignalIds, runScenarioCount, sectionFromHash, stageSummary, watchStarted } from "./stages";
 
 type Dict = Record<string, unknown>;
 type Row = Dict & { id?: string; data?: Dict; status?: string; kind?: string; event_id?: string; scenario_id?: string; created_at?: string };
@@ -64,7 +64,7 @@ const apiBase = "/api/proxy";
 
 function text(value: unknown, fallback = "-") {
   if (value === null || value === undefined || value === "") return fallback;
-  return String(value);
+  return String(value).replace(/\[합성\]\s*/g, "");
 }
 
 function money(value: unknown) {
@@ -126,10 +126,10 @@ function friendly(error: ApiError): Feedback {
     [/violates hard constraints/, "이 대응안은 예산 또는 제약 조건을 넘어 승인할 수 없습니다. 다른 안을 고르거나 비용 한도를 조정하세요."],
     [/a baseline already exists/, "이미 기준 일정이 연결되어 있습니다."],
     [/confirm a baseline first/, "먼저 일정 단계에서 기준 일정을 연결하세요."],
-    [/review the proposed change/, "변경 해석을 먼저 확인해야 영향 분석을 시작할 수 있습니다."],
+    [/review the proposed change/, "리스크 해석을 먼저 확인해야 영향 분석을 시작할 수 있습니다."],
     [/watch plan is disabled/, "감시 계획을 활성화한 뒤에 외부 변화를 확인할 수 있습니다."],
-    [/schedule changed|replan required|older schedule|scan again/, "기준 일정이 바뀌었습니다. 변경 화면에서 영향 분석을 다시 시작하세요."],
-    [/rejected or superseded|source has changed/, "보류되었거나 새 통보로 대체된 변경입니다. 최신 변경을 확인하세요."],
+    [/schedule changed|replan required|older schedule|scan again/, "기준 일정이 바뀌었습니다. 리스크 검토에서 영향 분석을 다시 시작하세요."],
+    [/rejected or superseded|source has changed/, "보류되었거나 새 통보로 대체된 리스크입니다. 최신 리스크를 확인하세요."],
     [/task IDs changed/, "수정 Excel의 작업 ID가 기준 일정과 다릅니다. 작업 ID를 맞춘 뒤 다시 올리세요."],
   ];
   const guide = guides.find(([pattern]) => pattern.test(message));
@@ -165,13 +165,16 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const [manualMessage, setManualMessage] = useState("");
   const [selectedMessageId, setSelectedMessageId] = useState("");
   const [budget, setBudget] = useState<number | "">("");
-  const [notice, setNotice] = useState("프로젝트 작업공간을 불러오는 중입니다.");
+  const [notice, setNotice] = useState("프로젝트 정보를 불러오는 중입니다.");
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [activeSection, setActiveSection] = useState<SectionId>("overview");
+  const [showPreparedDemoOutputs, setShowPreparedDemoOutputs] = useState(false);
+  const [statusPanelOpen, setStatusPanelOpen] = useState(false);
   const viewRunRef = useRef("");
   const awaitingRef = useRef<{ runId: string; kind: "analysis" | "replan" } | null>(null);
   const sectionRef = useRef<SectionId>("overview");
+  const statusCenterRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => { viewRunRef.current = viewRunId; }, [viewRunId]);
   useEffect(() => { sectionRef.current = activeSection; }, [activeSection]);
@@ -182,6 +185,22 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     window.addEventListener("hashchange", syncSection);
     return () => window.removeEventListener("hashchange", syncSection);
   }, []);
+
+  useEffect(() => {
+    if (!statusPanelOpen) return;
+    const closeWhenOutside = (event: MouseEvent) => {
+      if (!statusCenterRef.current?.contains(event.target as Node)) setStatusPanelOpen(false);
+    };
+    const closeWithEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setStatusPanelOpen(false);
+    };
+    document.addEventListener("mousedown", closeWhenOutside);
+    document.addEventListener("keydown", closeWithEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeWhenOutside);
+      document.removeEventListener("keydown", closeWithEscape);
+    };
+  }, [statusPanelOpen]);
 
   useEffect(() => {
     if (projectId) sessionStorage.setItem("replan.projectId", projectId);
@@ -248,7 +267,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       setNotice(awaited.kind === "replan" ? "비용 한도를 반영한 대응안을 표시했습니다." : "분석이 끝났습니다. 대응안을 비교하고 승인할 안을 고르세요.");
       if (awaited.kind === "analysis" && sectionRef.current === "changes") go("scenarios");
     } else {
-      setNotice(text(result.run?.data?.summary, "분석이 멈췄습니다. 변경 화면에서 작업과 날짜를 확인하세요."));
+      setNotice(text(result.run?.data?.summary, "분석이 멈췄습니다. 리스크 검토에서 작업과 날짜를 확인하세요."));
     }
   }
 
@@ -261,7 +280,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       inFlight = true;
       try {
         await sync(projectId);
-        setNotice((current) => current === "프로젝트 작업공간을 불러오는 중입니다." ? "프로젝트를 불러왔습니다." : current);
+        setNotice((current) => current === "프로젝트 정보를 불러오는 중입니다." ? "" : current);
       } catch (caught) {
         if (active) setFeedback(friendly(caught as ApiError));
       } finally { inFlight = false; }
@@ -300,7 +319,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   async function loadHeroBaseline() {
     await guarded("hero 데모 기준 일정 연결", () => callApi<Dict>(`/api/projects/${projectId}/demo/hero-baseline`, { method: "POST" }), async () => {
       await refresh();
-      setNotice("기준 일정을 연결했습니다. 사전 에이전트가 위험을 브리핑하면 이 화면에 표시됩니다. 확인한 뒤 '변경 불러오기'로 넘어가세요.");
+      setNotice("기준 일정을 연결했습니다. 사전 에이전트가 위험을 브리핑하면 이 화면에 표시됩니다. 확인한 뒤 리스크 검토로 넘어가세요.");
     });
   }
 
@@ -323,18 +342,18 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       if (asChange) {
         setChangePreview(null); setChangeFile(null);
         await refresh();
-        setNotice(value.unchanged ? "기준 일정과 달라진 작업이 없습니다." : "수정 일정을 변경으로 등록했습니다. 아래 카드에서 해석을 확인하세요.");
+        setNotice(value.unchanged ? "기준 일정과 달라진 작업이 없습니다." : "수정 일정의 차이를 리스크 검토 항목으로 등록했습니다. 아래 카드에서 해석을 확인하세요.");
       } else {
         setPreview(null); setSelectedFile(null);
         await refresh();
-        setNotice("기준 일정을 확정했습니다. 일정을 확인한 뒤 '변경 불러오기'로 넘어가세요.");
+        setNotice("기준 일정을 확정했습니다. 일정을 확인한 뒤 리스크 탐색을 시작하세요.");
       }
     });
   }
 
   // ---- 3 DETECT -------------------------------------------------------
   async function createEvent(payload: Dict) {
-    const created = await guarded("변경 등록", () =>
+    const created = await guarded("리스크 등록", () =>
       callApi<{ event_id: string; duplicate?: boolean }>(`/api/projects/${projectId}/events`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
       }));
@@ -348,7 +367,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       });
     } catch { /* an unreviewable event still shows its card */ }
     await refresh();
-    setNotice(created.duplicate ? "이미 받은 통보입니다. 기존 변경 카드를 확인하세요." : "통보를 등록했습니다. 아래 카드에서 해석된 작업과 날짜를 확인하세요.");
+    setNotice(created.duplicate ? "이미 받은 통보입니다. 기존 리스크 카드를 확인하세요." : "통보를 등록했습니다. 아래 카드에서 해석된 작업과 날짜를 확인하세요.");
     go("changes", `review-${created.event_id}`);
   }
 
@@ -363,9 +382,10 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       `/api/projects/${projectId}/watch/start`, { method: "POST" }));
     if (!started) return;
     await refresh();
+    setShowPreparedDemoOutputs(true);
     setNotice(started.mode === "demo_simulation"
-      ? `감시를 시작했습니다. 데모 수집 시뮬레이션으로 등록 출처 공지 ${started.event_ids.length}건이 감시 피드에 들어왔고, 변화 자동 추리기가 분류합니다. 다음은 '변경 불러오기'입니다.`
-      : "감시를 시작했습니다. 등록한 출처를 확인하고 있습니다. 다음은 '변경 불러오기'입니다.");
+      ? `리스크 탐색을 시작했습니다. 데모 수집 시뮬레이션으로 등록 출처 공지 ${started.event_ids.length}건이 탐색 피드에 들어왔고, 자동 분류기가 검토 대상을 정리합니다.`
+      : "리스크 탐색을 시작했습니다. 등록한 출처를 확인하고 있습니다.");
   }
 
   async function loadTestNotice(signalId: string) {
@@ -405,7 +425,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   }
 
   async function confirmEvent(eventId: string, payload: Dict = {}) {
-    const reviewed = await guarded("변경 해석 확인", () =>
+    const reviewed = await guarded("리스크 해석 확인", () =>
       callApi<Dict>(`/api/projects/${projectId}/events/${eventId}/review`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ confirmed: true, ...payload }),
@@ -420,7 +440,18 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       }));
     if (!queued) return;
     await refresh();
-    setNotice("조사를 시작했습니다. 결과는 이 변경 카드에 표시됩니다.");
+    setNotice("조사를 시작했습니다. 결과는 이 리스크 카드에 표시됩니다.");
+  }
+
+  async function confirmDocumentCandidates(eventId: string, taskIds: string[]) {
+    const selected = await guarded("조사 후보 확정", () => callApi<{ event: Dict }>(
+      `/api/projects/${projectId}/events/${eventId}/candidate-selection`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_ids: taskIds, review_note: "문서 후보를 검토해 조사 범위를 확정함" }),
+      }));
+    if (!selected) return;
+    await refresh();
+    setNotice(`문서에서 찾은 ${taskIds.length}개 후보만 조사 대상으로 확정했습니다.`);
   }
 
   async function updateRisk(riskId: string, status: string, note: string) {
@@ -643,9 +674,26 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   }, {}), [selectedScenario]);
 
   const projectData = project.project || {};
-  const projectName = text(projectData.name, loaded ? "이름 없는 프로젝트" : "불러오는 중");
+  const storedProjectName = text(projectData.name, loaded ? "이름 없는 프로젝트" : "불러오는 중");
+  // Keep previously-created representative fixtures understandable after the demo name changed.
+  const projectName = storedProjectName === "52일 숨은 위험 데모" ? "헝가리 배터리 공장 건설" : storedProjectName;
+  const isHero = Boolean(projectData.hero_fixture_id);
+  const taskStarts = tasks.map((task) => taskDates(task).start).filter(Boolean).sort();
+  const taskFinishes = tasks.map((task) => taskDates(task).finish).filter(Boolean).sort();
+  const projectPeriod = taskStarts.length && taskFinishes.length ? `${taskStarts[0]} – ${taskFinishes[taskFinishes.length - 1]}` : "기간 미설정";
   const events = project.events || [];
   const eventCount = events.length;
+  const started = watchStarted(project);
+  // The representative case starts in a deliberately clean state. Prepared
+  // outputs stay hidden until the user starts discovery or explicitly reveals them.
+  const demoOutputsHidden = isHero && !started && !showPreparedDemoOutputs;
+  const pendingRiskEvents = demoOutputsHidden ? [] : events.filter((event) => text(event.data?.review_status, "PENDING") === "PENDING");
+  const unreadRiskNotifications = demoOutputsHidden ? [] : (project.notifications || []).filter((notification) => {
+    const data = notification.data || {};
+    return data.status === "UNREAD" && data.event_type === "external_change";
+  });
+  const riskAlertCount = unreadRiskNotifications.length || pendingRiskEvents.length;
+  const latestSnapshot = (project.source_snapshots || [])[0];
   const analysisRuns = (project.runs || []).filter((item) => item.kind === "analysis" && !isPreview(item));
   const approvals = project.approvals || [];
   const committedVersions = (project.versions || []).filter((item) => item.status === "committed");
@@ -669,40 +717,17 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       triage: triageLine(event.data?.auto_narrow as Dict | undefined) };
   });
 
-  // ---- Step rail -----------------------------------------------------
-  const stepRail = (
-    <details className="stage-rail">
-      <summary>전체 진행 과정 <b>{progress.done.filter(Boolean).length}/{STAGES.length} 완료</b><span>단계 보기</span></summary>
-      <nav aria-label="진행 단계">
-        <ol>
-          {STAGES.map((stage, index) => {
-            const state = progress.done[index] ? "done" : index === progress.current ? "current" : "todo";
-            return (
-              <li key={stage.code} className={`stage-step ${state}${stage.section === activeSection ? " here" : ""}`}>
-                <a href={`#${stage.section}`} aria-current={state === "current" ? "step" : undefined}>
-                  <span className="stage-code">{index + 1}단계</span>
-                  <b>{stage.label}</b>
-                  <small>{state === "done" ? "완료" : state === "current" ? "지금 할 단계" : "대기"}</small>
-                </a>
-              </li>
-            );
-          })}
-        </ol>
-      </nav>
-    </details>
-  );
-
   const nextCallout = (label: string, section: SectionId, detail: string) => (
     <div className="next-callout" role="status">
-      <div><span className="eyebrow">다음 단계</span><p>{detail}</p></div>
+      <div><span className="eyebrow">다음 할 일</span><p>{detail}</p></div>
       <button onClick={() => go(section)}>{label} →</button>
     </div>
   );
 
-  // ---- 1 BRIEF ---------------------------------------------------------
+  // ---- Project brief ---------------------------------------------------
   const overviewView = (
     <section className="workspace-view overview-view" id="overview" aria-labelledby="overview-title">
-      <div className="view-heading"><div><p className="eyebrow">1 · BRIEF</p><h2 id="overview-title">프로젝트 맥락</h2><p>이 프로젝트의 기준과 지금 해야 할 한 가지를 보여줍니다.</p></div><span className="view-context">{stageSummary(progress)}</span></div>
+      <div className="view-heading"><div><p className="eyebrow">PROJECT BRIEF</p><h2 id="overview-title">프로젝트 한눈에 보기</h2><p>이 프로젝트의 범위, 기준 일정 상태, 지금 확인할 리스크를 한곳에서 봅니다.</p></div><span className="view-context">{stageSummary(progress)}</span></div>
       <div className="overview-grid">
         <article className="focus-card focus-card-primary">
           <span>지금 할 일</span>
@@ -718,12 +743,21 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
             <div><dt>목표 완료일</dt><dd>{text(projectData.target_finish, "미설정")}</dd></div>
             <div><dt>기준 시점</dt><dd>{text(projectData.status_as_of, "미설정")}</dd></div>
             <div><dt>작업 수</dt><dd>{project.version ? `${tasks.length}개` : "-"}</dd></div>
-            <div><dt>데이터 성격</dt><dd>{projectData.data_origin === "SYNTHETIC" ? "합성 데모 데이터" : projectData.data_origin === "USER" ? "사용자 데이터" : text(projectData.data_origin, "-")}</dd></div>
+            <div><dt>데이터 성격</dt><dd>{projectData.data_origin === "SYNTHETIC" ? "대표 사례 데이터" : projectData.data_origin === "USER" ? "사용자 데이터" : text(projectData.data_origin, "-")}</dd></div>
           </dl>
         </article>
       </div>
+      {!project.version && loaded && <section className="onboarding-card onboarding-redirect" aria-label="프로젝트 시작 설정">
+        <div className="onboarding-copy">
+          <p className="eyebrow">FIRST SETUP</p>
+          <h3>기준 일정은 일정 메뉴에서 한 번만 연결합니다.</h3>
+          <p>Excel의 작업·기간·선후행 관계를 미리 확인한 뒤 기준 일정으로 확정하세요. 이 화면에서는 파일을 다시 받지 않습니다.</p>
+          <button className="focus-action" onClick={() => go("schedule")}>기준 일정 연결하기 <span aria-hidden="true">→</span></button>
+        </div>
+      </section>}
+      {!project.version && preview && importPreviewCard(preview, false)}
       <div className="overview-counts" aria-label="기록 요약">
-        <div><span>변경</span><b>{eventCount}</b></div>
+        <div><span>리스크</span><b>{eventCount}</b></div>
         <div><span>정식 분석</span><b>{analysisRuns.length}</b></div>
         <div><span>승인</span><b>{approvals.length}</b></div>
         <div><span>확정 버전</span><b>{committedVersions.length}</b></div>
@@ -733,7 +767,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   );
 
   // ---- 2 IMPORT --------------------------------------------------------
-  const importPreviewCard = (value: ImportPreview, asChange: boolean) => {
+  function importPreviewCard(value: ImportPreview, asChange: boolean) {
     const mapping = (value.mapping || {}) as Dict;
     const changed = (value.diff?.changed || []) as Dict[];
     return (
@@ -749,7 +783,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
         <button onClick={() => confirmImport(value, asChange)} disabled={busy || (value.import_kind === "change" && !asChange)}>{asChange ? "변경으로 등록" : "기준 일정 확정"}</button>
       </div>
     );
-  };
+  }
 
   const visibleTaskNote = tasks.some((task) => task.task_id === "T036") && tasks.length === 64
     ? "hero 데모는 조달·반입·설치·시운전 구간(T034~T057)만 표시합니다."
@@ -757,12 +791,11 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
 
   const scheduleView = (
     <section className="workspace-view" id="schedule" aria-labelledby="schedule-title">
-      <div className="view-heading"><div><p className="eyebrow">2 · IMPORT</p><h2 id="schedule-title">기준 일정</h2><p>변경을 비교할 기준 일정을 연결하고 작업 흐름을 확인합니다.</p></div><span className="view-context">{project.version ? (project.version.status === "committed" ? "확정 버전 사용 중" : "기준 버전 연결됨") : "연결 필요"}</span></div>
+      <div className="view-heading"><div><p className="eyebrow">SCHEDULE</p><h2 id="schedule-title">기준 일정</h2><p>리스크 영향을 비교할 기준 일정 Excel을 연결하고 작업 흐름을 확인합니다.</p></div><span className="view-context">{project.version ? (project.version.status === "committed" ? "확정 버전 사용 중" : "기준 버전 연결됨") : "연결 필요"}</span></div>
       {!project.version && loaded ? <div className="setup-card">
-        <div><span className="setup-index">2</span><h3>기준 일정을 연결하세요.</h3><p>데모는 hero 합성 프로젝트(64개 작업)를 바로 연결합니다. 직접 만든 일정은 Excel을 올려 미리보기로 매핑을 확인한 뒤 확정합니다.</p></div>
+        <div><span className="setup-index">일정</span><h3>기준 일정을 연결하세요.</h3><p>{isHero ? "대표 사례는 준비된 일정(64개 작업)을 연결할 수 있습니다. 직접 만든 프로젝트는 Excel을 올려 미리보기로 매핑을 확인한 뒤 확정합니다." : "Excel을 올려 작업·기간·선후행 관계를 미리 확인한 뒤 기준 일정으로 확정하세요."}</p></div>
         <div className="setup-actions">
-          <button className={preview ? "secondary" : ""} onClick={loadHeroBaseline} disabled={busy}>hero 데모 기준 일정 연결</button>
-          <span className="setup-or">또는</span>
+          {isHero && <><button className={preview ? "secondary" : ""} onClick={loadHeroBaseline} disabled={busy}>대표 사례 일정 연결</button><span className="setup-or">또는</span></>}
           <label className="file-input-label">{selectedFile ? selectedFile.name : "Excel 파일 선택"}<input type="file" accept=".xlsx,.csv" aria-label="기준 일정 Excel" onChange={(event: ChangeEvent<HTMLInputElement>) => setSelectedFile(event.target.files?.[0] || null)} /></label>
           <button className="secondary" onClick={() => uploadImport(selectedFile)} disabled={busy || !selectedFile}>업로드·미리보기</button>
         </div>
@@ -780,8 +813,6 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   );
 
   // ---- 3 WATCH ---------------------------------------------------------
-  const isHero = Boolean(projectData.hero_fixture_id);
-  const started = watchStarted(project);
   const feedEvents = events.filter((event) => isFeedSignal(event));
   const changeCard = (event: Row) => (
     <ChangeCard key={text(event.id)} event={event} tasks={tasks} taskNames={taskNames} busy={busy}
@@ -793,42 +824,45 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       llmMode={text(project.llm_mode, "live")} onResolve={resolveInvestigation}
       onInvestigate={startInvestigation}
       onConfirm={confirmEvent} onAnalyze={startAnalysis} onReviewExternal={reviewExternalEvent}
+      onSelectCandidates={confirmDocumentCandidates}
       onOpenResult={() => go("scenarios")} />
   );
   const watchView = (
     <section className="workspace-view" id="watch" aria-labelledby="watch-title">
-      <div className="view-heading"><div><p className="eyebrow">3 · WATCH</p><h2 id="watch-title">위험 브리핑과 감시</h2><p>등록 시 위험 브리핑을 확인하고 감시를 시작합니다. 워커가 모은 신호는 변화 자동 추리기가 한 번 분류하고, 조사는 사람이 시작합니다.</p></div><span className="view-context">{started ? "감시 중" : "감시 전"}{feedEvents.length ? ` · 신호 ${feedEvents.length}건` : ""}</span></div>
+      <div className="view-heading"><div><p className="eyebrow">RISK DISCOVERY</p><h2 id="watch-title">리스크 탐색</h2><p>프로젝트에 맞는 외부 리스크 범위를 확인하고 탐색을 시작합니다. 워커가 모은 신호는 자동으로 분류하고, 영향 판단은 검토 화면에서 이어집니다.</p></div><span className="view-context">{started ? "탐색 중" : "탐색 전"}{feedEvents.length ? ` · 신호 ${feedEvents.length}건` : ""}</span></div>
       {!project.version ? (loaded ? nextCallout("기준 일정 연결", "schedule", "브리핑과 감시에는 기준 일정이 필요합니다.") : null) : <>
-        {progress.current > 2 && nextCallout(progress.next.label, progress.next.section, progress.next.detail)}
-        <BriefingPanel briefing={project.briefing} llmMode={text(project.llm_mode, "live")} />
-        <article className="focus-card watch-start" aria-label="감시 시작">
+        {isHero && <div className="watch-status-strip" role="status">
+          <div><span className="eyebrow">대표 사례 · 리스크 탐색</span><b>{started ? `외부 신호 ${feedEvents.length}건을 확인할 수 있습니다.` : "외부 리스크를 탐색할 준비가 되었습니다."}</b></div>
+          {!started ? <button onClick={startWatch} disabled={busy}>{busy ? "탐색 중…" : "탐색 시작 →"}</button> : <button onClick={() => go("changes")}>리스크 검토 →</button>}
+        </div>}
+        {!isHero && progress.current > 2 && nextCallout(progress.next.label, progress.next.section, progress.next.detail)}
+        {(!isHero || started || showPreparedDemoOutputs) && <BriefingPanel briefing={project.briefing} llmMode={text(project.llm_mode, "live")} />}
+        {!isHero && <article className="focus-card watch-start" aria-label="감시 시작">
           <div className="panel-heading"><div><span className="eyebrow">워커 · 수집</span><h3>{started ? "감시 중" : "감시 시작"}</h3>
-            <p>{isHero
-              ? "데모는 등록 출처(EU 환경총국 뉴스)를 한 번 수집하는 것을 시뮬레이션합니다. 실제 수집은 감시 계획을 활성화하면 워커가 주기적으로 합니다."
-              : "아래 감시 계획의 제안을 수락·제외하고 활성화한 뒤 시작하세요. 워커가 등록 출처·공휴일·기상을 주기적으로 확인합니다."}</p></div>
+            <p>기준 일정에서 자동으로 구성한 공식 출처·공휴일·계절 노출도를 확인합니다. 시작 뒤 들어온 근거만 리스크 카드로 올리고, 일정 반영은 사람이 검토합니다.</p></div>
             {started && <span className="status-chip ok">시작 {when(projectData.watch_started_at)}</span>}</div>
-          {!started && <button onClick={startWatch} disabled={busy || (!isHero && !project.watch_plan?.enabled)}>{isHero ? "감시 시작 · 데모 수집 시뮬레이션" : "감시 시작"}</button>}
-        </article>
+          {!started && <button onClick={startWatch} disabled={busy}>추천 감시 시작</button>}
+        </article>}
         <section className="focus-card watch-feed-panel" aria-label="감시 피드">
           <div className="panel-heading"><div><h3>감시 피드 · 워커 신호 + 변화 자동 추리기</h3><p>새로 들어온 신호마다 자동 추리기가 한 번 관련 있음·확인 필요·무관으로 나눕니다. 조사와 일정 계산은 사람이 시작합니다.</p></div></div>
           {feedEvents.length ? <div className="focus-event-list">{feedEvents.map((event) => linkedIds.has(text(event.id))
             ? <div key={text(event.id)} className="feed-merged"><span className="status-chip">협력사 통보에 합쳐짐</span> <b>{text(event.data?.title, "외부 신호")}</b>
                 <small>{feedSignals.find((row) => row.id === event.id)?.related}</small>
                 {triageLine(event.data?.auto_narrow as Dict | undefined) && <small>{triageLine(event.data?.auto_narrow as Dict | undefined)}</small>}
-                <button className="text-button" onClick={() => go("changes")}>변경 화면에서 보기 →</button></div>
+                <button className="text-button" onClick={() => go("changes")}>리스크 검토에서 보기 →</button></div>
             : changeCard(event))}</div>
             : <div className="empty focus-empty">{started ? "아직 들어온 신호가 없습니다." : "감시를 시작하면 워커가 모은 신호가 여기에 들어옵니다."}</div>}
         </section>
-        <RiskRegister risks={risks} busy={busy} onStatus={updateRisk} />
+        {(!isHero || started || showPreparedDemoOutputs) && <RiskRegister risks={risks} busy={busy} onStatus={updateRisk} />}
         <details className="focus-card watch-section">
-          <summary><b>감시 계획 설정</b> · 공휴일·기상·공식 공지 {project.watch_plan?.enabled ? "· 주기 감시 켜짐" : "· 주기 감시 꺼짐"}</summary>
-          <p className="muted">기준 일정에서 제안된 감시 항목을 수락·제외한 뒤 활성화합니다. 협력사 통보와 같은 작업·같은 사유인 신호는 그 통보 카드의 '관련 외부 신호'에 함께 표시됩니다.</p>
+          <summary><b>감시 범위와 출처 보기</b> · 공휴일·장기 계절 노출·공식 공지 {project.watch_plan?.enabled ? "· 감시 중" : "· 시작 전"}</summary>
+          <p className="muted">기준 일정에서 자동으로 구성한 범위입니다. 단기 예보의 작업 중단 기준이나 추가 출처는 필요할 때만 아래 고급 설정에서 조정하세요.</p>
           <ExternalWatch plan={project.watch_plan || {}} tasks={tasks} disabled={busy} onSave={saveExternalWatch} onScan={runScan} />
         </details>
         {isHero && <details className="focus-card watch-section">
-          <summary><b>테스트용 공지 수집</b> · 회귀 테스트·평가용 합성 공지</summary>
+          <summary><b>테스트용 공지 수집</b> · 대표 사례 검증용 공지</summary>
           <div className="button-row">{demoEvents.filter((item) => item.channel === "registered_public_source").map((item) => (
-            <button key={text(item.signal_id)} className="secondary" disabled={busy} onClick={() => loadTestNotice(text(item.signal_id))}>{text(item.signal_id)} · {text(item.source_label).replace("합성 외부 공지 · ", "")}</button>))}</div>
+            <button key={text(item.signal_id)} className="secondary" disabled={busy} onClick={() => loadTestNotice(text(item.signal_id))}>{text(item.signal_id)} · {text(item.source_label).replace(/합성\s*/g, "").replace("외부 공지 · ", "")}</button>))}</div>
         </details>}
       </>}
     </section>
@@ -840,18 +874,18 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const importedIds = new Set(events.map((event) => text(event.data?.event_id, "")).filter(Boolean));
   const changesView = (
     <section className="workspace-view" id="changes" aria-labelledby="changes-title">
-      <div className="view-heading"><div><p className="eyebrow">4 · DETECT</p><h2 id="changes-title">변경 감지</h2><p>협력사 통보를 불러와 해석된 작업·날짜를 확인합니다. 확인하면 영향 분석이 바로 시작됩니다.</p></div><span className="view-context">{eventCount}건 기록</span></div>
-      {!project.version ? (loaded ? nextCallout("기준 일정 연결", "schedule", "변경을 계산하려면 먼저 기준 일정이 필요합니다.") : null) : <>
+      <div className="view-heading"><div><p className="eyebrow">RISK REVIEW</p><h2 id="changes-title">리스크 검토</h2><p>수집된 신호나 협력사 통보에서 영향 작업과 날짜를 확인합니다. 확인하면 영향 분석이 시작됩니다.</p></div><span className="view-context">{eventCount}건 기록</span></div>
+      {!project.version ? (loaded ? nextCallout("기준 일정 Excel 올리기", "schedule", "리스크 영향을 계산하려면 먼저 기준 일정이 필요합니다.") : null) : <>
         {progress.next.section !== "changes" && nextCallout(progress.next.label, progress.next.section, progress.next.detail)}
         <div className="changes-layout">
           <div className="change-intake-stack">
             <article className="focus-card">
-              <div className="panel-heading"><div><h3>받은편지함</h3><p>{inbox.length ? "협력사 통보를 골라 내용을 확인한 뒤 변경으로 등록하세요. 지금은 합성 메일이며, 메일 연결은 같은 목록 구조를 씁니다." : "협력사 메시지를 붙여 넣으세요. 합성 받은편지함은 hero 데모 기준 일정에서만 제공됩니다."}</p></div></div>
+          <div className="panel-heading"><div><h3>통보와 자료</h3><p>{inbox.length ? "협력사 통보를 골라 내용을 확인한 뒤 검토할 리스크로 등록하세요." : "협력사 메시지나 자료를 붙여 넣으세요."}</p></div></div>
               {inbox.length > 0 && <Inbox messages={inbox} selectedId={selectedMessageId} importedIds={importedIds} busy={busy}
                 hint={started ? "" : "대표 데모는 감시 화면에서 '감시 시작'을 먼저 누르면 같은 시기 외부 공지가 이 통보와 연결됩니다."}
                 onSelect={setSelectedMessageId} onImport={importInboxMessage} />}
-              <label>변경 메시지<textarea aria-label="협력사 변경 통보" value={manualMessage} onChange={(event) => setManualMessage(event.target.value)} rows={4} placeholder="예: T045 현장 설비 반입 완료일이 2026-12-05에서 2026-12-28로 변경됩니다." /></label>
-              <button className={intakePrimary && !demoEvents.length ? "" : "secondary"} onClick={createManualEvent} disabled={busy || !manualMessage.trim()}>변경 메시지 등록</button>
+              <label>통보 내용<textarea aria-label="협력사 통보 내용" value={manualMessage} onChange={(event) => setManualMessage(event.target.value)} rows={4} placeholder="예: T045 현장 설비 반입 완료일이 2026-12-05에서 2026-12-28로 변경됩니다." /></label>
+              <button className={intakePrimary && !demoEvents.length ? "" : "secondary"} onClick={createManualEvent} disabled={busy || !manualMessage.trim()}>리스크로 등록</button>
             </article>
             <details className="focus-card more-inputs">
               <summary>다른 입력 방식 · 수정 일정 Excel, 근거 문서</summary>
@@ -872,9 +906,9 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
             </details>
           </div>
           <div className="focus-card event-focus-panel">
-            <div className="panel-heading"><div><h3>변경 카드</h3><p>최신 변경이 위에 있습니다. 확인할 해석과 질문을 카드마다 보여줍니다.</p></div></div>
+            <div className="panel-heading"><div><h3>리스크 카드</h3><p>최신 리스크가 위에 있습니다. 확인할 해석과 질문을 카드마다 보여줍니다.</p></div></div>
             {events.some((event) => !isFeedSignal(event)) ? <div className="focus-event-list">{events.filter((event) => !isFeedSignal(event) && !linkedIds.has(text(event.id))).map(changeCard)}</div>
-              : <div className="empty focus-empty">아직 변경이 없습니다. 왼쪽 받은편지함에서 통보를 불러오세요.</div>}
+              : <div className="empty focus-empty">아직 검토할 리스크가 없습니다. 왼쪽에서 통보나 자료를 불러오세요.</div>}
           </div>
         </div>
       </>}
@@ -940,8 +974,8 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
 
   const scenariosView = (
     <section className="workspace-view" id="scenarios" aria-labelledby="scenarios-title">
-      <div className="view-heading"><div><p className="eyebrow">5 · COMPARE → 6 · APPROVE</p><h2 id="scenarios-title">대응안 비교와 승인</h2><p>일정·비용·조건을 같은 기준으로 비교하고, 조건을 확인한 안을 승인합니다.</p></div><span className="view-context">{run?.run ? runLabel(run.run) : "분석 대기"}</span></div>
-      {!run?.run ? nextCallout(progress.next.label, progress.next.section, progress.current <= 4 ? progress.next.detail : "변경을 확인하면 영향 분석이 시작되고 결과가 여기에 표시됩니다.") : <>
+      <div className="view-heading"><div><p className="eyebrow">RESPONSE</p><h2 id="scenarios-title">대응안 비교와 승인</h2><p>일정·비용·조건을 같은 기준으로 비교하고, 조건을 확인한 안을 승인합니다.</p></div><span className="view-context">{run?.run ? runLabel(run.run) : "분석 대기"}</span></div>
+      {!run?.run ? nextCallout(progress.next.label, progress.next.section, progress.current <= 4 ? progress.next.detail : "리스크를 확인하면 영향 분석이 시작되고 결과가 여기에 표시됩니다.") : <>
         {viewRunId && <div className="run-pin"><span>이력에서 고른 실행 {shortId(viewRunId)}을 보고 있습니다.</span><button className="text-button" onClick={() => { setViewRunId(""); viewRunRef.current = ""; void refresh(); }}>최신 결과로</button></div>}
         {runPending ? <div className="analysis-receipt pending" role="status"><span className="eyebrow">영향 분석</span><h3>영향을 계산하고 있습니다…</h3><p>끝나면 이 화면에 결과가 자동으로 표시됩니다.</p></div> : <div className="analysis-receipt">
           <span className="eyebrow">{runIsPreview ? "잠정 결과" : recalculated ? "조사 결과 반영 · 다시 계산" : "영향 분석 결과"}</span>
@@ -979,11 +1013,11 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const executeActions = approvedScenarioId ? scenarioActions(approvedScenarioId) : [];
   const executeView = (
     <section className="workspace-view" id="execute" aria-labelledby="execute-title">
-      <div className="view-heading"><div><p className="eyebrow">7 · EXECUTE</p><h2 id="execute-title">일정 반영·실행</h2><p>승인한 대응안을 새 일정 버전으로 확정하고 Excel로 내보냅니다.</p></div><span className="view-context">{committed ? "새 버전 확정됨" : progress.approval ? "확정 대기" : "승인 대기"}</span></div>
+      <div className="view-heading"><div><p className="eyebrow">EXECUTION</p><h2 id="execute-title">일정 반영·실행</h2><p>승인한 대응안을 새 일정 버전으로 확정하고 Excel로 내보냅니다.</p></div><span className="view-context">{committed ? "새 버전 확정됨" : progress.approval ? "확정 대기" : "승인 대기"}</span></div>
       {!progress.approval ? nextCallout(progress.next.label, progress.next.section, progress.current < 5 ? progress.next.detail : "대응안을 승인하면 여기서 새 일정 버전을 확정할 수 있습니다.") : committed ? (
         <div className="execute-card done">
           <div><span className="eyebrow">새 일정 버전</span><h3>확정 버전 {shortId(committed.id)} · {when(committed.created_at)}</h3><p>반영한 대응안: {text(approvedScenario?.data?.label, shortId(approvedScenarioId))}{approvedScenario ? ` · 완료 예정 ${text(approvedScenario.data?.finish_date)} · 추가 비용 ${costLabel(approvedScenario.data || {})}` : ""}</p><p className="muted">Excel에는 기준 일정과 변경 일정, 종료 차이가 함께 들어갑니다.</p></div>
-          <div className="execute-actions"><button onClick={downloadExport} disabled={busy}>Excel 다운로드</button><button className="secondary" onClick={() => go("schedule")}>일정에서 보기</button><button className="text-button" onClick={() => go("changes")}>새 변경 불러오기</button></div>
+          <div className="execute-actions"><button onClick={downloadExport} disabled={busy}>Excel 다운로드</button><button className="secondary" onClick={() => go("schedule")}>일정에서 보기</button><button className="text-button" onClick={() => go("changes")}>새 리스크 확인</button></div>
         </div>
       ) : (
         <div className="execute-card">
@@ -1057,7 +1091,46 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     </section>
   );
 
-  const statusLine = progress.allDone ? "모든 단계 완료" : `${progress.current + 1}단계 · ${STAGES[progress.current].label}`;
+  const workspaceStatus: Record<SectionId, { kicker: string; title: string; detail: string }> = {
+    overview: {
+      kicker: "PROJECT STATUS",
+      title: project.version ? "프로젝트 브리핑 준비됨" : "기준 일정 연결 필요",
+      detail: project.version ? "프로젝트 범위와 다음 리스크 검토를 확인하세요." : "기준 일정 Excel을 올리면 작업과 기간을 프로젝트에 연결합니다.",
+    },
+    schedule: {
+      kicker: "SCHEDULE STATUS",
+      title: project.version ? "기준 일정 연결됨" : "기준 일정 Excel 대기",
+      detail: project.version ? `${tasks.length}개 작업을 기준 일정으로 관리합니다.` : "프로젝트 전체 작업이 담긴 Excel을 올려 기준 일정을 만드세요.",
+    },
+    watch: {
+      kicker: "RISK DISCOVERY",
+      title: started ? "리스크 탐색 중" : "리스크 탐색 준비됨",
+      detail: started ? "수집한 외부 신호를 분류해 검토할 리스크를 찾습니다." : "프로젝트와 관련된 외부 리스크 범위를 먼저 확인하세요.",
+    },
+    changes: {
+      kicker: "RISK REVIEW",
+      title: eventCount ? `검토할 리스크 ${eventCount}건` : "검토할 리스크 없음",
+      detail: eventCount ? "영향 작업과 날짜를 확인하면 일정 영향을 분석할 수 있습니다." : "통보나 외부 신호를 가져와 프로젝트 영향 여부를 검토하세요.",
+    },
+    scenarios: {
+      kicker: "RESPONSE",
+      title: analysisRuns.length ? "대응안 비교 준비됨" : "영향 분석 대기",
+      detail: analysisRuns.length ? "일정·비용·조건을 비교해 실행할 대응안을 고르세요." : "리스크 검토를 완료하면 대응안이 이곳에 표시됩니다.",
+    },
+    execute: {
+      kicker: "EXECUTION",
+      title: committedVersions.length ? "새 일정 버전 확정됨" : "실행 승인 대기",
+      detail: committedVersions.length ? "확정한 일정을 내보내고 실행 항목을 추적하세요." : "승인한 대응안이 생기면 새 일정 버전으로 확정할 수 있습니다.",
+    },
+    history: {
+      kicker: "PROJECT RECORDS",
+      title: "판단과 실행 기록",
+      detail: "리스크 검토, 대응안 승인, 일정 버전의 근거를 시간순으로 확인합니다.",
+    },
+  };
+  const currentStatus = workspaceStatus[activeSection];
+  const statusAction = activeSection === progress.next.section ? null : progress.next;
+  const panelAction = statusAction || (riskAlertCount > 0 ? { section: "changes" as SectionId, label: "리스크 검토" } : null);
 
   return (
     <main className="human-workspace" data-section={activeSection}>
@@ -1067,9 +1140,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
         </a>
         <div className="brand-context">
           <span className="brand-context-dot" aria-hidden="true" />
-          <span>프로젝트 운영팀</span>
-          <span className="brand-divider" aria-hidden="true" />
-          <span>공용 계정</span>
+          <span>프로젝트 작업공간</span>
         </div>
         <div className="human-nav-meta"><span className="nav-live-dot" /> <span>TEAM WORKSPACE</span><span className="nav-meta-divider" /> <span>{shortId(projectId, "NEW")}</span></div>
       </header>
@@ -1078,23 +1149,41 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           <p className="eyebrow">PROJECT</p>
           <div className="project-title-row"><h1>{projectName}</h1></div>
           <p className="subtitle" role="status">{notice}</p>
-          <div className="hero-context"><span className="context-marker" aria-hidden="true" /><span>프로젝트 ID {text(projectId, "미지정")}</span><span className="context-slash">/</span><span>{eventCount ? `변경 ${eventCount}건` : "변경 없음"}</span></div>
+          <div className="hero-context"><span className="context-marker" aria-hidden="true" /><span>{text(projectData.region || projectData.site_region, "현장 미설정")}</span><span className="context-slash">/</span><span>{projectPeriod}</span><span className="context-slash">/</span><span>{demoOutputsHidden ? "리스크 탐색 전" : eventCount ? `리스크 ${eventCount}건` : "리스크 없음"}</span>{isHero && <><span className="context-slash">/</span><span>대표 사례</span></>}</div>
         </div>
-        <div className="status-card human-status-card">
-          <span className="status-kicker">WORKSPACE STATUS</span>
-          <strong>{loaded ? statusLine : "불러오는 중"}</strong>
-          <small>{loaded ? (progress.allDone ? "새 변경을 불러오면 3단계부터 다시 진행합니다." : `다음: ${progress.next.label}`) : ""}</small>
-          {loaded && !nextInThisSection ? <a href={`#${progress.next.section}`} className="hero-action">{progress.next.label}<span aria-hidden="true">↗</span></a> : <span className="hero-here">{loaded ? "이 화면에서 진행하세요" : ""}</span>}
-          <div className="hero-scene" aria-hidden="true">
-            <Image className="workspace-illustration workspace-status-illustration" src="/images/workspace/workspace-status-flat.png" alt="" fill sizes="330px" priority />
-          </div>
+        <div className="project-status-center" ref={statusCenterRef}>
+          <button
+            type="button"
+            className={`project-status-trigger${riskAlertCount > 0 ? " needs-review" : ""}`}
+            aria-expanded={statusPanelOpen}
+            aria-controls="project-status-panel"
+            onClick={() => setStatusPanelOpen((open) => !open)}
+          >
+            <span className="project-status-orb" aria-hidden="true"><i /></span>
+            <span className="project-status-trigger-copy"><b>프로젝트 상태</b><small>{loaded ? currentStatus.title : "불러오는 중"}</small></span>
+            {riskAlertCount > 0 ? <span className="project-status-badge" aria-label={`검토할 리스크 ${riskAlertCount}건`}>{riskAlertCount}</span> : <span className="project-status-ready" aria-label="새 리스크 없음" />}
+          </button>
+          {statusPanelOpen && <aside className="project-status-popover" id="project-status-panel" aria-label="프로젝트 상태 패널">
+            <div className="project-status-popover-head">
+              <div><span>{currentStatus.kicker}</span><h2>{loaded ? currentStatus.title : "불러오는 중"}</h2></div>
+              <button type="button" className="status-popover-close" aria-label="프로젝트 상태 닫기" onClick={() => setStatusPanelOpen(false)}>×</button>
+            </div>
+            <p className="project-status-detail">{loaded ? currentStatus.detail : "프로젝트 상태를 불러오고 있습니다."}</p>
+            <div className="project-status-facts">
+              <div><span>감시 상태</span><b>{project.agent_enabled ? (started ? "감시 중" : "감시 준비") : "AI 조사 미연결"}</b></div>
+              <div><span>새 리스크</span><b className={riskAlertCount > 0 ? "risk-count" : ""}>{riskAlertCount ? `${riskAlertCount}건` : "없음"}</b></div>
+              <div><span>마지막 수집</span><b>{latestSnapshot ? when(latestSnapshot.fetched_at || latestSnapshot.created_at) : "기록 없음"}</b></div>
+            </div>
+            {riskAlertCount > 0 ? <div className="project-status-alert"><span aria-hidden="true">!</span><div><b>검토가 필요한 리스크가 있습니다</b><small>수집된 신호가 일정 영향 후보로 등록되었습니다.</small></div><button type="button" onClick={() => { setStatusPanelOpen(false); go("changes"); }}>검토</button></div>
+              : <div className="project-status-calm"><span aria-hidden="true">✓</span><div><b>새로 확인할 리스크가 없습니다</b><small>수집 결과와 판단 기록은 계속 이곳에 정리됩니다.</small></div></div>}
+            {panelAction && <button type="button" className="project-status-next" onClick={() => { setStatusPanelOpen(false); go(panelAction.section); }}>{panelAction.label}<span aria-hidden="true">→</span></button>}
+          </aside>}
         </div>
       </section>
 
-      {stepRail}
       {loaded && <p className={`mode-line${project.agent_enabled ? "" : " off"}`}>{!project.agent_enabled
-        ? <>에이전트 꺼짐 · 통보 내용과 계산기로만 동작합니다. 대표 데모를 에이전트와 함께 보려면 저장소 폴더에서 <code>scripts\demo.cmd</code>를 실행하세요(녹화본 재생, 비용 0).</>
-        : text(project.llm_mode, "live") === "replay" ? "에이전트 켜짐 · 녹화본 재생 중(비용 0) · 대표 데모 X2에 맞춰 녹화됨" : "에이전트 켜짐 · 실제 LLM 호출(유료)"}</p>}
+        ? "AI 조사는 아직 연결되지 않았습니다. 문서 인용과 일정 계산 결과만 표시합니다."
+        : text(project.llm_mode, "live") === "replay" ? "AI 조사 · 검증용 녹화 응답 재생 중" : "AI 조사 · 실제 LLM 연결됨"}</p>}
 
       {feedback && (
         <aside className={feedback.kind === "error" ? "error" : "guide-notice"} role="alert">
@@ -1119,12 +1208,13 @@ function firstIsoDate(value: string) {
   return /(20\d{2}-\d{2}-\d{2})/.exec(value)?.[1] || "";
 }
 
-function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, investigations, relatedSignals, agentEnabled, llmMode, risks, triageByEvent, onInvestigate, onResolve, onConfirm, onAnalyze, onReviewExternal, onOpenResult }: {
+function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, investigations, relatedSignals, agentEnabled, llmMode, risks, triageByEvent, onInvestigate, onResolve, onConfirm, onAnalyze, onReviewExternal, onSelectCandidates, onOpenResult }: {
   event: Row; tasks: Dict[]; taskNames: Record<string, string>; busy: boolean; isFocus: boolean; runs: Row[]; investigations: Row[]; relatedSignals: Dict[]; agentEnabled: boolean; llmMode: string;
   risks: Dict[]; triageByEvent: Record<string, Dict | undefined>; onInvestigate: (eventId: string, include?: string[]) => void;
   onResolve: (runId: string, decision: "applies" | "not_applicable", note: string) => Promise<void>;
   onConfirm: (eventId: string, payload?: Dict) => Promise<void>; onAnalyze: (eventId: string) => Promise<void>;
-  onReviewExternal: (eventId: string, payload: Dict) => Promise<void>; onOpenResult: () => void;
+  onReviewExternal: (eventId: string, payload: Dict) => Promise<void>;
+  onSelectCandidates: (eventId: string, taskIds: string[]) => Promise<void>; onOpenResult: () => void;
 }) {
   const data = event.data || {};
   const eventId = text(event.id, "");
@@ -1137,8 +1227,15 @@ function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, investigatio
   const [picked, setPicked] = useState<string[]>([]);
   const [day, setDay] = useState(firstIsoDate(text(data.content, "")));
   const suggested = ((data.related_task_ids || []) as string[]).join(",");
+  const candidateSelection = (data.candidate_selection || {}) as Dict;
+  const candidateSelectionStatus = text(candidateSelection.status, "");
+  const isDocumentCandidateReview = data.channel === "evidence_document"
+    && ["REVIEW_REQUIRED", "CONFIRMED"].includes(candidateSelectionStatus);
+  const confirmedCandidateIds = (candidateSelection.selected_task_ids || []) as string[];
+  const [selectedCandidates, setSelectedCandidates] = useState<string[]>(confirmedCandidateIds);
   // LLM interpretation may add task candidates after the card first renders.
   useEffect(() => { if (suggested) setIds((current) => current.length ? current : suggested.split(",").slice(0, 3)); }, [suggested]);
+  useEffect(() => { setSelectedCandidates(confirmedCandidateIds); }, [confirmedCandidateIds.join(",")]);
   const inactive = ["SUPERSEDED", "REJECTED"].includes(status);
   const interpreting = runs.some((item) => isPreview(item) && !["succeeded", "failed"].includes(text(item.status)));
   const pending = runs.some((item) => !isPreview(item) && !["succeeded", "failed"].includes(text(item.status)));
@@ -1152,26 +1249,39 @@ function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, investigatio
 
   return (
     <article id={`review-${eventId}`} className={`focus-event-card${isFocus ? " is-focus" : ""}${inactive ? " is-inactive" : ""}`}>
-      <div className="focus-event-topline"><span className={`status-chip${needsTask || (!confirmed && !inactive && !noImpact) ? " warn" : ""}`}>{chip}</span><small>{text(data.source_label, "입력")} · {data.published_at ? when(data.published_at) : when(data.received_at)} · {data.data_origin === "SYNTHETIC" ? "합성" : text(data.data_origin, "")}</small></div>
+      <div className="focus-event-topline"><span className={`status-chip${needsTask || (!confirmed && !inactive && !noImpact) ? " warn" : ""}`}>{chip}</span><small>{text(data.source_label, "입력")} · {data.published_at ? when(data.published_at) : when(data.received_at)} · {data.data_origin === "SYNTHETIC" ? "대표 사례" : text(data.data_origin, "")}</small></div>
       <blockquote className="event-quote">{text(data.content || data.title)}</blockquote>
-      {hasPatch(data) && !data.evidence && <div className="event-interpretation"><b>{confirmed ? "확인된 변경" : "통보에서 읽어낸 변경 (확인 필요)"}</b><ul>{Object.entries(patch).flatMap(([patchKind, values]) => Object.entries(values || {}).map(([taskId, value]) => <li key={`${patchKind}-${taskId}`}><span>{taskId}</span> {taskNames[taskId] || ""} · {PATCH_KIND[patchKind] || patchKind} {Array.isArray(value) ? value.join(", ") : text(value)}</li>))}</ul>{!confirmed && facts.some((fact) => fact.confidence === "suggested") && <small>원문과 같은지 확인하세요.</small>}{Array.isArray(data.confirmed_additions) && (data.confirmed_additions as Dict[]).length > 0 && <small>조사 결과를 사람이 확인해 추가: {(data.confirmed_additions as Dict[]).map((row) => `${text(row.task_id)} 착수 ${text(row.not_before)}${row.item_id ? ` (${text(row.item_id)})` : ""}`).join(" · ")}</small>}</div>}
+      {hasPatch(data) && !data.evidence && <div className="event-interpretation"><b>{confirmed ? "확인된 리스크" : "통보에서 읽어낸 리스크 (확인 필요)"}</b><ul>{Object.entries(patch).flatMap(([patchKind, values]) => Object.entries(values || {}).map(([taskId, value]) => <li key={`${patchKind}-${taskId}`}><span>{taskId}</span> {taskNames[taskId] || ""} · {PATCH_KIND[patchKind] || patchKind} {Array.isArray(value) ? value.join(", ") : text(value)}</li>))}</ul>{!confirmed && facts.some((fact) => fact.confidence === "suggested") && <small>원문과 같은지 확인하세요.</small>}{Array.isArray(data.confirmed_additions) && (data.confirmed_additions as Dict[]).length > 0 && <small>조사 결과를 사람이 확인해 추가: {(data.confirmed_additions as Dict[]).map((row) => `${text(row.task_id)} 착수 ${text(row.not_before)}${row.item_id ? ` (${text(row.item_id)})` : ""}`).join(" · ")}</small>}</div>}
       {Array.isArray(data.verification_required) && data.verification_required.length > 0 && <p className="event-question">추가 확인: {(data.verification_required as string[]).join(" · ")}</p>}
       {Array.isArray(data.missing_fields) && data.missing_fields.length > 0 && !confirmed && <p className="event-question">확인 질문: {(data.missing_fields as string[]).join(" · ")}</p>}
       {candidates.length > 0 && <div className="event-interpretation"><b>에이전트가 찾은 작업 후보</b><ul>{candidates.map((candidate, index) => <li key={`${text(candidate.task_id)}-${index}`}><span>{text(candidate.task_id)}</span> {taskNames[text(candidate.task_id)] || ""}{candidate.quote ? <q>{text(candidate.quote)}</q> : null}{candidate.reason ? <small> {text(candidate.reason)}</small> : null}</li>)}</ul></div>}
+      {isDocumentCandidateReview && <section className="document-candidate-gate" aria-label="문서 리스크 후보 선택">
+        <div><span className="eyebrow">DOCUMENT TRIAGE</span><b>문서에서 찾은 후보를 고르세요</b><p>원문 인용과 연결된 작업만 보입니다. 선택한 후보에만 다음 AI 조사가 진행되며, 선택 전에는 일정이 바뀌지 않습니다.</p></div>
+        <div className="document-candidate-list">{candidates.map((candidate, index) => {
+          const taskId = text(candidate.task_id, "");
+          const checked = selectedCandidates.includes(taskId);
+          return <label key={`${taskId}-${index}`}><input type="checkbox" checked={checked} disabled={candidateSelectionStatus === "CONFIRMED" || busy}
+            onChange={() => setSelectedCandidates((current) => checked ? current.filter((id) => id !== taskId) : [...current, taskId])} />
+            <span><b>{taskId} · {taskNames[taskId] || "작업명 없음"}</b><small>{text((Array.isArray(candidate.reasons) ? candidate.reasons[0] : candidate.reason), "원문 근거 확인 필요")}</small></span></label>;
+        })}</div>
+        {candidateSelectionStatus === "CONFIRMED"
+          ? <p className="candidate-confirmed">조사 범위 확정: {confirmedCandidateIds.join(", ")}</p>
+          : <button className={primary} disabled={busy || !selectedCandidates.length} onClick={() => onSelectCandidates(eventId, selectedCandidates)}>선택한 {selectedCandidates.length}개만 조사 대상으로 확정</button>}
+      </section>}
       {!data.evidence && <RelatedSignals signals={relatedSignals} cases={(Array.isArray(data.risk_signal_evidence) ? data.risk_signal_evidence : []) as Dict[]} triageByEvent={triageByEvent} />}
       {Boolean(data.evidence) && <TriagePanel triage={data.auto_narrow as Dict | undefined} taskNames={taskNames} risks={risks}
         picked={picked} onPick={investigations.length ? undefined : setPicked} />}
 
       <InvestigationPanel variant={data.evidence ? "full" : "card"} external={Boolean(data.evidence)} inactive={inactive}
-        startAllowed={triageAllowsInvestigation(data.auto_narrow as Dict | undefined)}
+        startAllowed={isDocumentCandidateReview ? candidateSelectionStatus === "CONFIRMED" && confirmedCandidateIds.length > 0 : triageAllowsInvestigation(data.auto_narrow as Dict | undefined)}
         signals={relatedSignals} content={text(data.content, "")} llmMode={llmMode} resolution={(data.investigation as Dict | undefined)?.resolution as Dict | undefined}
-        runs={investigations} agentEnabled={agentEnabled} busy={busy} startPrimary={false} onStart={() => onInvestigate(eventId, picked)}
+        runs={investigations} agentEnabled={agentEnabled} busy={busy} startPrimary={false} onStart={() => onInvestigate(eventId, isDocumentCandidateReview ? confirmedCandidateIds : picked)}
         onResolve={onResolve} />
 
-      {data.evidence ? <EvidenceReview event={data} tasks={tasks} disabled={busy} onReview={(payload) => onReviewExternal(eventId, payload)} onAnalyze={() => onAnalyze(eventId)} />
-        : inactive ? <p className="muted">{status === "SUPERSEDED" ? "정정 통보로 대체되어 계산하지 않습니다." : "보류된 변경입니다."}</p>
+      {data.evidence && !isDocumentCandidateReview ? <EvidenceReview event={data} tasks={tasks} disabled={busy} onReview={(payload) => onReviewExternal(eventId, payload)} onAnalyze={() => onAnalyze(eventId)} />
+        : inactive ? <p className="muted">{status === "SUPERSEDED" ? "정정 통보로 대체되어 계산하지 않습니다." : "보류된 리스크입니다."}</p>
         : interpreting ? <p className="muted">통보를 해석하고 있습니다…</p>
-        : noImpact ? <p className="muted">일정에 영향을 주는 변경이 아니어서 계산하지 않습니다.</p>
+        : noImpact ? <p className="muted">일정에 영향을 주는 리스크가 아니어서 계산하지 않습니다.</p>
         : needsTask ? <div className="task-patch-form">
             <b>영향 작업과 날짜 지정</b>
             <small>통보에서 작업 ID를 찾지 못했습니다. 원문을 보고 기준 일정의 작업을 고르세요. 이 지정이 확인된 해석이 됩니다.</small>
@@ -1193,7 +1303,7 @@ const STOP_LABEL: Record<string, string> = {
   M5: "계산 조건 확인 필요", llm_unavailable: "에이전트 연결 확인 필요", done: "대응안 비교 완료",
 };
 const CHECK_LABEL: Record<string, string> = {
-  find_procurement_items: "구매 품목 찾기", check_schedule_slack: "여유 계산", simulate_conditional: "조건부 일정 계산",
+  find_procurement_items: "구매 품목 찾기", check_schedule_slack: "일정 완충 기간 계산", simulate_conditional: "조건부 일정 계산",
   get_task_facts: "작업 속성 확인", narrow_candidates: "후보 추리기", search_risk_signals: "유사 사례 검색",
   compare_responses: "대응안 비교",
 };
@@ -1205,7 +1315,7 @@ function checkResult(entry: Dict) {
     if (Array.isArray(result.inferred_items)) return `보류: 통보에 없던 ${(result.inferred_items as unknown[]).map((item) => text(item)).join("·")}가 실제로 해당되는지 사람이 먼저 확인해야 대응안을 비교할 수 있습니다.`;
     const reason = text(result.reason, "");
     if (reason.includes("원문")) return "다시 시도: 공지·통보 원문에 적힌 기간·날짜만 쓸 수 있어 계산하지 않았습니다.";
-    if (reason.includes("check_schedule_slack")) return "다시 시도: 여유 계산을 먼저 해야 해서 계산하지 않았습니다.";
+    if (reason.includes("check_schedule_slack")) return "다시 시도: 일정 완충 기간 계산을 먼저 해야 해서 계산하지 않았습니다.";
     if (reason.includes("simulate_conditional")) return "다시 시도: 조건부 계산 결과가 먼저 필요합니다.";
     return `다시 시도: ${reason}`;
   }
@@ -1214,7 +1324,7 @@ function checkResult(entry: Dict) {
     case "find_procurement_items":
       return rows("items").map((item) => `${text(item.item_id)} ${text(item.item_name)} → ${text(item.needed_for_task_id)}(${text(item.needed_by)} 필요, ${text(item.planned_arrival)} 도착)`).join(" · ") || "해당 품목 없음";
     case "check_schedule_slack":
-      return rows("tasks").map((row) => `${text(row.task_id)} 여유 ${text(row.float_calendar_days)}일${row.absorbs_bound === true ? " (기간 상한 흡수)" : row.absorbs_bound === false ? " (기간 상한 초과)" : ""}${row.on_critical_path ? " · 주공정" : ""}`).join(" · ");
+      return rows("tasks").map((row) => `${text(row.task_id)} 일정 완충 ${text(row.float_calendar_days)}일${row.absorbs_bound === true ? " (기간 상한 안에서 흡수)" : row.absorbs_bound === false ? " (기간 상한을 초과)" : ""}${row.on_critical_path ? " · 주공정" : ""}`).join(" · ");
     case "simulate_conditional":
       return [`완료 ${text(result.finish_date)} (보고된 변경만 반영 ${text(result.finish_with_reported_change_only)} 대비 +${text(result.added_shift_days_vs_reported_change)}일)`,
         ...rows("changes").filter((row) => row.latest_action_date).map((row) => `${text(row.item_id || row.task_id)} 행동 기한 ${text(row.latest_action_date)}`)].join(" · ");
@@ -1285,7 +1395,7 @@ function RelatedSignals({ signals, cases, triageByEvent = {} }: { signals: Dict[
       {linked.map((row) => <li key={text(row.event_id)}>
         <span className="signal-kind feed">감시 피드에서 들어온 신호 · 관련 있음</span>
         {link(row.source_url, row.title)}
-        <small>{text(row.source_host, "등록 출처")}{row.data_origin === "SYNTHETIC" ? " · 합성 공지" : ""} · 발행 {text(row.published_at).slice(0, 10)}</small>
+        <small>{text(row.source_host, "등록 출처")}{row.data_origin === "SYNTHETIC" ? " · 대표 사례" : ""} · 발행 {text(row.published_at).slice(0, 10)}</small>
         <small className="why">왜 관련: 같은 작업 {((row.overlapping_task_ids || []) as string[]).join(", ")} · 통보 사유와 같은 {((row.reason_terms || []) as string[]).map((term) => `‘${term}’`).join("·")} · 통보와 {text(row.days_apart)}일 차이</small>
         {triageLine(triageByEvent[text(row.event_id)]) && <small className="why">{triageLine(triageByEvent[text(row.event_id)])}</small>}
       </li>)}
@@ -1352,7 +1462,7 @@ function InvestigationPanel({ variant, external, inactive, signals, runs, agentE
   const question = text(record.question, "");
   const conclusion = worst ? `통보에 없던 ${ids}도 같은 ${concept} 대상일 수 있음 · 최악 +${text(worst.added_shift_days_vs_reported_change)}일${deadline ? ` · 제출 기한 ${deadline}` : ""}`
     : stop === "M1" ? "통보 사유와 공지는 관련이 없습니다 · 기록만"
-    : stop === "M2" ? "검토한 작업이 여유로 흡수합니다 · 완료일 변화 없음 · 기록만"
+    : stop === "M2" ? "검토한 작업이 일정 완충 기간 안에서 흡수됩니다 · 완료일 변화 없음 · 기록만"
     : (stop === "M3" || stop === "M4") && question ? `확인이 필요합니다: ${question}`
     : text(data.summary, "");
   const reportedHeadline = rules.finish_date !== undefined
@@ -1361,7 +1471,7 @@ function InvestigationPanel({ variant, external, inactive, signals, runs, agentE
   const agentHeadline = worst ? `${ids} +${text(worst.added_shift_days_vs_reported_change)}일 위험 (최악 완료 ${text(worst.finish_date)})` : STOP_LABEL[stop] || "";
   const agentDetail = [
     deadline ? `제출 기한 ${ids} ${deadline}` : "",
-    foundItems.length ? `통보에 없던 품목 ${foundItems.map((item) => text(item.item_id)).join("·")} 확인${foundItems.some((item) => absorbed.has(text(item.needed_for_task_id))) ? `, ${foundItems.filter((item) => absorbed.has(text(item.needed_for_task_id))).map((item) => text(item.item_id)).join("·")}는 여유로 흡수` : ""}` : "",
+    foundItems.length ? `통보에 없던 품목 ${foundItems.map((item) => text(item.item_id)).join("·")} 확인${foundItems.some((item) => absorbed.has(text(item.needed_for_task_id))) ? `, ${foundItems.filter((item) => absorbed.has(text(item.needed_for_task_id))).map((item) => text(item.item_id)).join("·")}는 일정 완충 기간 안에서 흡수` : ""}` : "",
   ].filter(Boolean).join(" · ");
   const signalsText = signals.length ? `같은 시기 외부 공지 ${signals.length}건이 같은 작업(${signals.map((row) => ((row.overlapping_task_ids || []) as string[]).join(", ")).join(" · ")})에 걸려 있습니다: ${signals.map((row) => text(row.title)).join(" · ")}` : "";
   const resolutionText = resolution ? (resolution.decision === "applies"
@@ -1387,7 +1497,7 @@ function InvestigationPanel({ variant, external, inactive, signals, runs, agentE
     <b>에이전트 숨은 위험 조사</b>
     {!latest && signalsText && <p>{signalsText}</p>}
     {!latest && (!agentEnabled
-      ? <p className="muted">에이전트가 꺼져 있어 조사할 수 없습니다. 대표 데모는 저장소 폴더에서 <code>scripts\demo.cmd</code>로 실행하세요(녹화본 재생, 비용 0).</p>
+      ? <p className="muted">AI 조사가 아직 연결되지 않았습니다. 원문 인용과 일정 계산 결과는 확인할 수 있지만, 추가 조사는 실행하지 않습니다.</p>
       : !inactive && <button className={startPrimary ? "" : "secondary"} onClick={onStart} disabled={busy}>{external ? "에이전트로 조사" : "에이전트로 숨은 위험 조사"}</button>)}
     {running && <p className="muted">조사 중입니다… 끝나면 여기에 결과가 표시됩니다.</p>}
     {latest?.status === "failed" && <p className="event-question">조사가 실패했습니다. 이력에서 실행 기록을 확인하세요.</p>}
@@ -1406,7 +1516,7 @@ function InvestigationPanel({ variant, external, inactive, signals, runs, agentE
         {notices.map((notice) => <p key={text(notice.event_id)}><small>연결된 외부 공지 · {text(notice.title)} · 발행 {text(notice.published_at).slice(0, 10)}</small><Highlighted body={text(notice.content, "")} marks={[link?.signal_quote, ...factQuotes]} /></p>)}
         {found.length > 0 && <p className="real-basis">에이전트가 찾은 실제 사례: {found.map((row, index) => <span key={text(row.risk_id)}>{index ? " · " : ""}<CaseLink row={row} />{row.cited ? " · 근거로 인용" : ""}</span>)}</p>}
         {basis.filter((row) => !found.some((item) => item.risk_id === row.risk_id)).length > 0 && <p className="real-basis">시나리오 설계 근거 실제 사례: {basis.map((row, index) => <span key={text(row.risk_id)}>{index ? " · " : ""}<CaseLink row={row} /></span>)}</p>}
-        {(found.length > 0 || basis.length > 0) && <small>일정·날짜는 합성이며, 기사 속 지연 기간은 계산에 쓰지 않습니다.</small>}
+        {(found.length > 0 || basis.length > 0) && <small>일정·날짜는 기준 일정으로 계산하며, 기사 속 지연 기간은 계산에 쓰지 않습니다.</small>}
       </details>
       {email && email.body ? <details className="agent-note email-draft"><summary>협력사 메일 초안 · 발송 전</summary><p><b>{text(email.to, "")}{email.to ? " · " : ""}{text(email.subject, "확인 요청")}</b></p><p className="draft-body">{text(email.body)}</p></details> : null}
       {reasoning && <details className="investigation-log"><summary>판단 기록 · 에이전트가 고른 확인 {log.length}단계</summary>{usage && <p className="usage-line">{usage}</p>}{reasoning}</details>}
@@ -1524,7 +1634,7 @@ function AgentDecisionPanel({ agent, eventContent, llmMode }: { agent?: Dict; ev
 
 function OptionCatalog({ options }: { options: Dict[] }) {
   if (!options.length) return null;
-  return <details className="focus-card option-catalog fold"><summary>등록된 대응안 카탈로그 {options.length}개</summary><p>합성 가정의 단축 일수는 보장된 회복 일수가 아닙니다. 실제 회복 일수는 위 계산 결과로 비교하세요.</p><div className="option-catalog-grid">{options.map((option) => <article key={text(option.option_id)}><b>{text(option.name)}</b><small>적용 작업 {(option.target_ids as string[] || []).join(", ")} · 최대 가정 {text(option.reduction_workdays)}작업일 단축 · 추가 비용 {money(option.extra_cost_krw)} ({text(option.currency, "KRW")})</small><p>{text(option.conditions)}</p><small>결정 기한 {text(option.decision_deadline)} · {text(option.approval_state)} · {text(option.data_origin)}</small></article>)}</div></details>;
+  return <details className="focus-card option-catalog fold"><summary>등록된 대응안 카탈로그 {options.length}개</summary><p>가정한 단축 일수는 보장된 회복 일수가 아닙니다. 실제 회복 일수는 위 계산 결과로 비교하세요.</p><div className="option-catalog-grid">{options.map((option) => <article key={text(option.option_id)}><b>{text(option.name)}</b><small>적용 작업 {(option.target_ids as string[] || []).join(", ")} · 최대 가정 {text(option.reduction_workdays)}작업일 단축 · 추가 비용 {money(option.extra_cost_krw)} ({text(option.currency, "KRW")})</small><p>{text(option.conditions)}</p><small>결정 기한 {text(option.decision_deadline)} · {text(option.approval_state)} · {text(option.data_origin)}</small></article>)}</div></details>;
 }
 
 function ScenarioList({ scenarios, selected, approvedId, recommendedId = "", onSelect }: { scenarios: Row[]; selected: string; approvedId: string; recommendedId?: string; onSelect: (id: string) => void }) {

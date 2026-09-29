@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.storage import Store, digest
 from app.worker import _record_weather_risks, _reserve_paid_attempt, _run_scan, enqueue_due_scans, run_once
+from app.watch_suggestions import suggest_watch_plan
 
 
 def test_due_scans_follow_independent_intervals(tmp_path):
@@ -103,6 +104,29 @@ def test_registered_source_change_is_deduplicated(tmp_path, monkeypatch):
     assert first["new_or_changed_count"] == 1 and len(first["new_event_ids"]) == 1
     assert second["new_or_changed_count"] == 0 and not second["new_event_ids"]
     assert len(db.list_json("events", "P")) == 1
+
+
+def test_catalog_notice_is_collected_then_indexed_with_rag_provenance(tmp_path, monkeypatch):
+    db = Store(tmp_path)
+    project = {"country": "Hungary", "country_code": "HU", "mode": "LIVE", "data_origin": "USER"}
+    tasks = [{"task_id": "PERMIT-01", "name": "Environmental permit review", "country": "Hungary",
+              "risk_tags": "permitting, regulation", "baseline_start": "2027-01-10", "baseline_finish": "2027-02-10"}]
+    snapshot = {"project": project, "tasks": tasks}
+    db.put_json("projects", "P", project)
+    db.put_json("versions", "V", snapshot, project_id="P", parent_id=None, status="baseline", content_hash=digest(snapshot))
+    plan = suggest_watch_plan(project, tasks)
+    plan["enabled"] = True
+    db.put_json("watch_plans", "P", plan)
+    monkeypatch.setattr("app.adapters.sources.fetch_registered_source", lambda *args: {
+        "status": "ok", "source_id": "eu-environment-news", "body_hash": "notice-1",
+        "title": "Environmental permit consultation", "summary": "Environmental permit review requirements are updated.",
+        "fetched_at": "2026-09-28T00:00:00+00:00"})
+    result = _run_scan(db, {"project_id": "P", "data": {"scope": "notices"}})
+    assert result["new_event_ids"]
+    event = db.get_json("events", result["new_event_ids"][0])["data"]
+    assert event["evidence"]["retrieval_strategy"] == "hybrid-entity-lexical-v1"
+    assert event["evidence"]["document_id"]
+    assert event["related_task_ids"] == ["PERMIT-01"]
 
 
 def test_detected_change_waits_for_person_before_any_llm_call(tmp_path, monkeypatch):

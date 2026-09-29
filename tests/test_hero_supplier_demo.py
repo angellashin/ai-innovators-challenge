@@ -103,6 +103,30 @@ def test_bundled_hero_demo_uses_the_upload_baseline_path(client):
     assert repeat.status_code == 409
 
 
+def test_representative_demo_is_a_single_stable_project(client):
+    first = request(client, "post", "/api/demo/hero-project")
+    second = request(client, "post", "/api/demo/hero-project")
+    assert first["project_id"] == second["project_id"] == "HERO-BAT-HU-001"
+    assert first["created"] is True and first["baseline_created"] is True
+    assert second["created"] is False and second["baseline_created"] is False
+    projects = request(client, "get", "/api/projects")["projects"]
+    assert [(row["id"], row["name"], row["mode"]) for row in projects] == [
+        ("HERO-BAT-HU-001", "헝가리 배터리 공장 건설", "REPLAY")]
+
+
+def test_project_can_be_archived_and_restored_without_deleting_history(client):
+    project_id = request(client, "post", "/api/projects", json={"name": "보관 테스트", "mode": "LIVE"})["project_id"]
+    archived = request(client, "patch", f"/api/projects/{project_id}/archive", json={"archived": True})
+    assert archived["archived"] is True
+    assert not request(client, "get", "/api/projects")["projects"]
+    listed = request(client, "get", "/api/projects?include_archived=true")["projects"]
+    assert listed[0]["id"] == project_id and listed[0]["archived_at"]
+    restored = request(client, "patch", f"/api/projects/{project_id}/archive", json={"archived": False})
+    assert restored["archived"] is False
+    assert request(client, "get", "/api/projects")["projects"][0]["id"] == project_id
+    assert request(client, "get", f"/api/projects/{project_id}")["project"]["name"] == "보관 테스트"
+
+
 def test_hero_response_catalog_is_synthetic_and_h04_recovery_is_calculated(client):
     project_id, baseline = hero_baseline(client)
     options = baseline["version"]["data"]["options"]
