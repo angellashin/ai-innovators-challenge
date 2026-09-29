@@ -7,32 +7,33 @@ type Row = Dict & { id?: string; data?: Dict; status?: string; kind?: string; ev
 export const SECTIONS = [
   { id: "overview", label: "프로젝트 브리핑" },
   { id: "schedule", label: "일정" },
-  { id: "watch", label: "리스크 탐색" },
-  { id: "changes", label: "리스크 검토" },
+  { id: "risk", label: "리스크 탐색" },
   { id: "scenarios", label: "대응안" },
   { id: "execute", label: "실행" },
   { id: "history", label: "이력" },
 ] as const;
 
-export type SectionId = (typeof SECTIONS)[number]["id"];
+type PrimarySectionId = (typeof SECTIONS)[number]["id"];
+// Preserve old deep links created while discovery and review were separate pages.
+export type SectionId = PrimarySectionId | "watch" | "changes";
 
 export const STAGES = [
   { code: "BRIEF", label: "프로젝트 한눈에 보기", section: "overview" },
   { code: "IMPORT", label: "기준 일정 연결", section: "schedule" },
-  { code: "WATCH", label: "리스크 탐색", section: "watch" },
-  { code: "DETECT", label: "리스크 검토", section: "changes" },
+  { code: "WATCH", label: "외부 신호 탐색", section: "risk" },
+  { code: "DETECT", label: "후보 검토", section: "risk" },
   { code: "COMPARE", label: "대응안 비교", section: "scenarios" },
   { code: "APPROVE", label: "조건 승인", section: "scenarios" },
   { code: "EXECUTE", label: "일정 반영·실행", section: "execute" },
 ] as const satisfies ReadonlyArray<{ code: string; label: string; section: SectionId }>;
 
 // Older links used #actions for the execution screen.
-const SECTION_ALIASES: Record<string, SectionId> = { actions: "execute" };
+const SECTION_ALIASES: Record<string, PrimarySectionId> = { actions: "execute", watch: "risk", changes: "risk" };
 
 export function sectionFromHash(hash: string): SectionId {
   const raw = hash.replace("#", "");
   const id = SECTION_ALIASES[raw] || raw;
-  return SECTIONS.some((item) => item.id === id) ? (id as SectionId) : "overview";
+  return SECTIONS.some((item) => item.id === id) ? (id as PrimarySectionId) : "overview";
 }
 
 export type ProjectRecords = {
@@ -137,16 +138,16 @@ export function deriveProgress(state: ProjectRecords, preferEventId = ""): Progr
   if (current <= 1) {
     next = { label: "기준 일정 Excel 올리기", section: "schedule", detail: "Excel로 기준 일정을 연결하면 프로젝트의 작업·기간·선후행 관계를 한곳에서 확인할 수 있습니다." };
   } else if (current === 2) {
-    next = { label: "리스크 탐색 시작", section: "watch", detail: "프로젝트에 맞는 외부 리스크 범위를 확인하고 탐색을 시작하세요. 데모는 수집을 시뮬레이션합니다." };
+    next = { label: "리스크 탐색 시작", section: "risk", detail: "프로젝트에 맞는 외부 리스크 범위를 확인하고 탐색을 시작하세요. 데모는 수집을 시뮬레이션합니다." };
   } else if (current === 3) {
-    if (!focusEvent) next = { label: "리스크 불러오기", section: "changes", detail: "수집된 신호나 협력사 통보에서 검토할 리스크를 선택하세요." };
-    else if (interpreting) next = { label: "리스크 해석 확인", section: "changes", detail: "리스크와 관련 작업을 해석하고 있습니다. 끝나면 작업·날짜를 확인하세요." };
-    else if (!hasPatch(focusData) && !focusData.evidence) next = { label: "영향 작업·날짜 지정", section: "changes", detail: "리스크의 영향 작업을 찾지 못했습니다. 작업과 날짜를 지정하세요." };
-    else next = { label: "리스크 해석 확인", section: "changes", detail: "추출된 작업과 날짜가 맞는지 확인하면 영향 분석이 시작됩니다." };
+    if (!focusEvent) next = { label: "리스크 불러오기", section: "risk", detail: "수집된 신호나 협력사 통보에서 검토할 리스크를 선택하세요." };
+    else if (interpreting) next = { label: "리스크 해석 확인", section: "risk", detail: "리스크와 관련 작업을 해석하고 있습니다. 끝나면 작업·날짜를 확인하세요." };
+    else if (!hasPatch(focusData) && !focusData.evidence) next = { label: "영향 작업·날짜 지정", section: "risk", detail: "리스크의 영향 작업을 찾지 못했습니다. 작업과 날짜를 지정하세요." };
+    else next = { label: "리스크 해석 확인", section: "risk", detail: "추출된 작업과 날짜가 맞는지 확인하면 영향 분석이 시작됩니다." };
   } else if (current === 4) {
     next = pendingAnalysis
       ? { label: "분석 결과 보기", section: "scenarios", detail: "영향을 계산하고 있습니다. 끝나면 대응안이 표시됩니다." }
-      : { label: "영향 분석 시작", section: "changes", detail: "확인한 리스크로 영향 분석을 시작하세요." };
+      : { label: "영향 분석 시작", section: "risk", detail: "확인한 리스크로 영향 분석을 시작하세요." };
   } else if (current === 5) {
     next = { label: "대응안 비교·승인", section: "scenarios", detail: "대응안을 고르고 조건을 확인한 뒤 승인하세요." };
   } else if (current === 6) {

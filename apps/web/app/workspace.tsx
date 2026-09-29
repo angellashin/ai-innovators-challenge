@@ -255,7 +255,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     }
     if (result.scenarios?.length) {
       setNotice("분석이 끝났습니다. 대응안을 비교하고 승인할 안을 고르세요.");
-      if (awaited.kind === "analysis" && sectionRef.current === "changes") go("scenarios");
+      if (awaited.kind === "analysis" && sectionFromHash(`#${sectionRef.current}`) === "risk") go("scenarios");
     } else {
       setNotice(text(result.run?.data?.summary, "분석이 멈췄습니다. 리스크 검토에서 작업과 날짜를 확인하세요."));
     }
@@ -695,7 +695,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const approvedScenario = run?.scenarios?.find((item) => item.id === approvedScenarioId);
   const scenarioActions = (scenarioId: string) => (project.actions || []).filter((item) => item.scenario_id === scenarioId);
   const openScenarioActions = (project.actions || []).filter((item) => item.scenario_id && String(item.data?.state || "OPEN") === "OPEN").length;
-  const nextInThisSection = progress.next.section === activeSection;
+  const nextInThisSection = sectionFromHash(`#${progress.next.section}`) === activeSection;
   const runIsPreview = isPreview(run?.run);
   const runPending = run?.run && !["succeeded", "failed"].includes(text(run.run.status));
   const demoEvents = project.demo_events || [];
@@ -797,7 +797,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       </div> : null}
       {preview && !project.version && importPreviewCard(preview, false)}
       {project.version ? <>
-        {progress.current === 2 && nextCallout("리스크 탐색", "watch", "기준 일정이 준비되었습니다. 일정 사전 점검 결과를 확인하고 외부 리스크 확인을 시작하세요.")}
+        {progress.current === 2 && nextCallout("리스크 탐색", "risk", "기준 일정이 준비되었습니다. 일정 사전 점검 결과를 확인하고 외부 리스크 확인을 시작하세요.")}
         {progress.current > 2 && !nextInThisSection && nextCallout(progress.next.label, progress.next.section, progress.next.detail)}
         <div className="schedule-board">
           <div className="board-meta"><div><span className="eyebrow">{project.version.status === "committed" ? "COMMITTED VERSION" : "BASELINE"}</span><h3>{project.version.status === "committed" ? "확정 버전" : "기준 버전"} {shortId(project.version.id)} · {tasks.length}개 작업</h3><p>기준 시점 {text(projectData.status_as_of, "미설정")} · 완료 {tasks.filter((task) => task.status === "completed").length} · 진행 중 {tasks.filter((task) => task.status === "in_progress").length} · 예정 {tasks.filter((task) => task.status === "planned").length}{visibleTaskNote ? ` · ${visibleTaskNote}` : ""}</p>{selectedScenario && <p className="board-overlay">색이 다른 막대: 선택한 대응안 '{text(selectedScenario.data?.label)}'의 변경 일정</p>}</div></div>
@@ -823,14 +823,15 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       onOpenResult={() => go("scenarios")} />
   );
   const watchView = (
-    <section className="workspace-view" id="watch" aria-labelledby="watch-title">
-      <div className="view-heading"><div><p className="eyebrow">RISK DISCOVERY</p><h2 id="watch-title">리스크 탐색</h2><p>일정의 취약한 구간을 먼저 점검한 뒤, 관련 외부 정보를 계속 확인합니다. 검토가 필요한 항목만 다음 단계로 보냅니다.</p></div><span className="view-context">{started ? "감시 중" : "감시 시작 전"}{feedEvents.length ? ` · 새 항목 ${feedEvents.length}건` : ""}</span></div>
+    <section className="workspace-view risk-workflow" id="risk" aria-labelledby="risk-title">
+      <div className="view-heading"><div><p className="eyebrow">RISK WORKFLOW</p><h2 id="risk-title">리스크 탐색</h2><p>외부 신호를 찾고, 후보를 확인한 뒤, 선택한 항목만 일정 영향 분석으로 보냅니다.</p><ol className="risk-stepper" aria-label="리스크 탐색 단계"><li><button type="button" onClick={() => document.getElementById("risk-discover")?.scrollIntoView({ behavior: "smooth", block: "start" })}>1. 외부 신호 탐색</button></li><li><button type="button" onClick={() => document.getElementById("risk-review")?.scrollIntoView({ behavior: "smooth", block: "start" })}>2. 후보 검토</button></li><li><button type="button" onClick={() => document.getElementById("risk-analysis")?.scrollIntoView({ behavior: "smooth", block: "start" })}>3. 일정 영향 분석</button></li></ol></div><span className="view-context">{started ? "감시 중" : "감시 시작 전"}{feedEvents.length ? ` · 새 항목 ${feedEvents.length}건` : ""}</span></div>
       {!project.version ? (loaded ? nextCallout("기준 일정 연결", "schedule", "브리핑과 감시에는 기준 일정이 필요합니다.") : null) : <>
+        <div id="risk-discover" className="risk-anchor" />
         {isHero && <div className="watch-status-strip" role="status">
           <div><span className="eyebrow">현재 상태</span><b>{started ? `외부 신호 ${feedEvents.length}건을 확인할 수 있습니다.` : "외부 리스크 탐색을 시작하세요."}</b></div>
-          {!started ? <button onClick={startWatch} disabled={busy}>{busy ? "탐색 중…" : "탐색 시작 →"}</button> : <button onClick={() => go("changes")}>리스크 검토 →</button>}
+          {!started ? <button onClick={startWatch} disabled={busy}>{busy ? "탐색 중…" : "탐색 시작 →"}</button> : <button onClick={() => document.getElementById("risk-review")?.scrollIntoView({ behavior: "smooth", block: "start" })}>후보 검토 →</button>}
         </div>}
-        {!isHero && progress.current > 2 && nextCallout(progress.next.label, progress.next.section, progress.next.detail)}
+        {!isHero && progress.current > 2 && sectionFromHash(`#${progress.next.section}`) !== "risk" && nextCallout(progress.next.label, progress.next.section, progress.next.detail)}
         {(!isHero || started || showPreparedDemoOutputs) && <BriefingPanel briefing={project.briefing} llmMode={text(project.llm_mode, "live")} />}
         {!isHero && <article className="focus-card watch-start" aria-label="감시 시작">
           <div className="panel-heading"><div><span className="eyebrow">다음 단계</span><h3>{started ? "외부 리스크를 확인하고 있습니다" : "외부 리스크 확인을 시작하세요"}</h3>
@@ -844,7 +845,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
             ? <div key={text(event.id)} className="feed-merged"><span className="status-chip">동일 리스크에 연결됨</span> <b>{text(event.data?.title, "외부 신호")}</b>
                 <small>{feedSignals.find((row) => row.id === event.id)?.related}</small>
                 {triageLine(event.data?.auto_narrow as Dict | undefined) && <small>{triageLine(event.data?.auto_narrow as Dict | undefined)}</small>}
-                <button className="text-button" onClick={() => go("changes")}>리스크 검토에서 보기 →</button></div>
+                <button className="text-button" onClick={() => document.getElementById("risk-review")?.scrollIntoView({ behavior: "smooth", block: "start" })}>후보 검토에서 보기 →</button></div>
             : changeCard(event))}</div>
             : <div className="empty focus-empty">{started ? "아직 새로 확인한 항목이 없습니다." : "감시를 시작하면 새로 확인한 항목이 여기에 표시됩니다."}</div>}
         </section>
@@ -868,10 +869,10 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const inbox = demoInbox(demoEvents);
   const importedIds = new Set(events.map((event) => text(event.data?.event_id, "")).filter(Boolean));
   const changesView = (
-    <section className="workspace-view" id="changes" aria-labelledby="changes-title">
-      <div className="view-heading"><div><p className="eyebrow">RISK REVIEW</p><h2 id="changes-title">리스크 검토</h2><p>수집된 신호의 영향 작업과 날짜를 확인합니다. 선택한 후보만 일정 영향 분석으로 이어집니다.</p></div><span className="view-context">{eventCount}건 기록</span></div>
+    <section className="workspace-view risk-review-section" id="risk-review" aria-labelledby="changes-title">
+      <div className="risk-subheading"><div><p className="eyebrow">2. 후보 검토</p><h3 id="changes-title">일정에 영향을 줄 수 있는 항목만 확인하세요.</h3><p>수집된 신호의 영향 작업과 날짜를 확인합니다. 확인한 후보만 일정 영향 분석으로 이어집니다.</p></div><span className="view-context">{eventCount}건 기록</span></div>
       {!project.version ? (loaded ? nextCallout("기준 일정 Excel 올리기", "schedule", "리스크 영향을 계산하려면 먼저 기준 일정이 필요합니다.") : null) : <>
-        {progress.next.section !== "changes" && nextCallout(progress.next.label, progress.next.section, progress.next.detail)}
+        {sectionFromHash(`#${progress.next.section}`) !== "risk" && nextCallout(progress.next.label, progress.next.section, progress.next.detail)}
         <div className="changes-layout">
           <div className="change-intake-stack">
             <article className="focus-card">
@@ -906,9 +907,12 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
               : <div className="empty focus-empty">아직 검토할 리스크가 없습니다. 왼쪽에서 통보나 자료를 불러오세요.</div>}
           </div>
         </div>
+        <article className="risk-analysis-handoff" id="risk-analysis"><span className="eyebrow">3. 일정 영향 분석</span><div><h3>확인한 후보만 분석합니다.</h3><p>후보 카드에서 작업·날짜를 확인하고 ‘영향 분석’을 시작하면, 다음 화면에서 대응안을 비교할 수 있습니다.</p></div></article>
       </>}
     </section>
   );
+
+  const riskView = <>{watchView}{changesView}</>;
 
   // ---- 4 COMPARE / 5 APPROVE ------------------------------------------
   const impactDetail = selectedScenario ? <ImpactDetail data={selectedScenario.data || {}} taskNames={taskNames}
@@ -1016,7 +1020,6 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           <div className="execute-actions"><button onClick={() => commitScenario(approvedScenarioId)} disabled={busy}>새 일정 버전 확정</button></div>
         </div>
       )}
-      {progress.approval && <ScheduleComparison projectId={projectId} versionId={text(committed?.id || project.version?.id, "") || undefined} />}
       {executeActions.length > 0 && <div className="focus-card"><div className="panel-heading"><div><h3>실행 항목</h3><p>승인한 대응안의 조건 확인 기록입니다.</p></div></div><div className="action-list">{executeActions.map((action) => <article key={text(action.id)} className="action-item"><span className={`action-state ${String(action.data?.state || "OPEN").toLowerCase()}`}>{ACTION_STATE[text(action.data?.state, "OPEN")] || text(action.data?.state)}</span><div><b>{text(action.data?.request, "확인 요청")}</b><small>{text(action.data?.owner, "프로젝트 운영팀")}{action.data?.due_at ? ` · 기한 ${text(action.data.due_at)}` : ""}{action.data?.note ? ` · 근거 ${text(action.data.note)}` : ""}</small></div></article>)}</div></div>}
       {project.version && <p className="muted quiet-row">현재 일정({project.version.status === "committed" ? "확정 버전" : "기준 버전"})을 그대로 내려받으려면 <button className="text-button" onClick={downloadExport} disabled={busy}>현재 일정 Excel</button></p>}
 
@@ -1080,16 +1083,16 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const projectStatus = !project.version
     ? { kicker: "PROJECT STATUS", title: "기준 일정 필요", detail: "기준 일정이 연결되면 리스크와 영향 작업을 비교할 수 있습니다.", action: { section: "schedule" as SectionId, label: "기준 일정 연결" } }
     : latestSnapshotFailed
-      ? { kicker: "PROJECT STATUS", title: "수집 상태 확인 필요", detail: "최근 외부 출처 수집이 완료되지 않았습니다. 출처 연결 상태를 확인하세요.", action: { section: "watch" as SectionId, label: "감시 상태 보기" } }
+      ? { kicker: "PROJECT STATUS", title: "수집 상태 확인 필요", detail: "최근 외부 출처 수집이 완료되지 않았습니다. 출처 연결 상태를 확인하세요.", action: { section: "risk" as SectionId, label: "감시 상태 보기" } }
       : riskAlertCount > 0
-        ? { kicker: "PROJECT STATUS", title: `검토할 리스크 ${riskAlertCount}건`, detail: "일정에 영향을 줄 수 있는 신호가 확인 대기 중입니다.", action: { section: "changes" as SectionId, label: "리스크 검토" } }
+        ? { kicker: "PROJECT STATUS", title: `검토할 리스크 ${riskAlertCount}건`, detail: "일정에 영향을 줄 수 있는 신호가 확인 대기 중입니다.", action: { section: "risk" as SectionId, label: "리스크 검토" } }
         : progress.approval && !committed
           ? { kicker: "PROJECT STATUS", title: "일정 반영 대기", detail: "승인한 대응안을 새 일정 버전으로 확정할 수 있습니다.", action: { section: "execute" as SectionId, label: "일정 반영" } }
           : committedVersions.length
             ? { kicker: "PROJECT STATUS", title: "최근 일정 반영 완료", detail: "확정 버전과 원본 일정을 비교하거나 새 리스크를 탐색할 수 있습니다.", action: { section: "schedule" as SectionId, label: "일정 비교 보기" } }
             : started
-              ? { kicker: "PROJECT STATUS", title: "감시 중", detail: "등록한 출처와 장기 일정 노출도를 확인하고 있습니다.", action: { section: "watch" as SectionId, label: "감시 상태 보기" } }
-              : { kicker: "PROJECT STATUS", title: "리스크 탐색 준비됨", detail: "기준 일정은 연결되었습니다. 외부 리스크 탐색을 시작하세요.", action: { section: "watch" as SectionId, label: "탐색 시작" } };
+              ? { kicker: "PROJECT STATUS", title: "감시 중", detail: "등록한 출처와 장기 일정 노출도를 확인하고 있습니다.", action: { section: "risk" as SectionId, label: "감시 상태 보기" } }
+              : { kicker: "PROJECT STATUS", title: "리스크 탐색 준비됨", detail: "기준 일정은 연결되었습니다. 외부 리스크 탐색을 시작하세요.", action: { section: "risk" as SectionId, label: "탐색 시작" } };
 
   return (
     <main className="human-workspace" data-section={activeSection}>
@@ -1128,7 +1131,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
               <div><span>새 리스크</span><b className={riskAlertCount > 0 ? "risk-count" : ""}>{riskAlertCount ? `${riskAlertCount}건` : "없음"}</b></div>
               <div><span>마지막 수집</span><b>{latestSnapshot ? when(latestSnapshot.fetched_at || latestSnapshot.created_at) : "기록 없음"}</b></div>
             </div>
-            {riskAlertCount > 0 ? <div className="project-status-alert"><span aria-hidden="true">!</span><div><b>검토가 필요한 리스크가 있습니다</b><small>수집된 신호가 일정 영향 후보로 등록되었습니다.</small></div><button type="button" onClick={() => { setStatusPanelOpen(false); go("changes", "changes"); }}>검토</button></div>
+            {riskAlertCount > 0 ? <div className="project-status-alert"><span aria-hidden="true">!</span><div><b>검토가 필요한 리스크가 있습니다</b><small>수집된 신호가 일정 영향 후보로 등록되었습니다.</small></div><button type="button" onClick={() => { setStatusPanelOpen(false); go("risk", "risk-review"); }}>검토</button></div>
               : <div className="project-status-calm"><span aria-hidden="true">✓</span><div><b>새로 확인할 리스크가 없습니다</b><small>새로 확인한 항목은 이곳에서 확인할 수 있습니다.</small></div></div>}
             {riskAlertCount === 0 && projectStatus.action && <button type="button" className="project-status-next" onClick={() => { setStatusPanelOpen(false); go(projectStatus.action.section); }}>{projectStatus.action.label}<span aria-hidden="true">→</span></button>}
           </aside>}
@@ -1149,8 +1152,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
 
       {activeSection === "overview" && overviewView}
       {activeSection === "schedule" && scheduleView}
-      {activeSection === "watch" && watchView}
-      {activeSection === "changes" && changesView}
+      {activeSection === "risk" && riskView}
       {activeSection === "scenarios" && scenariosView}
       {activeSection === "execute" && executeView}
       {activeSection === "history" && historyView}
