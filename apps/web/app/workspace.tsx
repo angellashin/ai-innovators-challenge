@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { ScheduleComparison } from "./schedule-comparison";
 import { ExternalWatch, EvidenceReview } from "./external-watch";
@@ -150,6 +150,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const [loaded, setLoaded] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [scheduleDropActive, setScheduleDropActive] = useState(false);
   const [changeFile, setChangeFile] = useState<File | null>(null);
   const [changePreview, setChangePreview] = useState<ImportPreview | null>(null);
   const [documentFile, setDocumentFile] = useState<File | null>(null);
@@ -332,6 +333,30 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       if (asChange) setChangePreview(value); else setPreview(value);
       setNotice(value.import_kind === "change" ? "수정 일정의 차이를 확인한 뒤 변경으로 등록하세요." : "시트 매핑과 작업 수를 확인한 뒤 기준 일정을 확정하세요.");
     });
+  }
+
+  function acceptScheduleFile(file: File | undefined) {
+    if (!file) return;
+    const name = file.name.toLowerCase();
+    if (!name.endsWith(".xlsx") && !name.endsWith(".csv")) {
+      setFeedback({ kind: "guide", text: "기준 일정은 .xlsx 또는 .csv 파일만 사용할 수 있습니다." });
+      return;
+    }
+    setSelectedFile(file);
+    setPreview(null);
+    setNotice(`${file.name}을(를) 분석할 준비가 되었습니다. 업로드·미리보기를 눌러 내용을 확인하세요.`);
+  }
+
+  function handleScheduleDragOver(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setScheduleDropActive(true);
+  }
+
+  function handleScheduleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setScheduleDropActive(false);
+    acceptScheduleFile(event.dataTransfer.files?.[0]);
   }
 
   async function confirmImport(target: ImportPreview | null, asChange = false) {
@@ -796,10 +821,11 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       <div className="view-heading"><div><p className="eyebrow">SCHEDULE</p><h2 id="schedule-title">기준 일정</h2><p>리스크 영향을 비교할 기준 일정 Excel을 연결하고 작업 흐름을 확인합니다.</p></div><span className="view-context">{project.version ? (project.version.status === "committed" ? "확정 버전 사용 중" : "기준 버전 연결됨") : "연결 필요"}</span></div>
       {!project.version && loaded ? <div className="setup-card">
         <div><span className="setup-index">일정</span><h3>기준 일정을 연결하세요.</h3><p>{isHero ? "대표 사례는 준비된 일정(64개 작업)을 연결할 수 있습니다. 직접 만든 프로젝트는 Excel을 올려 미리보기로 매핑을 확인한 뒤 확정합니다." : "Excel을 올려 작업·기간·선후행 관계를 미리 확인한 뒤 기준 일정으로 확정하세요."}</p></div>
-        <div className="setup-actions">
+        <div className={`setup-actions schedule-dropzone${scheduleDropActive ? " is-dragging" : ""}`} onDragOver={handleScheduleDragOver} onDragLeave={() => setScheduleDropActive(false)} onDrop={handleScheduleDrop}>
           {isHero && <><button className={preview ? "secondary" : ""} onClick={loadHeroBaseline} disabled={busy}>대표 사례 일정 연결</button><span className="setup-or">또는</span></>}
-          <label className="file-input-label">{selectedFile ? selectedFile.name : "Excel 파일 선택"}<input type="file" accept=".xlsx,.csv" aria-label="기준 일정 Excel" onChange={(event: ChangeEvent<HTMLInputElement>) => setSelectedFile(event.target.files?.[0] || null)} /></label>
+          <label className="file-input-label">{selectedFile ? selectedFile.name : "Excel 파일 선택"}<input type="file" accept=".xlsx,.csv" aria-label="기준 일정 Excel" onChange={(event: ChangeEvent<HTMLInputElement>) => acceptScheduleFile(event.target.files?.[0])} /></label>
           <button className="secondary" onClick={() => uploadImport(selectedFile)} disabled={busy || !selectedFile}>업로드·미리보기</button>
+          <span className="schedule-drop-hint" aria-live="polite">{scheduleDropActive ? "여기에 놓으면 일정표를 분석합니다" : "Finder에서 일정표를 이 영역으로 끌어오거나 파일을 선택하세요"}</span>
         </div>
       </div> : null}
       {preview && !project.version && importPreviewCard(preview, false)}

@@ -2549,6 +2549,9 @@ main {
 .setup-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; max-width: 460px; }
 .file-input-label { display: inline-flex; align-items: center; min-height: 36px; border: 1px solid #d4dcd6; border-radius: 8px; background: #fffefa; color: #4e5e5b; padding: 0 10px; font-size: 12px; font-weight: 750; cursor: pointer; }
 .file-input-label input { display: none; }
+.schedule-dropzone { position: relative; border: 1px dashed transparent; border-radius: 12px; padding: 8px; transition: border-color .18s ease, background .18s ease; }
+.schedule-dropzone.is-dragging { border-color: #56b889; background: rgba(152, 225, 190, .18); }
+.schedule-drop-hint { flex-basis: 100%; color: #71817c; font-size: 11px; }
 .import-preview { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; border: 1px solid #d5e5da; border-radius: 10px; background: #f1f8f3; padding: 12px 14px; }
 .import-preview div { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
 .import-preview span { color: #6c7978; font-size: 12px; }
