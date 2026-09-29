@@ -131,7 +131,8 @@ function friendly(error: ApiError): Feedback {
 
 function go(section: SectionId, focusId?: string) {
   window.location.hash = section;
-  if (focusId) window.setTimeout(() => document.getElementById(focusId)?.scrollIntoView({ behavior: "smooth", block: "center" }), 60);
+  const targetId = focusId || section;
+  window.setTimeout(() => document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
 }
 
 export default function Home({ initialProjectId = "" }: { initialProjectId?: string }) {
@@ -1096,7 +1097,6 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
         <a className="brand-lockup" href="/" aria-label="REPLAN 홈">
           <Image src="/brand/replan-wordmark.png" alt="REPLAN" width={1500} height={350} priority />
         </a>
-        <div className="human-nav-meta"><span className="nav-live-dot" /> <span>TEAM WORKSPACE</span><span className="nav-meta-divider" /> <span>{shortId(projectId, "NEW")}</span></div>
       </header>
       <section className="hero human-hero" id="project-header">
         <div className="hero-copy">
@@ -1128,9 +1128,9 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
               <div><span>새 리스크</span><b className={riskAlertCount > 0 ? "risk-count" : ""}>{riskAlertCount ? `${riskAlertCount}건` : "없음"}</b></div>
               <div><span>마지막 수집</span><b>{latestSnapshot ? when(latestSnapshot.fetched_at || latestSnapshot.created_at) : "기록 없음"}</b></div>
             </div>
-            {riskAlertCount > 0 ? <div className="project-status-alert"><span aria-hidden="true">!</span><div><b>검토가 필요한 리스크가 있습니다</b><small>수집된 신호가 일정 영향 후보로 등록되었습니다.</small></div><button type="button" onClick={() => { setStatusPanelOpen(false); go("changes"); }}>검토</button></div>
+            {riskAlertCount > 0 ? <div className="project-status-alert"><span aria-hidden="true">!</span><div><b>검토가 필요한 리스크가 있습니다</b><small>수집된 신호가 일정 영향 후보로 등록되었습니다.</small></div><button type="button" onClick={() => { setStatusPanelOpen(false); go("changes", "changes"); }}>검토</button></div>
               : <div className="project-status-calm"><span aria-hidden="true">✓</span><div><b>새로 확인할 리스크가 없습니다</b><small>새로 확인한 항목은 이곳에서 확인할 수 있습니다.</small></div></div>}
-            {projectStatus.action && <button type="button" className="project-status-next" onClick={() => { setStatusPanelOpen(false); go(projectStatus.action.section); }}>{projectStatus.action.label}<span aria-hidden="true">→</span></button>}
+            {riskAlertCount === 0 && projectStatus.action && <button type="button" className="project-status-next" onClick={() => { setStatusPanelOpen(false); go(projectStatus.action.section); }}>{projectStatus.action.label}<span aria-hidden="true">→</span></button>}
           </aside>}
         </div>
       </section>

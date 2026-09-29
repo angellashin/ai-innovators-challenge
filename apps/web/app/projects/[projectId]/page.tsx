@@ -22,7 +22,7 @@ export default function ProjectWorkspacePage() {
     <div className="project-shell">
       <aside className="shell-nav">
         <nav aria-label="프로젝트 메뉴">{SECTIONS.map(({ id, label }) => <a className={activeSection === id ? "shell-link active" : "shell-link"} aria-current={activeSection === id ? "page" : undefined} href={`#${id}`} key={id}>{label}</a>)}</nav>
-        <Link className="shell-back" href="/workspaces">← 프로젝트 목록</Link>
+        <Link className="shell-back" href={projectId === "HERO-BAT-HU-001" ? "/" : "/workspaces"}>{projectId === "HERO-BAT-HU-001" ? "← 홈으로 돌아가기" : "← 프로젝트 목록"}</Link>
       </aside>
       <div className="shell-content"><Home initialProjectId={projectId} /></div>
     </div>

@@ -1660,6 +1660,7 @@ main {
 
 .human-workspace .hero-copy { padding: 8px 0 10px; }
 .human-workspace .human-hero .eyebrow { margin-bottom: 8px; color: #6979a3; }
+.human-workspace .workspace-view { scroll-margin-top: 24px; }
 .human-workspace .project-title-row { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; }
 .human-workspace .human-hero h1 { max-width: 850px; color: var(--human-ink); font-size: clamp(27px, 3.4vw, 42px); line-height: 1.08; letter-spacing: -.06em; }
 .human-workspace .human-hero .project-title-row .mode { margin-top: 4px; }
