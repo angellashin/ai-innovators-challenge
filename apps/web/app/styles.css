@@ -792,8 +792,7 @@ main {
   padding: 22px 0;
 }
 
-.proof-kicker,
-.shell-caption {
+.proof-kicker {
   color: var(--accent);
   font-size: 10px;
   font-weight: 800;
@@ -945,7 +944,6 @@ main {
 .shell-nav { display: flex; position: sticky; top: 0; flex-direction: column; height: 100vh; border-right: 1px solid var(--line); background: #f0ede5; padding: 24px 16px; }
 .shell-brand { display: flex; align-items: center; gap: 9px; color: var(--deep); font-size: 14px; font-weight: 900; letter-spacing: 0.08em; text-decoration: none; }
 .shell-mark { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; background: var(--deep); color: white; font-size: 13px; }
-.shell-caption { margin: 58px 8px 14px; color: var(--muted); font-size: 9px; }
 .shell-nav nav { display: grid; gap: 3px; }
 .shell-link,
 .shell-back { display: flex; align-items: center; gap: 9px; border-radius: 8px; color: var(--muted); padding: 10px 9px; font-size: 12px; font-weight: 750; text-decoration: none; }
@@ -969,7 +967,6 @@ main {
   .landing-grid article:last-child { border-bottom: 0; }
   .project-shell { grid-template-columns: 1fr; }
   .shell-nav { position: relative; width: 100%; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 14px 16px; }
-  .shell-caption { margin: 20px 8px 8px; }
   .shell-nav nav { display: flex; overflow-x: auto; }
   .shell-link { white-space: nowrap; }
   .shell-back { display: none; }
@@ -1826,7 +1823,6 @@ main {
 .project-shell .shell-nav { border-right-color: rgba(255,255,255,.12); background: #121b25; }
 .project-shell .shell-brand { color: #f4f2ec; }
 .project-shell .shell-mark { background: #9fe1be; color: #122233; }
-.project-shell .shell-caption { color: #7f9296; }
 .project-shell .shell-link { color: #9caeb0; }
 .project-shell .shell-link span { color: #6f8188; }
 .project-shell .shell-link:hover,
@@ -2183,7 +2179,6 @@ main {
 }
 .project-shell .shell-brand { color: var(--shell-copy); }
 .project-shell .shell-mark { border: 1px solid rgba(255, 255, 255, .24); background: rgba(255, 255, 255, .09); color: #8ce2b5; }
-.project-shell .shell-caption { color: #8f9e99; }
 .project-shell .shell-link,
 .project-shell .shell-back { color: #949690; }
 .project-shell .shell-link:hover,
@@ -2372,7 +2367,6 @@ main {
 }
 .project-shell .shell-brand { color: #f6f5ef; }
 .project-shell .shell-mark { border-color: rgba(255,255,255,.18); background: var(--replan-mint); color: var(--replan-navy); }
-.project-shell .shell-caption { color: #8aa09d; }
 .project-shell .shell-link,
 .project-shell .shell-back { color: #a6b6b5; }
 .project-shell .shell-link:hover,
@@ -2519,7 +2513,6 @@ main {
 
 /* The sidebar is the only workspace navigation model. The former all-in-one
    dashboard remains mounted for API compatibility, but is no longer presented. */
-.project-shell .shell-caption { margin: 14px 8px 18px; }
 .project-shell .shell-link { min-height: 42px; gap: 0; padding: 0 14px; border-radius: 10px; font-size: 14px; font-weight: 720; }
 .project-shell .shell-link span { display: none; }
 .legacy-summary,
@@ -2669,8 +2662,6 @@ main {
 .stage-step.here a { outline: 2px solid var(--replan-mint); outline-offset: 1px; }
 
 .entry-back-link { justify-self: end; color: #d5d2ca; font-size: 13px; text-decoration: none; }
-.shell-nav-group { display: grid; gap: 4px; margin-bottom: 20px; }
-.shell-group-label { display: block; margin: 3px 14px 5px; color: #8fa19e; font: 800 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .09em; text-transform: uppercase; }
 .entry-back-link:hover { color: #fff; }
 .entry-page .demo-entry-card { width: min(100%, 720px); }
 .demo-entry-card h1 { font-size: clamp(34px, 4.5vw, 50px); line-height: 1.1; }

@@ -1142,10 +1142,6 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
         <a className="brand-lockup" href="/" aria-label="REPLAN 홈">
           <Image src="/brand/replan-wordmark.png" alt="REPLAN" width={1500} height={350} priority />
         </a>
-        <div className="brand-context">
-          <span className="brand-context-dot" aria-hidden="true" />
-          <span>프로젝트 작업공간</span>
-        </div>
         <div className="human-nav-meta"><span className="nav-live-dot" /> <span>TEAM WORKSPACE</span><span className="nav-meta-divider" /> <span>{shortId(projectId, "NEW")}</span></div>
       </header>
       <section className="hero human-hero" id="project-header">
