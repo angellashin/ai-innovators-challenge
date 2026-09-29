@@ -107,42 +107,30 @@ sudo systemctl reload nginx
 
 ## 7. GitHub main 자동 배포
 
-`.github/workflows/ci.yml`은 `main`에 push가 발생하고 backend·web·Compose 검증이 모두 통과하면 EC2의 Self-hosted Runner에서 배포 명령을 실행합니다. PR 브랜치에는 배포하지 않습니다.
+GitHub Actions는 PR과 `main` push에서 backend·web·Compose를 검사합니다. EC2의 systemd timer는 5분마다 최신 `main`을 확인하고, **그 커밋의 main CI가 성공했을 때만** `git merge --ff-only`, `docker compose up -d --build`, API·웹 헬스 체크를 실행합니다. GitHub 러너 등록이나 SSH 키를 GitHub에 추가할 필요가 없습니다.
 
-### Self-hosted Runner
-
-EC2에 `replan-ec2` label의 GitHub Runner를 서비스로 설치합니다. Runner는 EC2 내부에서 `git pull`과 Docker Compose를 실행하므로 GitHub Actions용 SSH 개인키를 저장하거나 SSH 22번 포트를 외부에 공개할 필요가 없습니다.
-
-GitHub Repository → Settings → Actions → Runners에서 Linux x64 Runner를 추가하고, 다음 label을 지정합니다.
-
-```text
-replan-ec2
-```
-
-Runner 서비스 확인:
+EC2에서 한 번 설치합니다. 프로젝트 경로는 `/home/ubuntu/ai-innovators-challenge`입니다.
 
 ```sh
-cd ~/actions-runner
-sudo ./svc.sh status
+cd ~/ai-innovators-challenge
+git pull --ff-only origin main
+sudo bash deploy/aws/install-auto-deploy.sh
 ```
 
-설정이 끝나면 다음 흐름으로 배포됩니다.
+첫 배포와 이후 팀원의 `main` 변경은 CI가 성공하면 자동 반영됩니다. 서비스는 서버 부팅 후에도 다시 시작되고, 실패한 배포는 다음 주기에 재시도합니다. 로컬 변경이 있거나 CI가 실패하면 배포하지 않습니다. `.env`와 `replan_data` Docker volume은 유지됩니다.
 
-```text
-feature 브랜치 → Pull Request → CI 검증 → main 병합
-                                      ↓
-                     EC2 Self-hosted Runner가 작업 수신
-                                      ↓
-                         git pull + docker compose build
+```sh
+sudo systemctl status replan-auto-deploy.timer --no-pager
+sudo journalctl -u replan-auto-deploy.service -n 80 --no-pager
 ```
 
-EC2의 `.env`와 `replan_data` Docker volume은 GitHub로 전송하지 않고 서버에 그대로 유지합니다. 기존 `EC2_HOST`, `EC2_USER`, `EC2_SSH_PRIVATE_KEY`, `EC2_KNOWN_HOSTS` Secrets는 Self-hosted Runner 전환이 확인된 뒤 삭제해도 됩니다.
+GitHub 저장소 설정에 남은 기존 Self-hosted Runner나 `EC2_*` Secrets는 이 방식에서 사용하지 않습니다. 운영 반영을 확인하기 전에는 삭제하지 마세요.
 
 ## 8. 수동 업데이트와 복구
 
 ```sh
 cd ~/ai-innovators-challenge
-git pull origin main
+git pull --ff-only origin main
 docker compose up -d --build
 docker compose ps
 docker compose logs --tail=200 api worker web
