@@ -258,3 +258,43 @@ def test_not_applicable_keeps_the_reported_result(client, monkeypatch):
     event = Store().get_json("events", event_id, project_id)["data"]
     assert event["patch"] == {"estimated_finish": {"T042": "2026-03-14"}}
     assert event["investigation"]["resolution"]["note"] == "확인 결과 해당 없음"
+
+def test_hidden_risk_comparison_survives_commit_reload_and_excel(client, monkeypatch):
+    """The UI and workbook retain original/inaction/approved dates after baseline advances."""
+    import io
+    from openpyxl import load_workbook
+    project_id, _, investigation = run_x2_investigation(client, monkeypatch)
+    resolved = call(client, 'post', f'/api/projects/{project_id}/investigations/{investigation["id"]}/resolve',
+                    json={'decision': 'applies', 'note': '협력사 확인: P-C 선적별 허가 필요'})
+    assert run_once(Store())
+    result = call(client, 'get', f'/api/runs/{resolved["analysis_run_id"]}')
+    best = next(row for row in result['scenarios'] if row['data']['option_ids'] == ['HOPT-05', 'HOPT-06'])
+    url = f'/api/projects/{project_id}/schedule-comparison'
+    before = call(client, 'get', url + '?scenario_id=' + best['id'])
+    assert (before['baseline_finish'], before['risk_finish'], before['revised_finish']) == ('2027-12-21','2028-02-11','2028-01-25')
+    assert (before['risk_days'], before['recovered_days'], before['remaining_days']) == (52,17,35)
+    assert not before['committed'] and before['changed_count'] > 0
+    assert any(r['baseline'] != r['revised'] for r in before['rows'])
+    actions = call(client, 'post', f'/api/scenarios/{best["id"]}/prepare')['actions']
+    for action in actions:
+        call(client, 'patch', f'/api/actions/{action["id"]}', json={'state':'ACCEPTED', 'note':'테스트 협력사 확인'})
+    call(client, 'post', f'/api/scenarios/{best["id"]}/approve', json={'actor':'프로젝트 운영팀','confirmed_conditions':best['data']['required_confirmations']})
+    committed = call(client, 'post', f'/api/scenarios/{best["id"]}/commit')
+    again = call(client, 'post', f'/api/scenarios/{best["id"]}/commit')
+    assert again['version_id'] == committed['version_id']
+    after = call(client, 'get', url)
+    assert after['committed'] and after['rows'] == before['rows']
+    assert after['baseline_version_id'] == before['baseline_version_id']
+    assert (after['risk_days'], after['recovered_days'], after['remaining_days']) == (52,17,35)
+    exported = client.get(f'/api/projects/{project_id}/export?version_id={committed["version_id"]}', headers={'Authorization':'Bearer test-token'})
+    assert exported.status_code == 200
+    wb = load_workbook(io.BytesIO(exported.content))
+    assert wb['일정 변화 요약']['C3'].value == 52 and wb['일정 변화 요약']['C4'].value == 35 and wb['일정 변화 요약']['C5'].value == 17
+    chart = wb['전후 비교 간트']
+    colors = {cell.fill.fgColor.rgb for row in chart for cell in row if cell.fill.patternType == 'solid'}
+    assert {'0094A3B8','00D97762','00168C79'} <= colors
+    old = call(client, 'get', url + '?version_id=' + before['baseline_version_id'])
+    assert old['remaining_days'] == 0 and not old['committed']
+    other = call(client, 'post', '/api/projects', json={'mode':'REPLAY'})['project_id']
+    cross_project = client.get(f'/api/projects/{other}/schedule-comparison?version_id={committed["version_id"]}',headers={'Authorization':'Bearer test-token'})
+    assert cross_project.status_code == 404

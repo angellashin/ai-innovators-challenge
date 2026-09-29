@@ -2994,3 +2994,50 @@ details.agent-decision > summary { cursor: pointer; }
 .linked-cause { margin: 8px 0 0; padding: 7px 10px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 6px; font-size: 13px; }
 .linked-cause small { color: var(--muted); }
 .linked-cause-line { display: block; color: #2f4fb8; font-size: 12px; margin-top: 2px; }
+/* Decision-first review: conclusions visible, supporting detail on demand. */
+.schedule-comparison { background:#fff; border:1px solid #dcdedb; border-radius:16px; padding:24px; margin:24px 0; }
+.schedule-outcomes,.discovery-chain { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin:20px 0; }
+.schedule-outcomes>div,.discovery-chain>div { padding:20px; background:#f1f3f5; border-radius:12px; }
+.schedule-outcomes span,.schedule-outcomes small,.discovery-chain small { display:block; }
+.schedule-outcomes strong,.discovery-chain strong { display:block; font-size:30px; line-height:1.3; margin:10px 0; letter-spacing:-.04em; }
+.schedule-outcomes .risk { background:#fff0eb; color:#973f2a; }
+.schedule-outcomes .revised { background:#e6f4ef; color:#126c5d; }
+.recovery-equation { display:flex; gap:14px; flex-wrap:wrap; align-items:center; padding:18px; background:#f4f1ea; border-radius:8px; }
+.comparison-legend { display:flex; gap:20px; margin:22px 0; flex-wrap:wrap; }
+.comparison-legend i { display:inline-block; width:18px; height:9px; margin-right:7px; }
+.comparison-legend .baseline,.comparison-bar.baseline { background:#94a3b8; }
+.comparison-legend .risk,.comparison-bar.risk { background:#d97762; }
+.comparison-legend .revised,.comparison-bar.revised { background:#168c79; }
+.comparison-scroll { overflow-x:auto; padding:0 12px 10px 0; }
+.comparison-chart { min-width:760px; }
+.comparison-axis,.comparison-row { display:grid; grid-template-columns:280px 1fr; gap:22px; }
+.comparison-axis { padding:10px 0 26px; font-size:12px; }
+.comparison-axis>div { position:relative; margin-right:36px; }
+.comparison-axis span { position:absolute; white-space:nowrap; transform:translateX(-50%); }
+.comparison-axis span:first-child { transform:none; }
+.comparison-row { padding:14px 0; border-top:1px solid #e6e8e5; }
+.comparison-label b { display:block; font-size:14px; line-height:1.5; }
+.comparison-label span { display:block; font-size:13px; color:#586575; margin:5px 0; }
+.comparison-label strong { font-size:14px; }
+.comparison-tracks { background:repeating-linear-gradient(90deg,#e5e9e7 0,#e5e9e7 1px,transparent 1px,transparent 25%); padding:5px 0; }
+.comparison-track { position:relative; height:22px; }
+.comparison-bar { position:absolute; top:4px; height:12px; border-radius:3px; min-width:2px; }
+.discovery-chain p { font-size:16px; margin:8px 0; }
+.discovery-chain small { line-height:1.65; font-size:14px; }
+.workspace-view .muted,.workspace-view small { font-size:13px; line-height:1.65; }
+.workspace-view p { line-height:1.7; }
+.briefing-risk details { margin-top:14px; }
+.briefing-risk summary,.triage summary { padding:10px 0; cursor:pointer; font-size:14px; }
+@media(max-width:800px) { .schedule-outcomes,.discovery-chain { grid-template-columns:1fr; gap:10px; } .schedule-comparison{padding:16px;} .schedule-outcomes strong,.discovery-chain strong{font-size:25px;} }
+.decision-journey{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:18px 0;}
+.decision-journey button{background:#fff;color:#172033;border:1px solid #d5dcd8;text-align:left;padding:16px;border-radius:12px;}
+.decision-journey button.active{background:#172033;color:#fff;}
+.decision-journey b,.decision-journey span{display:block;}
+.decision-journey b{font-size:17px;}
+.decision-journey span{font-size:13px;margin-top:6px;}
+.notice-original summary{cursor:pointer;padding:12px 0;font-size:14px;}
+.risk-table{display:block;overflow-x:auto;}
+.signal-highlight{margin:10px 0;padding:14px 16px;background:#edf5f0;border-radius:10px;font-size:16px;line-height:1.6;}
+.signal-highlight small{display:block;color:#52606a;margin-top:4px;}
+@media(max-width:600px){.decision-journey{grid-template-columns:1fr;}.decision-journey span{display:none;}}
+.inbox-more{justify-self:start;}

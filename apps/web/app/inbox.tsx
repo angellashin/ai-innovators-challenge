@@ -3,6 +3,8 @@
 // A mailbox-shaped list of incoming supplier notices. Today the messages come from the bundled demo
 // notices; a Gmail source only has to return InboxMessage rows, and the rest of the screen stays the same.
 
+import { useState } from "react";
+
 type Dict = Record<string, unknown>;
 
 export type InboxMessage = {
@@ -78,14 +80,16 @@ export function Inbox({ messages, selectedId, importedIds, busy, hint, onSelect,
   messages: InboxMessage[]; selectedId: string; importedIds: Set<string>; busy: boolean; hint?: string;
   onSelect: (id: string) => void; onImport: (message: InboxMessage) => void;
 }) {
-  const selected = messages.find((row) => row.id === selectedId);
+  const [showAll, setShowAll] = useState(false);
+  const visible = showAll || !messages.some(row => row.tag === "lead") ? messages : messages.filter(row => row.tag === "lead");
+  const selected = visible.find((row) => row.id === selectedId) || visible.find((row) => row.tag === "lead") || visible[0];
   if (!messages.length) return <p className="muted">받은 통보가 없습니다. 아래에 메시지를 붙여 넣으세요.</p>;
   return <div className="inbox" aria-label="받은편지함">
     <ul className="inbox-list" role="listbox" aria-label="받은 통보">
-      {messages.map((row) => {
+      {visible.map((row) => {
         const imported = Boolean(row.externalId && importedIds.has(row.externalId));
-        return <li key={row.id} role="option" aria-selected={row.id === selectedId}
-          className={`inbox-row${row.id === selectedId ? " selected" : ""}${imported ? " imported" : ""}`}
+        return <li key={row.id} role="option" aria-selected={row.id === selected?.id}
+          className={`inbox-row${row.id === selected?.id ? " selected" : ""}${imported ? " imported" : ""}`}
           onClick={() => onSelect(row.id)} onKeyDown={(event) => { if (event.key === "Enter") onSelect(row.id); }} tabIndex={0}>
           <span className="inbox-from">{row.from}</span>
           <time className="inbox-time">{received(row.receivedAt)}</time>
@@ -96,6 +100,7 @@ export function Inbox({ messages, selectedId, importedIds, busy, hint, onSelect,
         </li>;
       })}
     </ul>
+    {messages.some(row => row.tag === "lead") && <button className="text-button inbox-more" onClick={() => setShowAll(!showAll)}>{showAll ? "대표 통보만 보기" : `다른 예시 통보 ${messages.length - 1}건 보기`}</button>}
     {selected && <div className="inbox-reader" aria-label="선택한 통보">
       <div className="inbox-reader-head"><b>{selected.subject}</b><small>{selected.from} · {received(selected.receivedAt)}{selected.source === "demo" ? " · 대표 사례" : ""}</small></div>
       <p>{selected.body}</p>

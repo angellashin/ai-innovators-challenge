@@ -1539,6 +1539,20 @@ def safe_excel_text(value: Any) -> Any:
     return value
 
 
+@app.get("/api/projects/{project_id}/schedule-comparison", dependencies=[Depends(authorize)])
+def schedule_comparison(project_id: str, scenario_id: str | None = None, version_id: str | None = None) -> dict[str, Any]:
+    from .schedule_comparison import comparison
+    db = store()
+    project_or_404(db, project_id)
+    version = db.get_json("versions", version_id, project_id) if version_id else db.current_version(project_id)
+    if not version:
+        raise HTTPException(404, "schedule version not found")
+    scenario = db.get_json("scenarios", scenario_id, project_id) if scenario_id else None
+    if scenario_id and not scenario:
+        raise HTTPException(404, "scenario not found")
+    return comparison(db, project_id, version, scenario)
+
+
 @app.get("/api/projects/{project_id}/export", dependencies=[Depends(authorize)])
 def export_schedule(project_id: str, version_id: str | None = None) -> StreamingResponse:
     db = store()
@@ -1583,6 +1597,8 @@ def export_schedule(project_id: str, version_id: str | None = None) -> Streaming
                     item["event_id"], item.get("title"), proof.get("source_url"), proof.get("kind"),
                     proof.get("published_at"), proof.get("fetched_at"), proof.get("content_hash"),
                 ]])
+    from .schedule_comparison import comparison, add_comparison_sheets
+    add_comparison_sheets(wb, comparison(db, project_id, version), safe_excel_text)
     payload = io.BytesIO()
     wb.save(payload)
     payload.seek(0)
