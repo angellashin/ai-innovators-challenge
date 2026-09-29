@@ -59,7 +59,7 @@ export default function LandingPage() {
             <Link className="landing-primary-button" href="/demo">대표 사례 데모 보기 <span aria-hidden="true">→</span></Link>
             <a className="landing-quiet-link" href="#workflow">이용 흐름 보기</a>
           </div>
-          <small className="landing-demo-note">대표 사례와 녹화된 AI 응답으로 서비스 흐름을 확인할 수 있습니다.</small>
+          <small className="landing-demo-note">대표 사례의 분석 흐름으로 서비스 사용 방식을 확인할 수 있습니다.</small>
         </div>
 
         <div className="landing-hero-index" aria-hidden="true"><span>01</span><i /><span>03</span></div>

@@ -88,8 +88,6 @@ export default function NewWorkspacePage() {
             <small>팀이 목록과 결정 기록에서 구분할 수 있는 이름을 사용하세요.</small>
           </label>
 
-          <div className="project-create-guidance"><b>다음 화면에서 기준 일정 Excel 올리기</b><small>REPLAN이 작업·기간·선후행 관계를 미리 읽어오고, 확정 전에는 일정에 반영하지 않습니다.</small></div>
-
           {error && <div className="project-create-error" role="alert">{error}</div>}
 
           <div className="project-create-actions">

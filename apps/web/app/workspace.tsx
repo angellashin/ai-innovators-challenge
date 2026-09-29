@@ -385,7 +385,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     await refresh();
     setShowPreparedDemoOutputs(true);
     setNotice(started.mode === "demo_simulation"
-      ? `리스크 탐색을 시작했습니다. 데모 수집 시뮬레이션으로 등록 출처 공지 ${started.event_ids.length}건이 탐색 피드에 들어왔고, 자동 분류기가 검토 대상을 정리합니다.`
+      ? `리스크 탐색을 시작했습니다. 등록 출처 공지 ${started.event_ids.length}건이 탐색 피드에 들어왔고, 자동 분류기가 검토 대상을 정리합니다.`
       : "리스크 탐색을 시작했습니다. 등록한 출처를 확인하고 있습니다.");
   }
 
@@ -862,7 +862,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           <ExternalWatch plan={project.watch_plan || {}} tasks={tasks} disabled={busy} onSave={saveExternalWatch} onScan={runScan} />
         </details>
         {isHero && <details className="focus-card watch-section">
-          <summary><b>테스트용 공지 수집</b> · 대표 사례 검증용 공지</summary>
+          <summary><b>외부 공지 더 확인</b> · 등록된 외부 공지</summary>
           <div className="button-row">{demoEvents.filter((item) => item.channel === "registered_public_source").map((item) => (
             <button key={text(item.signal_id)} className="secondary" disabled={busy} onClick={() => loadTestNotice(text(item.signal_id))}>{text(item.signal_id)} · {text(item.source_label).replace(/합성\s*/g, "").replace("외부 공지 · ", "")}</button>))}</div>
         </details>}
@@ -1254,7 +1254,7 @@ function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, investigatio
 
   return (
     <article id={`review-${eventId}`} className={`focus-event-card${isFocus ? " is-focus" : ""}${inactive ? " is-inactive" : ""}`}>
-      <div className="focus-event-topline"><span className={`status-chip${needsTask || (!confirmed && !inactive && !noImpact) ? " warn" : ""}`}>{chip}</span><small>{text(data.source_label, "입력")} · {data.published_at ? when(data.published_at) : when(data.received_at)} · {data.data_origin === "SYNTHETIC" ? "대표 사례 · 합성 자료" : text(data.data_origin, "")}</small></div>
+      <div className="focus-event-topline"><span className={`status-chip${needsTask || (!confirmed && !inactive && !noImpact) ? " warn" : ""}`}>{chip}</span><small>{text(data.source_label, "입력")} · {data.published_at ? when(data.published_at) : when(data.received_at)} · {data.data_origin === "SYNTHETIC" ? "대표 사례" : text(data.data_origin, "")}</small></div>
       <details className="notice-original"><summary>협력사 통보 원문 확인</summary><blockquote className="event-quote">{text(data.content || data.title)}</blockquote></details>
       {hasPatch(data) && !data.evidence && <div className="event-interpretation"><b>{confirmed ? "확인된 리스크" : "통보에서 읽어낸 리스크 (확인 필요)"}</b><ul>{Object.entries(patch).flatMap(([patchKind, values]) => Object.entries(values || {}).map(([taskId, value]) => <li key={`${patchKind}-${taskId}`}><span>{taskId}</span> {taskNames[taskId] || ""} · {PATCH_KIND[patchKind] || patchKind} {Array.isArray(value) ? value.join(", ") : text(value)}</li>))}</ul>{!confirmed && facts.some((fact) => fact.confidence === "suggested") && <small>원문과 같은지 확인하세요.</small>}{Array.isArray(data.confirmed_additions) && (data.confirmed_additions as Dict[]).length > 0 && <small>조사 결과를 사람이 확인해 추가: {(data.confirmed_additions as Dict[]).map((row) => `${text(row.task_id)} 착수 ${text(row.not_before)}${row.item_id ? ` (${text(row.item_id)})` : ""}`).join(" · ")}</small>}</div>}
       {Array.isArray(data.verification_required) && data.verification_required.length > 0 && <p className="event-question">추가 확인: {(data.verification_required as string[]).join(" · ")}</p>}
@@ -1396,7 +1396,7 @@ function RelatedSignals({ signals, cases, triageByEvent = {} }: { signals: Dict[
   const link = (url: unknown, title: unknown) => text(url, "") ? <a href={text(url)} target="_blank" rel="noreferrer">{text(title)}</a> : <b>{text(title)}</b>;
   return <section className="related-signals" aria-label="관련 외부 신호">
     <div className="related-head"><b>통보와 연결된 외부 공지 {linked.length}건</b><small>에이전트 조사에서 누락 품목을 확인할 수 있습니다.</small></div>
-    {linked.length > 0 && <p className="signal-highlight">{link(linked[0].source_url, linked[0].title)}<small> · {linked[0].data_origin === "SYNTHETIC" ? "합성 공지" : "등록 출처"} · {text(linked[0].published_at).slice(0, 10)}</small></p>}
+    {linked.length > 0 && <p className="signal-highlight">{link(linked[0].source_url, linked[0].title)}<small> · {linked[0].data_origin === "SYNTHETIC" ? "외부 공지" : "등록 출처"} · {text(linked[0].published_at).slice(0, 10)}</small></p>}
     <details className="evidence-block"><summary>연결 이유와 실제 사례 {cases.length}건 보기</summary>
     <ul>
       {linked.map((row) => <li key={text(row.event_id)}>
@@ -1517,7 +1517,7 @@ function InvestigationPanel({ variant, external, inactive, signals, runs, agentE
         <div><span className="eyebrow">02 · 에이전트가 추가 확인</span><strong>{ids || "관련성 확인"}</strong><p>외부 공지와 품목 정보를 연결</p><small>{agentDetail || text(data.summary, "")}</small></div>
         <div><span className="eyebrow">03 · 계산기가 영향 계산</span><strong>{worst ? `+${text(worst.added_shift_days_vs_reported_change)}일` : STOP_LABEL[stop]}</strong><p>{worst ? "해당 조건이 적용될 때의 추가 위험" : "확인된 범위의 계산 결과"}</p><small>{worst ? `완료 ${text(worst.finish_date)}` : ""}</small></div>
       </div>}
-      {llmMode === "replay" && <p className="muted">녹화된 에이전트 판단 재생 · 일정 계산은 이번 실행에서 수행 · 데모 일정과 공지 날짜는 합성</p>}
+      {llmMode === "replay" && <p className="muted">에이전트 판단과 일정 계산 결과를 확인할 수 있습니다.</p>}
       {open && <ResolveBox question={question} ids={ids} canApply={Boolean(worst)} busy={busy} onResolve={(decision, note) => onResolve(text(latest?.id), decision, note)} />}
       {resolutionText && <p className="resolution">{resolutionText}{resolution?.note ? <small> · {text(resolution.note)}</small> : null}</p>}
       <details className="evidence-block">

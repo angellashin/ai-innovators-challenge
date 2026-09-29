@@ -824,7 +824,7 @@ def _require_hero(db: Store, project_id: str) -> dict[str, Any]:
 
     project = project_or_404(db, project_id)
     if not db.current_version(project_id) or project["data"].get("hero_fixture_id") != HERO_PROJECT_ID:
-        raise HTTPException(409, "합성 외부 공지는 hero 데모 기준 일정에서만 불러올 수 있습니다")
+        raise HTTPException(409, "대표 사례 외부 공지는 해당 기준 일정에서만 불러올 수 있습니다")
     return project
 
 

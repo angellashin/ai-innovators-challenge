@@ -41,11 +41,6 @@ export default function DemoEntryPage() {
     }
   }
 
-  function continueDemo() {
-    sessionStorage.setItem("replan.apiBase", defaultApiBase);
-    router.push("/workspaces");
-  }
-
   return (
     <main className="entry-page">
       <header className="entry-nav">
@@ -62,11 +57,10 @@ export default function DemoEntryPage() {
           <div><span>기준 일정</span><strong>1개</strong><small>공장 건설 전체 작업을 연결</small></div>
           <div><span>리스크 검토</span><strong>3종</strong><small>협력사·외부 출처·일정 영향</small></div>
         </div>
-        <p className="demo-entry-note">대표 사례와 녹화된 AI 응답을 쓰는 시연입니다. 담당자 검토와 승인 전에는 일정이 바뀌지 않습니다.</p>
+        <p className="demo-entry-note">대표 사례의 분석 흐름을 확인하는 화면입니다. 담당자 검토와 승인 전에는 일정이 바뀌지 않습니다.</p>
         <div className="entry-form">
           <button type="button" onClick={startExample} disabled={busy}>{busy ? "대표 사례를 준비하는 중…" : "대표 사례 데모 보기"}<span aria-hidden="true">→</span></button>
           <Link className="entry-secondary-button" href="/workspaces/new">새 프로젝트 시작<span aria-hidden="true">→</span></Link>
-          <button className="entry-tertiary-button" type="button" onClick={continueDemo} disabled={busy}>프로젝트 목록 열기</button>
         </div>
         {error && <div className="entry-error" role="alert">데모를 준비하지 못했습니다: {error}{projectId && <> · <Link href={`/projects/${projectId}#overview`}>대표 사례 열기</Link></>}</div>}
       </section>

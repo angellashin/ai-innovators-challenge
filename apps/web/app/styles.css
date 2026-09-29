@@ -2675,8 +2675,6 @@ main {
 .demo-entry-card .entry-form { display: grid; gap: 10px; }
 .demo-entry-card .entry-form .entry-secondary-button { display: flex; width: 100%; min-height: 54px; align-items: center; justify-content: space-between; box-sizing: border-box; border: 1px solid rgba(255,255,255,.25); border-radius: 999px; background: transparent; color: #f4f2ec; padding: 0 20px; font-size: inherit; font-weight: 750; text-decoration: none; }
 .demo-entry-card .entry-form .entry-secondary-button:hover:not(:disabled) { background: rgba(255,255,255,.1); }
-.demo-entry-card .entry-form .entry-tertiary-button { justify-content: center; min-height: auto; border: 0; background: transparent; color: #b9c4c1; font-size: 12px; font-weight: 700; }
-.demo-entry-card .entry-form .entry-tertiary-button:hover:not(:disabled) { color: #fff; }
 .demo-entry-card .entry-error { margin-top: 14px; font-size: 12px; }
 .demo-entry-card .entry-error a { color: #f4f2ec; }
 

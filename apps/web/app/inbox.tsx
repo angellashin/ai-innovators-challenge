@@ -100,7 +100,7 @@ export function Inbox({ messages, selectedId, importedIds, busy, hint, onSelect,
         </li>;
       })}
     </ul>
-    {messages.some(row => row.tag === "lead") && <button className="text-button inbox-more" onClick={() => setShowAll(!showAll)}>{showAll ? "대표 통보만 보기" : `다른 예시 통보 ${messages.length - 1}건 보기`}</button>}
+    {messages.some(row => row.tag === "lead") && <button className="text-button inbox-more" onClick={() => setShowAll(!showAll)}>{showAll ? "대표 항목만 보기" : `전체 통보 ${messages.length}건 보기`}</button>}
     {selected && <div className="inbox-reader" aria-label="선택한 통보">
       <div className="inbox-reader-head"><b>{selected.subject}</b><small>{selected.from} · {received(selected.receivedAt)}{selected.source === "demo" ? " · 대표 사례" : ""}</small></div>
       <p>{selected.body}</p>
