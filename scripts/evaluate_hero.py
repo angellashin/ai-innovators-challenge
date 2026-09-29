@@ -114,7 +114,12 @@ def _run_api_smoke(project_path: Path) -> dict[str, Any]:
             os.environ["REPLAN_DATA_DIR"] = temp_dir
             os.environ["REPLAN_DEMO_TOKEN"] = "hero-smoke-token"
             client = TestClient(app)
-            headers = {"Authorization": "Bearer hero-smoke-token"}
+            registered = client.post("/api/auth/register", json={
+                "username": "hero_evaluation", "password": "StrongPass123!",
+            })
+            if registered.status_code >= 400:
+                raise RuntimeError(f"register evaluation user: {registered.status_code} {registered.text}")
+            headers: dict[str, str] = {}
 
             def request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
                 response = getattr(client, method)(path, headers=headers, **kwargs)
