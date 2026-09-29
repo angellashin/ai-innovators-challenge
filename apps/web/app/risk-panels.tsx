@@ -74,7 +74,7 @@ export function BriefingPanel({ briefing, llmMode }: { briefing?: Dict | null; l
     <div className="panel-heading"><div>
       <span className="eyebrow">사전 에이전트 · 등록 시 브리핑 · 일정 기준 {text(result.as_of)} · 근거 기준 {text(result.evidence_as_of || result.as_of)}</span>
       <h3>이 일정에서 먼저 볼 위험 {risks.length}개</h3>
-        <p>순위와 일정 완충 기간은 계산기 결과입니다. 지연 일수를 예측하지 않고, 작업이 늦어져도 완료일에 영향을 주지 않는 기간을 표시합니다.</p>
+      <p>여유가 적은 위험부터 확인하세요. 순위와 일정 완충은 계산기 결과입니다. 근거는 펼쳐서 볼 수 있습니다.</p>
     </div><span className={`status-chip${agentReviewed ? " confirm" : ""}`}>{agentReviewed ? "규칙 + 에이전트 확인" : "규칙·계산기만"}</span></div>
     {!agentReviewed && <p className="muted">{text(agent.summary, "AI 조사가 연결되지 않아 규칙 결과만 보여줍니다.").replaceAll("에이전트가 꺼져 있어", "AI 조사가 연결되지 않아")}</p>}
     <ol className="briefing-list">{risks.map((risk) => {
@@ -85,9 +85,12 @@ export function BriefingPanel({ briefing, llmMode }: { briefing?: Dict | null; l
       return <li key={text(risk.risk_id)} className="briefing-risk">
         <div className="briefing-head">
           <span className="rank">{text(risk.rank)}</span>
-          <div><b>{text(risk.title)}</b><small>{bufferText(score.label)} · 근거: {bufferText(risk.basis)}</small></div>
+          <div><b>{text(risk.title)}</b><small>{bufferText(score.label)} · 관련 품목 {items.length}개 / 작업 {text(risk.task_count, String(tasks.length))}개</small></div>
           <span className={`status-chip ${LEVEL_CLASS[text(vulnerability.level, "")] || ""}`}>{bufferText(vulnerability.label)}</span>
         </div>
+        {list(risk.actions).slice(0,1).map((action,index) => <p key={index}><b>다음 행동</b> · {text(action.what)} {action.by ? `(${text(action.by)}까지)` : ""}</p>)}
+        <details><summary>왜 위험한가요? · 품목·근거·계산 내역</summary>
+        <p>{text(risk.basis)}</p>
         <LinkedCause cause={risk.linked_cause as Dict | undefined} />
         {list(risk.critical_warnings).map((warning, index) => <p key={index} className="critical-warning">{bufferText(warning)}</p>)}
         {items.length > 0 && <table className="risk-table"><thead><tr><th>품목</th><th>협력사</th><th>원산지</th><th>통관</th><th>허가·인증</th><th>도착 예정</th><th>필요 작업</th><th>일정 완충</th></tr></thead>
@@ -107,10 +110,11 @@ export function BriefingPanel({ briefing, llmMode }: { briefing?: Dict | null; l
           {text(action.what)} · <b>{action.by ? `${text(action.by)}까지` : ""}</b> <small>({text(action.basis)})</small></li>)}</ul></div>
         <CaseList cases={list(risk.cases)} label={risk.case_label} />
         {risk.agent_note ? <p className="agent-note-line">에이전트 메모: {text(risk.agent_note)}</p> : null}
+        </details>
       </li>;
     })}</ol>
     {Number(result.more_count) > 0 && <small className="muted">순위 밖 후보 {text(result.more_count)}개는 표시하지 않았습니다.</small>}
-    <p className="coverage-line"><b>속성 없음</b> · 진행 전 작업 {text(coverage.open_task_count)}개 중 {Object.entries(ATTRIBUTE_LABEL).map(([key, label]) => `${label} ${missing[key] ?? 0}개`).join(" · ")}. 속성이 비어 있는 작업은 해당 위험 판단에서 빠집니다.</p>
+    <details><summary>분석 범위와 누락 속성</summary><p className="coverage-line"><b>속성 없음</b> · 진행 전 작업 {text(coverage.open_task_count)}개 중 {Object.entries(ATTRIBUTE_LABEL).map(([key, label]) => `${label} ${missing[key] ?? 0}개`).join(" · ")}. 속성이 비어 있는 작업은 해당 위험 판단에서 빠집니다.</p></details>
     {excluded.length > 0 && <details className="evidence-block"><summary>에이전트가 뺀 후보 {excluded.length}개 · 이유 보기</summary>
       <ul>{excluded.map((row) => <li key={text(row.risk_key)}><b>{text(row.title)}</b> — {text(row.reason)}</li>)}</ul></details>}
     {agentReviewed && <details className="investigation-log"><summary>판단 기록 · 에이전트가 고른 확인 {log.length}개 (최대 3회 + 사례 검색 1회)</summary>
@@ -149,12 +153,13 @@ export function RiskRegister({ risks, busy, onStatus }: { risks: Dict[]; busy: b
   if (!risks.length) return null;
   return <section className="focus-card risk-register" aria-label="리스크 대장">
     <div className="panel-heading"><div><span className="eyebrow">리스크 대장 · 세 에이전트가 함께 읽고 씀</span><h3>위험 {risks.length}개</h3>
-      <p>등록 시 브리핑이 예상 위험을 올리고, 변화 자동 추리기와 사후 조사 에이전트가 같은 원인의 신호·통보를 스스로 연결합니다. 상태는 앞으로만 움직이며 사람은 언제든 바꿀 수 있습니다.</p></div></div>
+      <p>예상했던 위험에 실제 신호가 연결됐는지 확인하세요.</p></div></div>
     <ul className="register-list">{risks.map((risk) => {
       const riskId = text(risk.risk_id);
       const current = STATUS_ORDER.indexOf(text(risk.status));
       return <li key={riskId} className={`register-row status-${text(risk.status).toLowerCase()}`}>
-        <div className="register-head"><b>{riskId}</b> <span>{text(risk.title)}</span></div>
+        <div className="register-head"><span className="status-chip">{RISK_STATUS[text(risk.status)]}</span><b>{text(risk.title)}</b></div>
+        <details><summary>{riskId} · 연결 근거와 대응 이력</summary>
         {risk.linked_cause ? <small className="linked-cause-line">에이전트가 L2 근거로 연결한 원인: {text((risk.linked_cause as Dict).text)} ({((risk.linked_cause as Dict).case_ids as string[] || []).join(", ")})</small> : null}
         <ol className="status-track" aria-label={`${riskId} 상태`}>{STATUS_ORDER.map((name, index) => <li key={name} className={index < current ? "past" : index === current ? "now" : ""}>{RISK_STATUS[name]}</li>)}</ol>
         <small>관련 {list(risk.items).length ? `품목 ${((risk.item_ids || []) as string[]).join("·")} · ` : ""}작업 {((risk.task_ids || []) as string[]).slice(0, 6).join("·")}{((risk.task_ids || []) as string[]).length > 6 ? " 외" : ""}</small>
@@ -169,7 +174,7 @@ export function RiskRegister({ risks, busy, onStatus }: { risks: Dict[]; busy: b
             <label>메모<input value={note} onChange={(event) => setNote(event.target.value)} placeholder="예: 대응안 확정으로 종결" /></label>
             <button className="secondary" disabled={busy} onClick={() => { onStatus(riskId, status, note); setEditing(""); setNote(""); }}>상태 기록</button>
           </div> : <button className="text-button" onClick={() => { setEditing(riskId); setStatus(text(risk.status) === "CLOSED" ? "RESPONDING" : "CLOSED"); }}>사람이 상태 바꾸기</button>}
-        </details>
+        </details></details>
       </li>;
     })}</ul>
   </section>;
@@ -204,7 +209,7 @@ export function TriagePanel({ triage, taskNames, risks, picked = [], onPick }: {
     {status !== "interpreted" && status !== "ai_running" && ruleCandidates.length > 0 && <div className="triage-rule-candidates"><b>규칙으로 찾은 후보 {ruleCandidates.length}건</b><ul>{ruleCandidates.map(row)}</ul></div>}
     {status === "interpreted" && <>
       <div className="triage-buckets">
-        <div><b>관련 있음 {related.length}</b>{related.length ? <ul>{related.map(row)}</ul> : <small className="muted">없음</small>}</div>
+        <div><b>관련 있음 {related.length}</b>{related.length ? <details><summary>선별한 작업과 이유 보기</summary><ul>{related.map(row)}</ul></details> : <small className="muted">없음</small>}</div>
         <div><b>확인 필요 {check.length}</b>{check.length ? <>
           <small className="muted">조사는 '관련 있음'만 계산합니다. 여기서 고른 작업만 함께 계산합니다.</small>
           <ul>{check.map((item) => onPick ? <li key={text(item.task_id)} className="pickable"><label>
