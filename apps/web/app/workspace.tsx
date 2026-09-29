@@ -678,7 +678,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const projectData = project.project || {};
   const storedProjectName = text(projectData.name, loaded ? "이름 없는 프로젝트" : "불러오는 중");
   // Keep previously-created representative fixtures understandable after the demo name changed.
-  const projectName = storedProjectName === "52일 숨은 위험 데모" ? "헝가리 배터리 공장 건설" : storedProjectName;
+  const projectName = storedProjectName === "52일 숨은 위험 데모" || storedProjectName === "헝가리 배터리 공장 건설" ? "배터리 공장 건설" : storedProjectName;
   const isHero = Boolean(projectData.hero_fixture_id);
   const taskStarts = tasks.map((task) => taskDates(task).start).filter(Boolean).sort();
   const taskFinishes = tasks.map((task) => taskDates(task).finish).filter(Boolean).sort();

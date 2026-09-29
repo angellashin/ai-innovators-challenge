@@ -393,7 +393,7 @@ async def ensure_hero_project() -> dict[str, Any]:
     if not project:
         profile = ProjectInput(
             project_id=HERO_PROJECT_ID,
-            name="헝가리 배터리 공장 건설",
+            name="배터리 공장 건설",
             mode="REPLAY",
             region="헝가리 데브레첸",
         ).model_dump(mode="json")

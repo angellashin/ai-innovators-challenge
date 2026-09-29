@@ -111,7 +111,7 @@ def test_representative_demo_is_a_single_stable_project(client):
     assert second["created"] is False and second["baseline_created"] is False
     projects = request(client, "get", "/api/projects")["projects"]
     assert [(row["id"], row["name"], row["mode"]) for row in projects] == [
-        ("HERO-BAT-HU-001", "헝가리 배터리 공장 건설", "REPLAY")]
+        ("HERO-BAT-HU-001", "배터리 공장 건설", "REPLAY")]
 
 
 def test_project_can_be_archived_and_restored_without_deleting_history(client):

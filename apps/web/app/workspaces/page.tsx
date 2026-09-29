@@ -15,7 +15,7 @@ function text(value: unknown, fallback = "-") {
 
 function projectName(value: unknown) {
   const name = text(value, "이름 없는 프로젝트");
-  return name === "52일 숨은 위험 데모" ? "헝가리 배터리 공장 건설" : name;
+  return name === "52일 숨은 위험 데모" || name === "헝가리 배터리 공장 건설" ? "배터리 공장 건설" : name;
 }
 
 function friendlyError(value: string) {

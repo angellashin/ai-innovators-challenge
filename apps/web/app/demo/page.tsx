@@ -57,7 +57,7 @@ export default function DemoEntryPage() {
       <section className="entry-card demo-entry-card">
         <p className="eyebrow"><span className="flow-indicator" aria-hidden="true" /> REPLAN 대표 사례</p>
         <h1>하나의 프로젝트 안에서,<br />숨은 리스크까지 검토하세요.</h1>
-        <p>헝가리 배터리 공장 건설 프로젝트를 예시로, 기준 일정 연결부터 외부 리스크 검토와 대응안 승인까지의 흐름을 살펴봅니다.</p>
+        <p>배터리 공장 건설 프로젝트를 예시로, 기준 일정 연결부터 외부 리스크 검토와 대응안 승인까지의 흐름을 살펴봅니다.</p>
         <div className="demo-comparison" aria-label="대표 사례의 분석 결과">
           <div><span>기준 일정</span><strong>1개</strong><small>공장 건설 전체 작업을 연결</small></div>
           <div><span>리스크 검토</span><strong>3종</strong><small>협력사·외부 출처·일정 영향</small></div>

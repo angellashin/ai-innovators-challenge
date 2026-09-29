@@ -96,7 +96,7 @@ export default function LandingPage() {
       <section className="landing-product-story" id="use-case">
         <div className="landing-story-copy">
           <div className="landing-section-label"><span>03</span> 대표 사례</div>
-          <p className="landing-overline">헝가리 배터리 공장 건설</p>
+          <p className="landing-overline">배터리 공장 건설</p>
           <h2>리스크를 발견하고<br />대응을 결정합니다.</h2>
           <p>기준 일정에 외부 신호를 연결하면, 현재 일정으로 흡수되는 영향과 추가 확인이 필요한 작업을 구분해 보여줍니다.</p>
           <Link className="landing-inline-link" href="/demo">사례 직접 살펴보기 <span aria-hidden="true">↗</span></Link>
