@@ -47,7 +47,7 @@ export function ExternalWatch({ plan, tasks, disabled, onSave, onScan, feed = []
       <b>감시 피드에서 들어온 신호 {feed.length}건</b>
       <ul>{feed.map((row) => <li key={row.id}>
         <span className={`status-chip${row.related ? "" : " warn"}`}>{row.related ? "관련 있음" : "검토 필요"}</span> {row.title}
-        <small>{row.source}{row.synthetic ? " · 대표 사례" : ""} · 발행 {row.published} · {row.related || "연결된 협력사 통보 없음 · 리스크 검토에서 확인"}</small>
+        <small>{row.source} · 발행 {row.published} · {row.related || "연결된 작업은 리스크 검토에서 확인"}</small>
         {row.triage && <small>{row.triage}</small>}
       </li>)}</ul>
     </div>}

@@ -13,14 +13,17 @@ export function ScheduleComparison({projectId, scenarioId, versionId}: {projectI
     const controller = new AbortController();
     setData(null); setError(false);
     const query = new URLSearchParams();
-    if (scenarioId) query.set("scenario_id", scenarioId);
+    // A committed version is the source of truth. Its server-side metadata already
+    // identifies the approved scenario, so an older client-side selection must not
+    // override it after a refresh or when the user opens the Schedule page later.
+    if (scenarioId && !versionId) query.set("scenario_id", scenarioId);
     if (versionId) query.set("version_id", versionId);
-    fetch(`/api/proxy/projects/${projectId}/schedule-comparison?${query}`, {signal: controller.signal})
+    fetch(`/api/proxy/api/projects/${projectId}/schedule-comparison?${query}`, {signal: controller.signal})
       .then(async response => {if (!response.ok) throw Error(); return response.json();})
       .then(setData).catch(error => {if (error.name !== "AbortError") setError(true);});
     return () => controller.abort();
   }, [projectId, scenarioId, versionId]);
-  if (error) return <p role="alert">일정 비교를 불러오지 못했습니다. 화면을 새로고침해 주세요.</p>;
+  if (error) return <p role="alert">일정 비교를 불러오지 못했습니다. 잠시 후 다시 시도하거나 연결 상태를 확인하세요.</p>;
   if (!data) return <p role="status">원본과 계산된 일정을 비교하고 있습니다…</p>;
   const changed = data.rows.filter(row => row.changed);
   const rows = all || !changed.length ? data.rows : changed;

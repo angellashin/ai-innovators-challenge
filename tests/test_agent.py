@@ -314,7 +314,6 @@ def test_draft_numbers_and_post_notice_regulatory_evidence_are_filtered():
         ChatResult(content=json.dumps({"action": "tool", "tool": "search_risk_signals", "args": {}})),
         ChatResult(content=json.dumps({
             "status": "completed", "summary": "검토 완료",
-            "email_draft": {"subject": "협의 초안", "body": "완료일 2026-12-28, 추가 9일과 999원 검토"},
             "regulatory_assessment": {"likelihood": "높음", "reason": "규정 사례 참고",
                                       "human_check": "적용 조항 확인", "evidence_risk_ids": ["RS-FUTURE"]},
         }, ensure_ascii=False)),
@@ -330,9 +329,7 @@ def test_draft_numbers_and_post_notice_regulatory_evidence_are_filtered():
                        {"published_at": "2025-08-21", "content": "규정 적용 여부는 확인되지 않았습니다.",
                         "patch": {"estimated_finish": {"T01": "2026-12-28"}}},
                        {"simulate_schedule": simulate_schedule, "search_risk_signals": search_risk_signals})
-    assert "2026-12-28" in result["email_draft"]["body"]
-    assert "9일" in result["email_draft"]["body"]
-    assert "999" not in result["email_draft"]["body"]
+    assert "email_draft" not in result
     assert result["regulatory_assessment"]["likelihood"] == "불확실"
     assert result["regulatory_assessment"]["evidence_risk_ids"] == []
     assert result["regulatory_assessment"]["reference_only_risk_ids"] == ["RS-FUTURE"]
@@ -455,7 +452,6 @@ def test_audit_output_shapes_are_normalized_for_the_screen():
         "regulatory_assessment": {"status": "NEEDS_INPUT", "applicability": "UNCONFIRMED",
                                   "assessment": "규정의 실제 적용 여부가 확인되지 않았습니다.",
                                   "missing_inputs": ["적용 조항", "규정 적용일"]},
-        "email_draft": {"subject": "2028년 완료일 확인 요청", "body": "다음을 부탁드립니다.\n1. 적용 조항\n2. 설계 변경 범위 (3) 일정"},
         "unresolved_items": [{"question": "규정 적용 여부"}],
     }, ensure_ascii=False))])
     scenarios = [{"option_ids": [], "finish_date": "2028-01-25", "target_met": False},
@@ -476,6 +472,5 @@ def test_audit_output_shapes_are_normalized_for_the_screen():
     assert assessment["likelihood"] == "불확실"
     assert assessment["reason"] == "규정의 실제 적용 여부가 확인되지 않았습니다."
     assert assessment["human_check"] == "적용 조항 · 규정 적용일"
-    assert result["email_draft"]["subject"] == "2028년 완료일 확인 요청"
-    assert "1. 적용 조항" in result["email_draft"]["body"] and "(3) 일정" in result["email_draft"]["body"]
+    assert "email_draft" not in result
     assert result["unresolved_items"] == ["규정 적용 여부"]

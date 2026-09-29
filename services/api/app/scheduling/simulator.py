@@ -77,10 +77,7 @@ def simulate(
         return {
             "finish_date": None,
             "schedule": [],
-            "extra_cost_krw": 0,
             "target_met": False,
-            "budget_met": budget_krw is None or budget_krw >= 0,
-            "budget_status": "UNSET" if budget_krw is None else "SET",
             "conditional": [],
             "violations": validation_errors,
             "scenario_hash": _stable_hash({"errors": validation_errors}),
@@ -89,7 +86,6 @@ def simulate(
     task_map = {str(task["task_id"]): deepcopy(task) for task in tasks}
     conditional: list[str] = []
     violations: list[str] = []
-    extra_cost_krw = 0
     allow_earlier: set[str] = set()
     blocked_dates = _project_blocked_dates(project)
     scoped_blocked_dates: list[dict[str, Any]] = [
@@ -132,7 +128,6 @@ def simulate(
             violations.append(f"{option_id or 'option'} unsupported operation: {operation or '<missing>'}")
             continue
 
-        extra_cost_krw += _int_value(option.get("extra_cost_krw"), default=0)
         condition = _option_condition(option)
         if condition:
             conditional.append(condition)
@@ -159,26 +154,18 @@ def simulate(
     finish = max(_parse_date(item["planned_finish"]) for item in schedule)
     target_finish = project.get("target_finish")
     target_met = True if target_finish is None else finish <= _parse_date(target_finish)
-    resolved_budget = budget_krw
-    budget_met = True if resolved_budget is None else extra_cost_krw <= int(resolved_budget)
-
     scenario = {
         "project_id": project.get("project_id"),
         "event_id": None if event is None else event.get("event_id"),
         "option_ids": [option.get("option_id") for option in options or []],
         "finish_date": finish.isoformat(),
-        "extra_cost_krw": extra_cost_krw,
         "schedule": [(item["task_id"], item["planned_start"], item["planned_finish"]) for item in schedule],
     }
 
     return {
         "finish_date": finish.isoformat(),
         "schedule": schedule,
-        "extra_cost_krw": extra_cost_krw,
         "target_met": target_met,
-        "budget_met": budget_met,
-        "budget_status": "UNSET" if resolved_budget is None else "WITHIN_LIMIT" if budget_met else "OVER_LIMIT",
-        "budget_limit_krw": resolved_budget,
         "conditional": conditional,
         "violations": violations,
         "scenario_hash": _stable_hash(scenario),

@@ -130,7 +130,7 @@ export default function LandingPage() {
 
       <section className="landing-principles">
         <article><span>01</span><h3>근거 확인</h3><p>어떤 통보와 공지를 연결했는지 확인할 수 있습니다.</p></article>
-        <article><span>02</span><h3>일정 계산</h3><p>날짜와 비용은 계산기로 산출합니다.</p></article>
+        <article><span>02</span><h3>일정 계산</h3><p>날짜와 선후행 관계를 기준으로 영향을 계산합니다.</p></article>
         <article><span>03</span><h3>사람의 결정</h3><p>확인과 승인 전에는 일정을 바꾸지 않습니다.</p></article>
       </section>
 

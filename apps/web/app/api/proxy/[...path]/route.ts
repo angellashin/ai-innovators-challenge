@@ -12,7 +12,13 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   const headers = new Headers(request.headers);
   hopByHopHeaders.forEach((header) => headers.delete(header));
   const token = process.env.REPLAN_DEMO_TOKEN;
-  if (token) headers.set("authorization", `Bearer ${token}`);
+  const cookieHeader = request.headers.get("cookie") || "";
+  const session = request.cookies.get("replan_session")?.value
+    || cookieHeader.match(/(?:^|;\s*)replan_session=([^;]+)/)?.[1];
+  if (session && !headers.get("authorization")) headers.set("authorization", `Bearer ${session}`);
+  // Unauthenticated demo traffic uses the server demo token; logged-in users
+  // keep their own bearer token so project ownership is enforced by the API.
+  if (!headers.get("authorization") && token) headers.set("authorization", `Bearer ${token}`);
 
   const init: RequestInit = { method: request.method, headers, redirect: "manual" };
   if (request.method !== "GET" && request.method !== "HEAD") init.body = await request.arrayBuffer();

@@ -1,9 +1,10 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { authToken, withAuth } from "../../auth-client";
 
 function friendlyError(value: string) {
   try {
@@ -28,6 +29,10 @@ export default function NewWorkspacePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    if (!authToken()) router.replace(`/auth?next=${encodeURIComponent("/workspaces/new")}`);
+  }, [router]);
+
   async function createProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!name.trim()) {
@@ -38,11 +43,11 @@ export default function NewWorkspacePage() {
     setBusy(true);
     setError("");
     try {
-      const response = await fetch("/api/proxy/api/projects", {
+      const response = await fetch("/api/proxy/api/projects", withAuth({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name.trim(), mode: "LIVE" }),
-      });
+      }));
       if (!response.ok) throw new Error(await response.text());
       const value = await response.json() as { project_id: string };
       sessionStorage.setItem("replan.projectId", value.project_id);

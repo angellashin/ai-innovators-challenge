@@ -35,7 +35,7 @@ def evaluate(workbook_path: Path = DEFAULT_WORKBOOK) -> dict:
         ("OPT-02", "OPT-03"): "2026-10-27",
     }
     cases = []
-    baseline = simulate(project, tasks, budget_krw=3_000_000)
+    baseline = simulate(project, tasks)
     cases.append({"case": "baseline", "expected_finish": "2026-10-27", "actual_finish": baseline["finish_date"], "pass": baseline["finish_date"] == "2026-10-27"})
     events = {row["event_id"]: row for row in parsed["events"]}
     for event_id in ("E01", "E02", "E03", "E04", "E05"):
@@ -46,10 +46,10 @@ def evaluate(workbook_path: Path = DEFAULT_WORKBOOK) -> dict:
             for option_ids, finish in expected.items():
                 selected = [item for item in options if item["option_id"] in option_ids]
                 started = time.perf_counter()
-                result = simulate(project, tasks, event=event, options=selected, budget_krw=3_000_000)
-                cases.append({"case": "E01:" + ("+".join(option_ids) or "none"), "expected_finish": finish, "actual_finish": result["finish_date"], "cost_krw": result["extra_cost_krw"], "budget_met": result["budget_met"], "elapsed_ms": round((time.perf_counter() - started) * 1000, 2), "pass": result["finish_date"] == finish})
-            result_6m = simulate(project, tasks, event=event, options=[item for item in options if item["option_id"] == "OPT-03"], budget_krw=6_000_000)
-            cases.append({"case": "E01:OPT-03:6m", "pass": result_6m["finish_date"] == "2026-10-28" and result_6m["budget_met"]})
+                result = simulate(project, tasks, event=event, options=selected)
+                cases.append({"case": "E01:" + ("+".join(option_ids) or "none"), "expected_finish": finish, "actual_finish": result["finish_date"], "target_met": result["target_met"], "elapsed_ms": round((time.perf_counter() - started) * 1000, 2), "pass": result["finish_date"] == finish})
+            result_target = simulate(project, tasks, event=event, options=[item for item in options if item["option_id"] == "OPT-03"])
+            cases.append({"case": "E01:OPT-03:target", "pass": result_target["finish_date"] == "2026-10-28" and result_target["target_met"]})
         if event_id == "E02":
             cases.append({"case": "E02:scope", "pass": set(event["patch"].get("blocked_dates", {})) == {"T11"}})
         if event_id == "E04":

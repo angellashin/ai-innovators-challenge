@@ -19,13 +19,16 @@ DEMO = Path(__file__).resolve().parents[1] / "REPLAN_demo_inputs.xlsx"
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("REPLAN_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("REPLAN_DEMO_TOKEN", "test-token")
+    monkeypatch.setenv("REPLAN_DEMO_TOKEN", "demo-token")
     monkeypatch.delenv("API_KEY", raising=False)
-    return TestClient(app)
+    result = TestClient(app)
+    registered = result.post("/api/auth/register", json={"username": "api_user", "password": "StrongPass123!"})
+    assert registered.status_code == 200, registered.text
+    return result
 
 
 def request(client, method, path, **kwargs):
-    response = getattr(client, method)(path, headers={"Authorization": "Bearer test-token"}, **kwargs)
+    response = getattr(client, method)(path, **kwargs)
     assert response.status_code < 400, response.text
     return response.json()
 
@@ -45,7 +48,6 @@ def test_original_upload_is_preserved(client):
     assert preview["_upload"]["sha256"] == hashlib.sha256(content).hexdigest()
     response = client.get(
         f"/api/projects/{project_id}/imports/{preview['import_id']}/original",
-        headers={"Authorization": "Bearer test-token"},
     )
     assert response.status_code == 200 and response.content == content
 
@@ -54,7 +56,6 @@ def test_watch_plan_rejects_unapproved_source_host(client):
     project_id = request(client, "post", "/api/projects", json={"mode": "LIVE"})["project_id"]
     response = client.put(
         f"/api/projects/{project_id}/watch-plan",
-        headers={"Authorization": "Bearer test-token"},
         json={"enabled": True, "source_allowlist": ["https://127.0.0.1/private"]},
     )
     assert response.status_code == 422
@@ -68,7 +69,6 @@ def test_analysis_requires_review_for_inferred_change(client):
     )
     response = client.post(
         f"/api/projects/{project_id}/analyses",
-        headers={"Authorization": "Bearer test-token"},
         json={"event_id": event["event_id"]},
     )
     assert response.status_code == 409
@@ -90,7 +90,7 @@ def e01(client, project_id, preview):
     return event["event_id"]
 
 
-def test_e01_budget_replan_approval_commit_and_export(client):
+def test_e01_schedule_recovery_approval_commit_and_export(client):
     project_id, preview, baseline_version = baseline(client)
     event_id = e01(client, project_id, preview)
     queued = request(client, "post", f"/api/projects/{project_id}/analyses", json={"event_id": event_id})
@@ -99,40 +99,29 @@ def test_e01_budget_replan_approval_commit_and_export(client):
     assert result["run"]["status"] == "succeeded"
     assert result["run"]["data"]["agent_status"] == "llm_unavailable"
     scenarios = {tuple(item["data"]["option_ids"]): item for item in result["scenarios"]}
-    assert scenarios[()]["data"]["budget_status"] == "UNSET"
     assert scenarios[()]["data"]["finish_date"] == "2026-10-30"
     assert scenarios[("OPT-02",)]["data"]["finish_date"] == "2026-10-29"
     assert scenarios[("OPT-03",)]["data"]["finish_date"] == "2026-10-28"
 
-    bounded_run = request(client, "post", f"/api/runs/{queued['run_id']}/replan", json={"budget_krw": 3_000_000})
-    assert run_once(Store())
-    bounded = request(client, "get", f"/api/runs/{bounded_run['run_id']}")
-    bounded_scenarios = {tuple(item["data"]["option_ids"]): item for item in bounded["scenarios"]}
-    assert not bounded_scenarios[("OPT-03",)]["data"]["budget_met"]
-    assert not any(item["data"]["target_met"] and item["data"]["budget_met"] for item in bounded["scenarios"])
-
-    new_run = request(client, "post", f"/api/runs/{queued['run_id']}/replan", json={"budget_krw": 6000000})
-    assert run_once(Store())
-    updated = request(client, "get", f"/api/runs/{new_run['run_id']}")
-    option = next(item for item in updated["scenarios"] if item["data"]["option_ids"] == ["OPT-03"])
-    assert option["data"]["budget_met"] and option["data"]["target_met"]
+    option = next(item for item in result["scenarios"] if item["data"]["option_ids"] == ["OPT-03"])
+    assert option["data"]["target_met"]
     scenario_id = option["id"]
 
-    unapproved = client.post(f"/api/scenarios/{scenario_id}/commit", headers={"Authorization": "Bearer test-token"})
+    unapproved = client.post(f"/api/scenarios/{scenario_id}/commit")
     assert unapproved.status_code == 409
     prepared = request(client, "post", f"/api/scenarios/{scenario_id}/prepare")
     assert len(prepared["actions"]) == 1
     assert prepared["actions"][0]["data"]["due_at"] == "2026-09-11"
     assert prepared["actions"][0]["data"]["owner"] == "프로젝트 운영팀"
     pending = client.post(
-        f"/api/scenarios/{scenario_id}/approve", headers={"Authorization": "Bearer test-token"},
+        f"/api/scenarios/{scenario_id}/approve",
         json={"actor": "프로젝트 운영팀", "confirmed_conditions": option["data"]["required_confirmations"]},
     )
     assert pending.status_code == 409
     request(client, "patch", f"/api/actions/{prepared['actions'][0]['id']}", json={"state": "ACCEPTED"})
     request(client, "post", f"/api/scenarios/{scenario_id}/approve", json={"actor": "프로젝트 운영팀", "confirmed_conditions": option["data"]["required_confirmations"]})
     request(client, "patch", f"/api/actions/{prepared['actions'][0]['id']}", json={"state": "REJECTED"})
-    revoked = client.post(f"/api/scenarios/{scenario_id}/commit", headers={"Authorization": "Bearer test-token"})
+    revoked = client.post(f"/api/scenarios/{scenario_id}/commit")
     assert revoked.status_code == 409
     request(client, "patch", f"/api/actions/{prepared['actions'][0]['id']}", json={"state": "ACCEPTED"})
     committed = request(client, "post", f"/api/scenarios/{scenario_id}/commit")
@@ -144,9 +133,9 @@ def test_e01_budget_replan_approval_commit_and_export(client):
     assert state["versions"][0]["scenario_id"] == scenario_id
     assert state["versions"][0]["parent_id"] == baseline_version["version_id"]
     assert [(item["scenario_id"], item["event_id"], item["run_id"]) for item in state["approvals"]] == [
-        (scenario_id, event_id, new_run["run_id"])]
+        (scenario_id, event_id, queued["run_id"])]
 
-    response = client.get(f"/api/projects/{project_id}/export?version_id={committed['version_id']}", headers={"Authorization": "Bearer test-token"})
+    response = client.get(f"/api/projects/{project_id}/export?version_id={committed['version_id']}")
     assert response.status_code == 200
     book = load_workbook(io.BytesIO(response.content), read_only=True)
     assert book.active["D1"].value == committed["version_hash"]
@@ -185,7 +174,7 @@ def test_duplicate_event_and_stale_scenario(client):
     event_id = e01(client, project_id, preview)
     repeated = request(client, "post", f"/api/projects/{project_id}/events", json={"event_id": "E01", "content": preview["events"][0]["body"], "mode": "REPLAY", "data_origin": "SYNTHETIC", "simulation_as_of": "2026-09-23T09:00:00+02:00"})
     assert repeated["duplicate"] and repeated["event_id"] == event_id
-    queued = request(client, "post", f"/api/projects/{project_id}/analyses", json={"event_id": event_id, "budget_krw": 6000000})
+    queued = request(client, "post", f"/api/projects/{project_id}/analyses", json={"event_id": event_id})
     assert run_once(Store())
     scenarios = request(client, "get", f"/api/runs/{queued['run_id']}")["scenarios"]
     first = next(item for item in scenarios if item["data"]["option_ids"] == ["OPT-03"])
@@ -196,7 +185,7 @@ def test_duplicate_event_and_stale_scenario(client):
             request(client, "patch", f"/api/actions/{action['id']}", json={"state": "ACCEPTED"})
         request(client, "post", f"/api/scenarios/{item['id']}/approve", json={"actor": "프로젝트 운영팀", "confirmed_conditions": item["data"]["required_confirmations"]})
     request(client, "post", f"/api/scenarios/{first['id']}/commit")
-    conflict = client.post(f"/api/scenarios/{second['id']}/commit", headers={"Authorization": "Bearer test-token"})
+    conflict = client.post(f"/api/scenarios/{second['id']}/commit")
     assert conflict.status_code == 409
 
 
@@ -214,8 +203,8 @@ def test_revised_excel_requires_diff_confirmation(client):
     assert "T03" in confirmed["event"]["related_task_ids"]
 
 
-def test_demo_auth_required(client):
-    assert client.get("/api/projects").status_code == 401
+def test_demo_token_is_read_only(client):
+    assert client.post("/api/projects", headers={"Authorization": "Bearer demo-token"}, json={"mode": "LIVE"}).status_code == 401
 
 
 def test_p1_document_mail_notifications_and_site_prep(client):
@@ -237,8 +226,8 @@ def test_p1_document_mail_notifications_and_site_prep(client):
     assert len(request(client, "get", f"/api/projects/{project_id}/documents")["documents"]) == 1
     notifications = request(client, "get", f"/api/projects/{project_id}/notifications")
     assert notifications["notifications"]
-    channel = request(client, "post", f"/api/projects/{project_id}/notification-channels", json={"channel": "email", "target": "ops@example.com"})
-    assert channel["channel"]["delivery_mode"] == "DRAFT"
+    channel = request(client, "post", f"/api/projects/{project_id}/notification-channels", json={"channel": "in_app", "target": "project"})
+    assert channel["channel"]["delivery_mode"] == "ACTIVE"
     prep = request(client, "post", f"/api/projects/{project_id}/site-prep", json={})
     assert len(prep["items"]) == 4
     assert request(client, "get", f"/api/projects/{project_id}/documents")["documents"]
@@ -259,7 +248,6 @@ def test_p1_rejects_malformed_pdf(client):
     project_id, _, _ = baseline(client)
     response = client.post(
         f"/api/projects/{project_id}/documents",
-        headers={"Authorization": "Bearer test-token"},
         files={"file": ("malformed.pdf", b"%PDF-1.7\nnot-a-valid-pdf")},
     )
     assert response.status_code == 202
@@ -268,7 +256,6 @@ def test_p1_rejects_malformed_pdf(client):
     assert run_once(Store())
     processed = client.get(
         f"/api/projects/{project_id}/documents/{uploaded['document_id']}",
-        headers={"Authorization": "Bearer test-token"},
     )
     assert processed.status_code == 200
     assert processed.json()["document"]["data"]["status"] == "FAILED"

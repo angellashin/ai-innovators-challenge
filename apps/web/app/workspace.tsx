@@ -6,6 +6,7 @@ import { ScheduleComparison } from "./schedule-comparison";
 import { ExternalWatch, EvidenceReview } from "./external-watch";
 import { Inbox, InboxMessage, demoInbox, toEventPayload } from "./inbox";
 import { BriefingPanel, RiskLinkNote, RiskRegister, TriagePanel } from "./risk-panels";
+import { withAuth } from "./auth-client";
 import { SectionId, deriveProgress, hasPatch, isFeedSignal, isPreview, linkedSignalIds, runScenarioCount, sectionFromHash, stageSummary, watchStarted } from "./stages";
 
 type Dict = Record<string, unknown>;
@@ -68,15 +69,6 @@ function text(value: unknown, fallback = "-") {
   return String(value).replace(/\[합성\]\s*/g, "");
 }
 
-function money(value: unknown) {
-  const amount = Number(value || 0);
-  return `${amount.toLocaleString("ko-KR")}원`;
-}
-
-function costLabel(data: Dict) {
-  return data.extra_cost_krw === null || data.extra_cost_krw === undefined ? "비용 미정" : money(data.extra_cost_krw);
-}
-
 function shortId(value: unknown, fallback = "-") {
   const raw = text(value, fallback);
   return raw.length > 10 ? raw.slice(0, 8) : raw;
@@ -95,13 +87,11 @@ function taskDates(task: Dict) {
 }
 
 function scenarioScore(data: Dict) {
-  if (data.budget_status === "UNSET") return data.target_met ? "조건부" : "목표일 미달";
-  if (data.target_met && data.budget_met && Array.isArray(data.violations) && data.violations.length === 0) {
+  if (data.target_met && Array.isArray(data.violations) && data.violations.length === 0) {
     if (Array.isArray(data.required_confirmations) && data.required_confirmations.length > 0) return "조건부";
     return "실행 후보";
   }
-  if (!data.target_met && data.budget_met) return "목표일 미달";
-  if (data.target_met && !data.budget_met) return "예산 초과";
+  if (!data.target_met) return "목표일 미달";
   return "제약 확인";
 }
 
@@ -124,7 +114,7 @@ function friendly(error: ApiError): Feedback {
     [/prepare actions before (approval|commit)/, "먼저 '확인 요청 만들기'로 이 대응안의 조건 확인 요청을 만드세요."],
     [/approval required/, "대응안을 승인한 뒤에 새 일정 버전을 확정할 수 있습니다."],
     [/unconfirmed_conditions|unaccepted_conditions|required conditions are no longer accepted/, "확인 기록이 없는 조건이 있습니다. 각 조건의 회신·확인 근거를 기록하세요."],
-    [/violates hard constraints/, "이 대응안은 예산 또는 제약 조건을 넘어 승인할 수 없습니다. 다른 안을 고르거나 비용 한도를 조정하세요."],
+    [/violates hard constraints/, "이 대응안은 일정 제약 조건을 넘어 승인할 수 없습니다. 다른 안을 고르거나 조건을 확인하세요."],
     [/a baseline already exists/, "이미 기준 일정이 연결되어 있습니다."],
     [/confirm a baseline first/, "먼저 일정 단계에서 기준 일정을 연결하세요."],
     [/review the proposed change/, "리스크 해석을 먼저 확인해야 영향 분석을 시작할 수 있습니다."],
@@ -155,7 +145,6 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const [changePreview, setChangePreview] = useState<ImportPreview | null>(null);
   const [documentFile, setDocumentFile] = useState<File | null>(null);
   const [documentStatus, setDocumentStatus] = useState<Dict | null>(null);
-  const [mailForm, setMailForm] = useState({ provider: "imap", host: "", username: "", folder: "INBOX" });
   const [feedForm, setFeedForm] = useState({ label: "환경 정책 RSS", url: "https://environment.ec.europa.eu/news_en", kind: "rss" });
   const [supplierForm, setSupplierForm] = useState({ supplier_id: "", label: "", unavailable_dates: "", timezone: "Asia/Seoul" });
   const [channelForm, setChannelForm] = useState({ channel: "in_app", label: "REPLAN 인앱 알림", target: "" });
@@ -166,7 +155,6 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const [conditionNotes, setConditionNotes] = useState<Record<string, string>>({});
   const [manualMessage, setManualMessage] = useState("");
   const [selectedMessageId, setSelectedMessageId] = useState("");
-  const [budget, setBudget] = useState<number | "">("");
   const [notice, setNotice] = useState("프로젝트 정보를 불러오는 중입니다.");
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -209,8 +197,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   }, [projectId]);
 
   async function callApi<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const headers = new Headers(init.headers);
-    const response = await fetch(`${apiBase}${path}`, { ...init, headers });
+    const response = await fetch(`${apiBase}${path}`, withAuth(init));
     if (!response.ok) {
       let message = response.statusText;
       const rawBody = await response.text();
@@ -266,7 +253,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       return;
     }
     if (result.scenarios?.length) {
-      setNotice(awaited.kind === "replan" ? "비용 한도를 반영한 대응안을 표시했습니다." : "분석이 끝났습니다. 대응안을 비교하고 승인할 안을 고르세요.");
+      setNotice("분석이 끝났습니다. 대응안을 비교하고 승인할 안을 고르세요.");
       if (awaited.kind === "analysis" && sectionRef.current === "changes") go("scenarios");
     } else {
       setNotice(text(result.run?.data?.summary, "분석이 멈췄습니다. 리스크 검토에서 작업과 날짜를 확인하세요."));
@@ -321,7 +308,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   async function loadHeroBaseline() {
     await guarded("hero 데모 기준 일정 연결", () => callApi<Dict>(`/api/projects/${projectId}/demo/hero-baseline`, { method: "POST" }), async () => {
       await refresh();
-      setNotice("기준 일정을 연결했습니다. 사전 에이전트가 위험을 브리핑하면 이 화면에 표시됩니다. 확인한 뒤 리스크 검토로 넘어가세요.");
+      setNotice("기준 일정을 연결했습니다. 일정 사전 점검 결과를 확인한 뒤 리스크 검토로 넘어가세요.");
     });
   }
 
@@ -563,23 +550,6 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     () => setNotice("등록한 출처를 확인하고 있습니다. 새 근거는 변경 카드로 추가됩니다."));
   }
 
-  // ---- 4 COMPARE / 5 APPROVE -----------------------------------------
-  async function replan() {
-    const runId = text(run?.run?.id, "");
-    if (!runId || budget === "") return;
-    const queued = await guarded("비용 한도 반영", () =>
-      callApi<{ run_id: string }>(`/api/runs/${runId}/replan`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ budget_krw: budget, unavailable_option_ids: [] }),
-      }));
-    if (!queued) return;
-    awaitingRef.current = { runId: queued.run_id, kind: "replan" };
-    setViewRunId(queued.run_id);
-    viewRunRef.current = queued.run_id;
-    setNotice("비용 한도를 반영해 다시 계산하고 있습니다.");
-    await refresh();
-  }
-
   async function prepareScenario(scenarioId: string) {
     await guarded("확인 요청 만들기", () => callApi<Dict>(`/api/scenarios/${scenarioId}/prepare`, { method: "POST" }), async () => {
       await refresh();
@@ -632,13 +602,6 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   }
 
   // ---- Advanced settings ---------------------------------------------
-  async function saveMailAccount(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    await guarded("메일 연결 정보 저장", () => callApi<Dict>(`/api/projects/${projectId}/mail-account`, {
-      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...mailForm, enabled: true }),
-    }), async () => { await refresh(); setNotice("메일 연결 정보만 저장했습니다. 자동 수신은 연결되어 있지 않습니다."); });
-  }
-
   async function savePublicFeed(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await guarded("공개 피드 등록", () => callApi<Dict>(`/api/projects/${projectId}/public-feeds`, {
@@ -705,6 +668,9 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   // Keep previously-created representative fixtures understandable after the demo name changed.
   const projectName = storedProjectName === "52일 숨은 위험 데모" || storedProjectName === "헝가리 배터리 공장 건설" ? "배터리 공장 건설" : storedProjectName;
   const isHero = Boolean(projectData.hero_fixture_id);
+  // The demo keeps its geographic data internally for risk retrieval, but the
+  // workspace should describe the scenario without presenting it as a real site.
+  const projectSite = isHero ? "해외 생산 거점" : text(projectData.region || projectData.site_region, "현장 미설정");
   const taskStarts = tasks.map((task) => taskDates(task).start).filter(Boolean).sort();
   const taskFinishes = tasks.map((task) => taskDates(task).finish).filter(Boolean).sort();
   const projectPeriod = taskStarts.length && taskFinishes.length ? `${taskStarts[0]} – ${taskFinishes[taskFinishes.length - 1]}` : "기간 미설정";
@@ -739,8 +705,8 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     const owner = Object.entries(project.related_signals || {}).find(([, rows]) => rows.some((row) => row.event_id === event.id && ((row.reason_terms || []) as unknown[]).length));
     const ownerEvent = owner ? events.find((item) => item.id === owner[0]) : undefined;
     return { id: text(event.id), title: text(event.data?.title, "외부 신호"), published: text(event.data?.published_at || event.created_at, "").slice(0, 10),
-      source: text(event.data?.source_label, ""), synthetic: event.data?.data_origin === "SYNTHETIC",
-      related: ownerEvent ? `${text(ownerEvent.data?.source_label, "협력사")} 통보와 같은 작업·같은 사유 → 그 통보 카드의 '관련 외부 신호'에 표시` : "",
+    source: text(event.data?.source_label, ""), synthetic: event.data?.data_origin === "SYNTHETIC",
+      related: ownerEvent ? `${text(ownerEvent.data?.source_label, "입력")}과 같은 작업·같은 사유로 연결됨` : "",
       triage: triageLine(event.data?.auto_narrow as Dict | undefined) };
   });
 
@@ -766,7 +732,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           <span>프로젝트 정보</span>
           <dl className="context-list">
             <div><dt>프로젝트</dt><dd>{projectName}</dd></div>
-            <div><dt>현장</dt><dd>{text(projectData.region || projectData.site_region, "기준 일정 연결 후 표시")}</dd></div>
+            <div><dt>현장</dt><dd>{projectSite === "현장 미설정" ? "기준 일정 연결 후 표시" : projectSite}</dd></div>
             <div><dt>목표 완료일</dt><dd>{text(projectData.target_finish, "미설정")}</dd></div>
             <div><dt>기준 시점</dt><dd>{text(projectData.status_as_of, "미설정")}</dd></div>
             <div><dt>작업 수</dt><dd>{project.version ? `${tasks.length}개` : "-"}</dd></div>
@@ -825,16 +791,16 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           {isHero && <><button className={preview ? "secondary" : ""} onClick={loadHeroBaseline} disabled={busy}>대표 사례 일정 연결</button><span className="setup-or">또는</span></>}
           <label className="file-input-label">{selectedFile ? selectedFile.name : "Excel 파일 선택"}<input type="file" accept=".xlsx,.csv" aria-label="기준 일정 Excel" onChange={(event: ChangeEvent<HTMLInputElement>) => acceptScheduleFile(event.target.files?.[0])} /></label>
           <button className="secondary" onClick={() => uploadImport(selectedFile)} disabled={busy || !selectedFile}>업로드·미리보기</button>
-          <span className="schedule-drop-hint" aria-live="polite">{scheduleDropActive ? "여기에 놓으면 일정표를 분석합니다" : "Finder에서 일정표를 이 영역으로 끌어오거나 파일을 선택하세요"}</span>
+          <span className="schedule-drop-hint" aria-live="polite">{scheduleDropActive ? "여기에 놓으면 일정표를 분석합니다" : "드래그 혹은 업로드 하세요"}</span>
         </div>
       </div> : null}
       {preview && !project.version && importPreviewCard(preview, false)}
       {project.version ? <>
-        {progress.current === 2 && nextCallout("감시 시작", "watch", "기준 일정이 준비되었습니다. 감시 화면에서 등록 시 위험 브리핑을 확인하고 감시를 시작하세요.")}
+        {progress.current === 2 && nextCallout("리스크 탐색", "watch", "기준 일정이 준비되었습니다. 일정 사전 점검 결과를 확인하고 외부 리스크 확인을 시작하세요.")}
         {progress.current > 2 && !nextInThisSection && nextCallout(progress.next.label, progress.next.section, progress.next.detail)}
         <div className="schedule-board">
           <div className="board-meta"><div><span className="eyebrow">{project.version.status === "committed" ? "COMMITTED VERSION" : "BASELINE"}</span><h3>{project.version.status === "committed" ? "확정 버전" : "기준 버전"} {shortId(project.version.id)} · {tasks.length}개 작업</h3><p>기준 시점 {text(projectData.status_as_of, "미설정")} · 완료 {tasks.filter((task) => task.status === "completed").length} · 진행 중 {tasks.filter((task) => task.status === "in_progress").length} · 예정 {tasks.filter((task) => task.status === "planned").length}{visibleTaskNote ? ` · ${visibleTaskNote}` : ""}</p>{selectedScenario && <p className="board-overlay">색이 다른 막대: 선택한 대응안 '{text(selectedScenario.data?.label)}'의 변경 일정</p>}</div></div>
-          <ScheduleComparison projectId={projectId} scenarioId={selectedScenarioId || undefined} versionId={text(project.version?.id, "") || undefined} />
+          <ScheduleComparison projectId={projectId} versionId={text(project.version?.id, "") || undefined} />
         </div>
       </> : null}
     </section>
@@ -857,31 +823,31 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   );
   const watchView = (
     <section className="workspace-view" id="watch" aria-labelledby="watch-title">
-      <div className="view-heading"><div><p className="eyebrow">RISK DISCOVERY</p><h2 id="watch-title">리스크 탐색</h2><p>프로젝트에 맞는 외부 리스크 범위를 확인하고 탐색을 시작합니다. 워커가 모은 신호는 자동으로 분류하고, 영향 판단은 검토 화면에서 이어집니다.</p></div><span className="view-context">{started ? "탐색 중" : "탐색 전"}{feedEvents.length ? ` · 신호 ${feedEvents.length}건` : ""}</span></div>
+      <div className="view-heading"><div><p className="eyebrow">RISK DISCOVERY</p><h2 id="watch-title">리스크 탐색</h2><p>일정의 취약한 구간을 먼저 점검한 뒤, 관련 외부 정보를 계속 확인합니다. 검토가 필요한 항목만 다음 단계로 보냅니다.</p></div><span className="view-context">{started ? "감시 중" : "감시 시작 전"}{feedEvents.length ? ` · 새 항목 ${feedEvents.length}건` : ""}</span></div>
       {!project.version ? (loaded ? nextCallout("기준 일정 연결", "schedule", "브리핑과 감시에는 기준 일정이 필요합니다.") : null) : <>
         {isHero && <div className="watch-status-strip" role="status">
-          <div><span className="eyebrow">대표 사례 · 리스크 탐색</span><b>{started ? `외부 신호 ${feedEvents.length}건을 확인할 수 있습니다.` : "외부 리스크를 탐색할 준비가 되었습니다."}</b></div>
+          <div><span className="eyebrow">현재 상태</span><b>{started ? `외부 신호 ${feedEvents.length}건을 확인할 수 있습니다.` : "외부 리스크 탐색을 시작하세요."}</b></div>
           {!started ? <button onClick={startWatch} disabled={busy}>{busy ? "탐색 중…" : "탐색 시작 →"}</button> : <button onClick={() => go("changes")}>리스크 검토 →</button>}
         </div>}
         {!isHero && progress.current > 2 && nextCallout(progress.next.label, progress.next.section, progress.next.detail)}
         {(!isHero || started || showPreparedDemoOutputs) && <BriefingPanel briefing={project.briefing} llmMode={text(project.llm_mode, "live")} />}
         {!isHero && <article className="focus-card watch-start" aria-label="감시 시작">
-          <div className="panel-heading"><div><span className="eyebrow">워커 · 수집</span><h3>{started ? "감시 중" : "감시 시작"}</h3>
-            <p>기준 일정에서 자동으로 구성한 공식 출처·공휴일·계절 노출도를 확인합니다. 시작 뒤 들어온 근거만 리스크 카드로 올리고, 일정 반영은 사람이 검토합니다.</p></div>
+          <div className="panel-heading"><div><span className="eyebrow">다음 단계</span><h3>{started ? "외부 리스크를 확인하고 있습니다" : "외부 리스크 확인을 시작하세요"}</h3>
+            <p>일정과 관련된 공지·휴일·계절 정보를 주기적으로 확인합니다. 검토가 필요한 항목만 알려드리며, 일정은 승인 전까지 바뀌지 않습니다.</p></div>
             {started && <span className="status-chip ok">시작 {when(projectData.watch_started_at)}</span>}</div>
-          {!started && <button onClick={startWatch} disabled={busy}>추천 감시 시작</button>}
+          {!started && <button onClick={startWatch} disabled={busy}>감시 시작</button>}
         </article>}
         <section className="focus-card watch-feed-panel" aria-label="감시 피드">
-          <div className="panel-heading"><div><h3>감시 피드 · 워커 신호 + 변화 자동 추리기</h3><p>새로 들어온 신호마다 자동 추리기가 한 번 관련 있음·확인 필요·무관으로 나눕니다. 조사와 일정 계산은 사람이 시작합니다.</p></div></div>
+          <div className="panel-heading"><div><h3>새로 확인한 항목</h3><p>일정과 관련성이 있는 항목만 표시합니다.</p></div></div>
           {feedEvents.length ? <div className="focus-event-list">{feedEvents.map((event) => linkedIds.has(text(event.id))
-            ? <div key={text(event.id)} className="feed-merged"><span className="status-chip">협력사 통보에 합쳐짐</span> <b>{text(event.data?.title, "외부 신호")}</b>
+            ? <div key={text(event.id)} className="feed-merged"><span className="status-chip">동일 리스크에 연결됨</span> <b>{text(event.data?.title, "외부 신호")}</b>
                 <small>{feedSignals.find((row) => row.id === event.id)?.related}</small>
                 {triageLine(event.data?.auto_narrow as Dict | undefined) && <small>{triageLine(event.data?.auto_narrow as Dict | undefined)}</small>}
                 <button className="text-button" onClick={() => go("changes")}>리스크 검토에서 보기 →</button></div>
             : changeCard(event))}</div>
-            : <div className="empty focus-empty">{started ? "아직 들어온 신호가 없습니다." : "감시를 시작하면 워커가 모은 신호가 여기에 들어옵니다."}</div>}
+            : <div className="empty focus-empty">{started ? "아직 새로 확인한 항목이 없습니다." : "감시를 시작하면 새로 확인한 항목이 여기에 표시됩니다."}</div>}
         </section>
-        {(!isHero || started || showPreparedDemoOutputs) && <RiskRegister risks={risks} busy={busy} onStatus={updateRisk} />}
+        {(started || showPreparedDemoOutputs) && <RiskRegister risks={risks} busy={busy} onStatus={updateRisk} />}
         <details className="focus-card watch-section">
           <summary><b>감시 범위와 출처 보기</b> · 공휴일·장기 계절 노출·공식 공지 {project.watch_plan?.enabled ? "· 감시 중" : "· 시작 전"}</summary>
           <p className="muted">기준 일정에서 자동으로 구성한 범위입니다. 단기 예보의 작업 중단 기준이나 추가 출처는 필요할 때만 아래 고급 설정에서 조정하세요.</p>
@@ -902,7 +868,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
   const importedIds = new Set(events.map((event) => text(event.data?.event_id, "")).filter(Boolean));
   const changesView = (
     <section className="workspace-view" id="changes" aria-labelledby="changes-title">
-      <div className="view-heading"><div><p className="eyebrow">RISK REVIEW</p><h2 id="changes-title">리스크 검토</h2><p>수집된 신호나 협력사 통보에서 영향 작업과 날짜를 확인합니다. 확인하면 영향 분석이 시작됩니다.</p></div><span className="view-context">{eventCount}건 기록</span></div>
+      <div className="view-heading"><div><p className="eyebrow">RISK REVIEW</p><h2 id="changes-title">리스크 검토</h2><p>수집된 신호의 영향 작업과 날짜를 확인합니다. 선택한 후보만 일정 영향 분석으로 이어집니다.</p></div><span className="view-context">{eventCount}건 기록</span></div>
       {!project.version ? (loaded ? nextCallout("기준 일정 Excel 올리기", "schedule", "리스크 영향을 계산하려면 먼저 기준 일정이 필요합니다.") : null) : <>
         {progress.next.section !== "changes" && nextCallout(progress.next.label, progress.next.section, progress.next.detail)}
         <div className="changes-layout">
@@ -955,19 +921,19 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     const actions = scenarioActions(scenarioId);
     const accepted = new Set(actions.filter((item) => ["ACCEPTED", "DONE"].includes(text(item.data?.state))).map((item) => text(item.data?.condition, "")));
     const allAccepted = required.every((condition) => accepted.has(condition));
-    const blocked = !data.budget_met || (Array.isArray(data.violations) && data.violations.length > 0);
+    const blocked = Array.isArray(data.violations) && data.violations.length > 0;
     const approvalHere = approvals.find((item) => item.scenario_id === scenarioId);
     const otherApproved = !approvalHere && approvedScenarioId && run?.scenarios?.some((item) => item.id === approvedScenarioId);
     let step: ReactNode;
     if (runIsPreview) step = <p className="panel-note">잠정 결과입니다. 변경 화면에서 해석을 확인하면 정식 분석이 실행되고 승인할 수 있습니다.</p>;
     else if (approvalHere) step = <div className="panel-note done"><b>승인됨 · {when(approvalHere.created_at)} · {text(approvalHere.actor)}</b><p>실행 화면에서 새 일정 버전을 확정하세요.</p><button onClick={() => go("execute")}>실행으로 이동 →</button></div>;
     else if (otherApproved) step = <p className="panel-note">이 변경에는 이미 '{text(run?.scenarios?.find((item) => item.id === approvedScenarioId)?.data?.label)}' 안이 승인되어 있습니다.</p>;
-    else if (blocked) step = <p className="panel-note">예산 또는 제약 조건을 넘어 승인할 수 없습니다. 다른 안을 고르거나 아래에서 비용 한도를 조정하세요.</p>;
+    else if (blocked) step = <p className="panel-note">일정 제약 조건을 넘어 승인할 수 없습니다. 다른 안을 고르거나 조건을 확인하세요.</p>;
     else if (!actions.length) step = <div className="panel-note"><p>승인 전에 조건 {required.length}건의 확인 요청을 만듭니다.{required.length ? "" : " 조건이 없으면 검토 기록 1건이 만들어집니다."}</p><button onClick={() => prepareScenario(scenarioId)} disabled={busy}>확인 요청 만들기</button></div>;
     else step = <div className="panel-note"><p>{allAccepted ? "필요한 조건을 모두 확인했습니다." : `확인할 조건 ${required.filter((condition) => !accepted.has(condition)).length}건이 남았습니다.`}</p><button onClick={() => approveScenario(selectedScenario)} disabled={busy || !allAccepted}>이 대응안 승인</button></div>;
     return (
       <div className="focus-card approval-focus" id="approval">
-        <div className="panel-heading"><div><span className="eyebrow">6 · APPROVE</span><h3>{text(data.label)}</h3><p>{scenarioScore(data)} · 완료 예정 {text(data.finish_date)} · 무대응 대비 회복 {text(data.recovery_days_vs_no_response, "-")}일 · 추가 비용 {costLabel(data)}</p></div></div>
+        <div className="panel-heading"><div><span className="eyebrow">APPROVAL</span><h3>{text(data.label)}</h3><p>{scenarioScore(data)} · 완료 예정 {text(data.finish_date)} · 무대응 대비 회복 {text(data.recovery_days_vs_no_response, "-")}일</p></div></div>
         {required.length > 0 && <ul className="condition-list">{required.map((condition) => <li key={condition} className={accepted.has(condition) ? "ok" : ""}>{accepted.has(condition) ? "확인됨 · " : "확인 필요 · "}{condition}</li>)}</ul>}
         {!runIsPreview && actions.map((action) => (
           <div key={text(action.id)} className="condition-review">
@@ -1002,7 +968,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
 
   const scenariosView = (
     <section className="workspace-view" id="scenarios" aria-labelledby="scenarios-title">
-      <div className="view-heading"><div><p className="eyebrow">RESPONSE</p><h2 id="scenarios-title">대응안 비교와 승인</h2><p>일정·비용·조건을 같은 기준으로 비교하고, 조건을 확인한 안을 승인합니다.</p></div><span className="view-context">{run?.run ? runLabel(run.run) : "분석 대기"}</span></div>
+      <div className="view-heading"><div><p className="eyebrow">RESPONSE</p><h2 id="scenarios-title">대응안 비교와 승인</h2><p>일정 영향과 실행 조건을 비교하고, 확인한 안을 승인합니다.</p></div><span className="view-context">{run?.run ? runLabel(run.run) : "분석 대기"}</span></div>
       {!run?.run ? nextCallout(progress.next.label, progress.next.section, progress.current <= 4 ? progress.next.detail : "리스크를 확인하면 영향 분석이 시작되고 결과가 여기에 표시됩니다.") : <>
         {viewRunId && <div className="run-pin"><span>이력에서 고른 실행 {shortId(viewRunId)}을 보고 있습니다.</span><button className="text-button" onClick={() => { setViewRunId(""); viewRunRef.current = ""; void refresh(); }}>최신 결과로</button></div>}
         {runPending ? <div className="analysis-receipt pending" role="status"><span className="eyebrow">영향 분석</span><h3>영향을 계산하고 있습니다…</h3><p>끝나면 이 화면에 결과가 자동으로 표시됩니다.</p></div> : <div className="analysis-receipt">
@@ -1022,16 +988,11 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
             <details><summary>대응안 목록 보기 ({(run.scenarios || []).length}개)</summary><ScenarioList scenarios={run.scenarios || []} selected={selectedScenarioId} approvedId={approvedScenarioId} onSelect={setSelectedScenarioId} /></details>
             {selectedScenario && <div className="scenario-side">{approvalPanel}{impactDetail}</div>}
           </div> : <div className="scenario-layout">
-          <div className="focus-card"><div className="panel-heading"><div><h3>비교할 대응안</h3><p>{recommendedId ? "가장 많이 회복하는 안을 추천으로 먼저 보여줍니다. 회복 일수와 추가 비용을 비교해 고르세요." : "무대응 대비 회복 일수와 추가 비용을 비교해 한 안을 고르세요."}</p></div></div><ScenarioList scenarios={run.scenarios || []} selected={selectedScenarioId} approvedId={approvedScenarioId} recommendedId={recommendedId} onSelect={setSelectedScenarioId} /></div>
+          <div className="focus-card"><div className="panel-heading"><div><h3>비교할 대응안</h3><p>{recommendedId ? "완료일을 가장 많이 회복하는 안을 먼저 보여줍니다. 영향 작업과 실행 조건을 비교해 고르세요." : "무대응 대비 회복 일수와 영향 작업을 비교해 한 안을 고르세요."}</p></div></div><ScenarioList scenarios={run.scenarios || []} selected={selectedScenarioId} approvedId={approvedScenarioId} recommendedId={recommendedId} onSelect={setSelectedScenarioId} /></div>
           <div className="scenario-side">{approvalPanel}{impactDetail}</div>
         </div>)}
         {selectedScenario && !targetMetNoResponse && <ScheduleComparison projectId={projectId} scenarioId={selectedScenarioId} versionId={text(project.version?.id, "") || undefined} />}
         <AgentDecisionPanel agent={run.run.data?.agent as Dict | undefined} eventContent={text(runEvent?.data?.content, "")} llmMode={text(project.llm_mode, "live")} />
-        <details className="focus-card fold">
-          <summary>비용 한도로 다시 계산 (선택)</summary>
-          <p className="muted">최초 분석은 비용 한도 없이 계산합니다. 한도를 넣으면 같은 변경으로 다시 계산해 예산 초과 안을 표시합니다.</p>
-          <div className="scenario-toolbar"><label>대응안 비용 한도(원)<input className="budget" type="number" min="0" step="100000" value={budget} onChange={(event) => setBudget(event.target.value === "" ? "" : Number(event.target.value))} /></label><button className="secondary" onClick={replan} disabled={!run.run || runIsPreview || budget === "" || busy}>비용 한도 반영</button></div>
-        </details>
         <OptionCatalog options={((project.version?.data as Dict | undefined)?.options || []) as Dict[]} />
       </>}
     </section>
@@ -1045,16 +1006,16 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
       <div className="view-heading"><div><p className="eyebrow">EXECUTION</p><h2 id="execute-title">일정 반영·실행</h2><p>승인한 대응안을 새 일정 버전으로 확정하고 Excel로 내보냅니다.</p></div><span className="view-context">{committed ? "새 버전 확정됨" : progress.approval ? "확정 대기" : "승인 대기"}</span></div>
       {!progress.approval ? nextCallout(progress.next.label, progress.next.section, progress.current < 5 ? progress.next.detail : "대응안을 승인하면 여기서 새 일정 버전을 확정할 수 있습니다.") : committed ? (
         <div className="execute-card done">
-          <div><span className="eyebrow">새 일정 버전</span><h3>확정 버전 {shortId(committed.id)} · {when(committed.created_at)}</h3><p>반영한 대응안: {text(approvedScenario?.data?.label, shortId(approvedScenarioId))}{approvedScenario ? ` · 완료 예정 ${text(approvedScenario.data?.finish_date)} · 추가 비용 ${costLabel(approvedScenario.data || {})}` : ""}</p><p className="muted">Excel에는 기준 일정과 변경 일정, 종료 차이가 함께 들어갑니다.</p></div>
+          <div><span className="eyebrow">새 일정 버전</span><h3>확정 버전 {shortId(committed.id)} · {when(committed.created_at)}</h3><p>반영한 대응안: {text(approvedScenario?.data?.label, shortId(approvedScenarioId))}{approvedScenario ? ` · 완료 예정 ${text(approvedScenario.data?.finish_date)}` : ""}</p><p className="muted">Excel에는 기준 일정과 변경 일정, 종료 차이가 함께 들어갑니다.</p></div>
           <div className="execute-actions"><button onClick={downloadExport} disabled={busy}>Excel 다운로드</button><button className="secondary" onClick={() => go("schedule")}>일정에서 보기</button><button className="text-button" onClick={() => go("changes")}>새 리스크 확인</button></div>
         </div>
       ) : (
         <div className="execute-card">
-          <div><span className="eyebrow">승인된 대응안</span><h3>{text(approvedScenario?.data?.label, shortId(approvedScenarioId))}</h3><p>승인 {when(progress.approval.created_at)} · {text(progress.approval.actor)}{approvedScenario ? ` · 완료 예정 ${text(approvedScenario.data?.finish_date)} · 추가 비용 ${costLabel(approvedScenario.data || {})}` : ""}</p><p className="muted">확정하면 현재 기준 일정에서 새 일정 버전이 만들어지고, 원본 기준 버전은 그대로 남습니다.</p></div>
+          <div><span className="eyebrow">승인된 대응안</span><h3>{text(approvedScenario?.data?.label, shortId(approvedScenarioId))}</h3><p>승인 {when(progress.approval.created_at)} · {text(progress.approval.actor)}{approvedScenario ? ` · 완료 예정 ${text(approvedScenario.data?.finish_date)}` : ""}</p><p className="muted">확정하면 현재 기준 일정에서 새 일정 버전이 만들어지고, 원본 기준 버전은 그대로 남습니다.</p></div>
           <div className="execute-actions"><button onClick={() => commitScenario(approvedScenarioId)} disabled={busy}>새 일정 버전 확정</button></div>
         </div>
       )}
-      {progress.approval && <ScheduleComparison projectId={projectId} scenarioId={approvedScenarioId} versionId={text(committed?.id || project.version?.id, "") || undefined} />}
+      {progress.approval && <ScheduleComparison projectId={projectId} versionId={text(committed?.id || project.version?.id, "") || undefined} />}
       {executeActions.length > 0 && <div className="focus-card"><div className="panel-heading"><div><h3>실행 항목</h3><p>승인한 대응안의 조건 확인 기록입니다.</p></div></div><div className="action-list">{executeActions.map((action) => <article key={text(action.id)} className="action-item"><span className={`action-state ${String(action.data?.state || "OPEN").toLowerCase()}`}>{ACTION_STATE[text(action.data?.state, "OPEN")] || text(action.data?.state)}</span><div><b>{text(action.data?.request, "확인 요청")}</b><small>{text(action.data?.owner, "프로젝트 운영팀")}{action.data?.due_at ? ` · 기한 ${text(action.data.due_at)}` : ""}{action.data?.note ? ` · 근거 ${text(action.data.note)}` : ""}</small></div></article>)}</div></div>}
       {project.version && <p className="muted quiet-row">현재 일정({project.version.status === "committed" ? "확정 버전" : "기준 버전"})을 그대로 내려받으려면 <button className="text-button" onClick={downloadExport} disabled={busy}>현재 일정 Excel</button></p>}
 
@@ -1077,17 +1038,10 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
             <input aria-label="피드 URL" type="url" value={feedForm.url} onChange={(event) => setFeedForm({ ...feedForm, url: event.target.value })} placeholder="https://허용된-공식-출처" />
             <button className="secondary" type="submit" disabled={busy}>피드 등록</button>
           </form>
-          <form className="compact-form" onSubmit={saveMailAccount}>
-            <b>메일 연결 정보 <em className="tag off">미연동</em></b>
-            <small>연결 정보만 저장합니다. 메일 자동 수신은 없으며 통보는 변경 화면에 붙여 넣습니다. 현재 {project.mail_account ? "저장됨" : "미설정"}</small>
-            <div className="p1-inline-fields"><select aria-label="메일 제공자" value={mailForm.provider} onChange={(event) => setMailForm({ ...mailForm, provider: event.target.value })}><option value="imap">IMAP</option><option value="gmail">Gmail</option><option value="outlook">Outlook</option></select><input aria-label="메일 호스트" value={mailForm.host} onChange={(event) => setMailForm({ ...mailForm, host: event.target.value })} placeholder="imap.example.com" required /></div>
-            <input aria-label="메일 사용자" value={mailForm.username} onChange={(event) => setMailForm({ ...mailForm, username: event.target.value })} placeholder="담당자 이메일" required />
-            <button className="secondary" type="submit" disabled={busy}>연결 정보 저장</button>
-          </form>
           <form className="compact-form" onSubmit={saveNotificationChannel}>
             <b>외부 알림 채널 <em className="tag off">미연동</em></b>
-            <small>이메일·Slack·Webhook은 초안 설정으로만 저장하고 발송하지 않습니다. 인앱 알림은 이력 화면에 기록됩니다.</small>
-            <div className="p1-inline-fields"><select aria-label="알림 채널 유형" value={channelForm.channel} onChange={(event) => setChannelForm({ ...channelForm, channel: event.target.value })}><option value="in_app">인앱</option><option value="email">이메일 초안</option><option value="slack">Slack 초안</option><option value="webhook">Webhook 초안</option></select><input aria-label="알림 대상" value={channelForm.target} onChange={(event) => setChannelForm({ ...channelForm, target: event.target.value })} placeholder="대상 또는 채널" /></div>
+            <small>현재는 인앱 알림만 기록합니다. 외부 발송은 프로젝트 검증 후 별도로 연결합니다.</small>
+            <div className="p1-inline-fields"><select aria-label="알림 채널 유형" value={channelForm.channel} onChange={(event) => setChannelForm({ ...channelForm, channel: event.target.value })}><option value="in_app">인앱</option></select><input aria-label="알림 대상" value={channelForm.target} onChange={(event) => setChannelForm({ ...channelForm, target: event.target.value })} placeholder="알림 표시 이름" /></div>
             <button className="secondary" type="submit" disabled={busy}>채널 저장</button>
           </form>
           <div className="compact-form">
@@ -1121,46 +1075,20 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
     </section>
   );
 
-  const workspaceStatus: Record<SectionId, { kicker: string; title: string; detail: string }> = {
-    overview: {
-      kicker: "PROJECT STATUS",
-      title: project.version ? "프로젝트 브리핑 준비됨" : "기준 일정 연결 필요",
-      detail: project.version ? "프로젝트 범위와 다음 리스크 검토를 확인하세요." : "기준 일정 Excel을 올리면 작업과 기간을 프로젝트에 연결합니다.",
-    },
-    schedule: {
-      kicker: "SCHEDULE STATUS",
-      title: project.version ? "기준 일정 연결됨" : "기준 일정 Excel 대기",
-      detail: project.version ? `${tasks.length}개 작업을 기준 일정으로 관리합니다.` : "프로젝트 전체 작업이 담긴 Excel을 올려 기준 일정을 만드세요.",
-    },
-    watch: {
-      kicker: "RISK DISCOVERY",
-      title: started ? "리스크 탐색 중" : "리스크 탐색 준비됨",
-      detail: started ? "수집한 외부 신호를 분류해 검토할 리스크를 찾습니다." : "프로젝트와 관련된 외부 리스크 범위를 먼저 확인하세요.",
-    },
-    changes: {
-      kicker: "RISK REVIEW",
-      title: eventCount ? `검토할 리스크 ${eventCount}건` : "검토할 리스크 없음",
-      detail: eventCount ? "영향 작업과 날짜를 확인하면 일정 영향을 분석할 수 있습니다." : "통보나 외부 신호를 가져와 프로젝트 영향 여부를 검토하세요.",
-    },
-    scenarios: {
-      kicker: "RESPONSE",
-      title: analysisRuns.length ? "대응안 비교 준비됨" : "영향 분석 대기",
-      detail: analysisRuns.length ? "일정·비용·조건을 비교해 실행할 대응안을 고르세요." : "리스크 검토를 완료하면 대응안이 이곳에 표시됩니다.",
-    },
-    execute: {
-      kicker: "EXECUTION",
-      title: committedVersions.length ? "새 일정 버전 확정됨" : "실행 승인 대기",
-      detail: committedVersions.length ? "확정한 일정을 내보내고 실행 항목을 추적하세요." : "승인한 대응안이 생기면 새 일정 버전으로 확정할 수 있습니다.",
-    },
-    history: {
-      kicker: "PROJECT RECORDS",
-      title: "판단과 실행 기록",
-      detail: "리스크 검토, 대응안 승인, 일정 버전의 근거를 시간순으로 확인합니다.",
-    },
-  };
-  const currentStatus = workspaceStatus[activeSection];
-  const statusAction = activeSection === progress.next.section ? null : progress.next;
-  const panelAction = statusAction || (riskAlertCount > 0 ? { section: "changes" as SectionId, label: "리스크 검토" } : null);
+  const latestSnapshotFailed = latestSnapshot && text(latestSnapshot.status, "ok") !== "ok";
+  const projectStatus = !project.version
+    ? { kicker: "PROJECT STATUS", title: "기준 일정 필요", detail: "기준 일정이 연결되면 리스크와 영향 작업을 비교할 수 있습니다.", action: { section: "schedule" as SectionId, label: "기준 일정 연결" } }
+    : latestSnapshotFailed
+      ? { kicker: "PROJECT STATUS", title: "수집 상태 확인 필요", detail: "최근 외부 출처 수집이 완료되지 않았습니다. 출처 연결 상태를 확인하세요.", action: { section: "watch" as SectionId, label: "감시 상태 보기" } }
+      : riskAlertCount > 0
+        ? { kicker: "PROJECT STATUS", title: `검토할 리스크 ${riskAlertCount}건`, detail: "일정에 영향을 줄 수 있는 신호가 확인 대기 중입니다.", action: { section: "changes" as SectionId, label: "리스크 검토" } }
+        : progress.approval && !committed
+          ? { kicker: "PROJECT STATUS", title: "일정 반영 대기", detail: "승인한 대응안을 새 일정 버전으로 확정할 수 있습니다.", action: { section: "execute" as SectionId, label: "일정 반영" } }
+          : committedVersions.length
+            ? { kicker: "PROJECT STATUS", title: "최근 일정 반영 완료", detail: "확정 버전과 원본 일정을 비교하거나 새 리스크를 탐색할 수 있습니다.", action: { section: "schedule" as SectionId, label: "일정 비교 보기" } }
+            : started
+              ? { kicker: "PROJECT STATUS", title: "감시 중", detail: "등록한 출처와 장기 일정 노출도를 확인하고 있습니다.", action: { section: "watch" as SectionId, label: "감시 상태 보기" } }
+              : { kicker: "PROJECT STATUS", title: "리스크 탐색 준비됨", detail: "기준 일정은 연결되었습니다. 외부 리스크 탐색을 시작하세요.", action: { section: "watch" as SectionId, label: "탐색 시작" } };
 
   return (
     <main className="human-workspace" data-section={activeSection}>
@@ -1175,7 +1103,7 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
           <p className="eyebrow">PROJECT</p>
           <div className="project-title-row"><h1>{projectName}</h1></div>
           <p className="subtitle" role="status">{notice}</p>
-          <div className="hero-context"><span className="context-marker" aria-hidden="true" /><span>{text(projectData.region || projectData.site_region, "현장 미설정")}</span><span className="context-slash">/</span><span>{projectPeriod}</span><span className="context-slash">/</span><span>{demoOutputsHidden ? "리스크 탐색 전" : eventCount ? `리스크 ${eventCount}건` : "리스크 없음"}</span>{isHero && <><span className="context-slash">/</span><span>대표 사례</span></>}</div>
+          <div className="hero-context"><span className="context-marker" aria-hidden="true" /><span>{projectSite}</span><span className="context-slash">/</span><span>{projectPeriod}</span><span className="context-slash">/</span><span>{demoOutputsHidden ? "리스크 탐색 전" : eventCount ? `리스크 ${eventCount}건` : "리스크 없음"}</span></div>
         </div>
         <div className="project-status-center" ref={statusCenterRef}>
           <button
@@ -1186,35 +1114,30 @@ export default function Home({ initialProjectId = "" }: { initialProjectId?: str
             onClick={() => setStatusPanelOpen((open) => !open)}
           >
             <span className="project-status-orb" aria-hidden="true"><i /></span>
-            <span className="project-status-trigger-copy"><b>프로젝트 상태</b><small>{loaded ? currentStatus.title : "불러오는 중"}</small></span>
+            <span className="project-status-trigger-copy"><b>프로젝트 상태</b><small>{loaded ? projectStatus.title : "불러오는 중"}</small></span>
             {riskAlertCount > 0 ? <span className="project-status-badge" aria-label={`검토할 리스크 ${riskAlertCount}건`}>{riskAlertCount}</span> : <span className="project-status-ready" aria-label="새 리스크 없음" />}
           </button>
           {statusPanelOpen && <aside className="project-status-popover" id="project-status-panel" aria-label="프로젝트 상태 패널">
             <div className="project-status-popover-head">
-              <div><span>{currentStatus.kicker}</span><h2>{loaded ? currentStatus.title : "불러오는 중"}</h2></div>
+              <div><span>{projectStatus.kicker}</span><h2>{loaded ? projectStatus.title : "불러오는 중"}</h2></div>
               <button type="button" className="status-popover-close" aria-label="프로젝트 상태 닫기" onClick={() => setStatusPanelOpen(false)}>×</button>
             </div>
-            <p className="project-status-detail">{loaded ? currentStatus.detail : "프로젝트 상태를 불러오고 있습니다."}</p>
+            <p className="project-status-detail">{loaded ? projectStatus.detail : "프로젝트 상태를 불러오고 있습니다."}</p>
             <div className="project-status-facts">
               <div><span>감시 상태</span><b>{project.agent_enabled ? (started ? "감시 중" : "감시 준비") : "AI 조사 미연결"}</b></div>
               <div><span>새 리스크</span><b className={riskAlertCount > 0 ? "risk-count" : ""}>{riskAlertCount ? `${riskAlertCount}건` : "없음"}</b></div>
               <div><span>마지막 수집</span><b>{latestSnapshot ? when(latestSnapshot.fetched_at || latestSnapshot.created_at) : "기록 없음"}</b></div>
             </div>
             {riskAlertCount > 0 ? <div className="project-status-alert"><span aria-hidden="true">!</span><div><b>검토가 필요한 리스크가 있습니다</b><small>수집된 신호가 일정 영향 후보로 등록되었습니다.</small></div><button type="button" onClick={() => { setStatusPanelOpen(false); go("changes"); }}>검토</button></div>
-              : <div className="project-status-calm"><span aria-hidden="true">✓</span><div><b>새로 확인할 리스크가 없습니다</b><small>수집 결과와 판단 기록은 계속 이곳에 정리됩니다.</small></div></div>}
-            {panelAction && <button type="button" className="project-status-next" onClick={() => { setStatusPanelOpen(false); go(panelAction.section); }}>{panelAction.label}<span aria-hidden="true">→</span></button>}
+              : <div className="project-status-calm"><span aria-hidden="true">✓</span><div><b>새로 확인할 리스크가 없습니다</b><small>새로 확인한 항목은 이곳에서 확인할 수 있습니다.</small></div></div>}
+            {projectStatus.action && <button type="button" className="project-status-next" onClick={() => { setStatusPanelOpen(false); go(projectStatus.action.section); }}>{projectStatus.action.label}<span aria-hidden="true">→</span></button>}
           </aside>}
         </div>
       </section>
 
-      <nav className="decision-journey" aria-label="핵심 사용 흐름">
-        <button className={activeSection === "changes" || activeSection === "watch" ? "active" : ""} onClick={() => go("changes")}><b>1. 리스크 확인</b><span>통보 해석 → 숨은 영향 조사</span></button>
-        <button className={activeSection === "scenarios" ? "active" : ""} onClick={() => go("scenarios")}><b>2. 대응 결정</b><span>적용 여부 확인 → 대응안 승인</span></button>
-        <button className={activeSection === "execute" ? "active" : ""} onClick={() => go("execute")}><b>3. 일정 반영</b><span>전후 비교 → Excel 다운로드</span></button>
-      </nav>
       {loaded && <p className={`mode-line${project.agent_enabled ? "" : " off"}`}>{!project.agent_enabled
-        ? "AI 조사는 아직 연결되지 않았습니다. 문서 인용과 일정 계산 결과만 표시합니다."
-        : text(project.llm_mode, "live") === "replay" ? "AI 조사 · 검증용 녹화 응답 재생 중" : "AI 조사 · 실제 LLM 연결됨"}</p>}
+        ? "AI 분석을 연결하면 문서 내용을 더 자세히 확인할 수 있습니다."
+        : text(project.llm_mode, "live") === "replay" ? "AI 분석 · 검증용 응답 재생 중" : "AI 분석 사용 중"}</p>}
 
       {feedback && (
         <aside className={feedback.kind === "error" ? "error" : "guide-notice"} role="alert">
@@ -1281,11 +1204,11 @@ function ChangeCard({ event, tasks, taskNames, busy, isFocus, runs, investigatio
   return (
     <article id={`review-${eventId}`} className={`focus-event-card${isFocus ? " is-focus" : ""}${inactive ? " is-inactive" : ""}`}>
       <div className="focus-event-topline"><span className={`status-chip${needsTask || (!confirmed && !inactive && !noImpact) ? " warn" : ""}`}>{chip}</span><small>{text(data.source_label, "입력")} · {data.published_at ? when(data.published_at) : when(data.received_at)} · {data.data_origin === "SYNTHETIC" ? "대표 사례" : text(data.data_origin, "")}</small></div>
-      <details className="notice-original"><summary>협력사 통보 원문 확인</summary><blockquote className="event-quote">{text(data.content || data.title)}</blockquote></details>
+      <details className="notice-original"><summary>원문 근거 보기</summary><blockquote className="event-quote">{text(data.content || data.title)}</blockquote></details>
       {hasPatch(data) && !data.evidence && <div className="event-interpretation"><b>{confirmed ? "확인된 리스크" : "통보에서 읽어낸 리스크 (확인 필요)"}</b><ul>{Object.entries(patch).flatMap(([patchKind, values]) => Object.entries(values || {}).map(([taskId, value]) => <li key={`${patchKind}-${taskId}`}><span>{taskId}</span> {taskNames[taskId] || ""} · {PATCH_KIND[patchKind] || patchKind} {Array.isArray(value) ? value.join(", ") : text(value)}</li>))}</ul>{!confirmed && facts.some((fact) => fact.confidence === "suggested") && <small>원문과 같은지 확인하세요.</small>}{Array.isArray(data.confirmed_additions) && (data.confirmed_additions as Dict[]).length > 0 && <small>조사 결과를 사람이 확인해 추가: {(data.confirmed_additions as Dict[]).map((row) => `${text(row.task_id)} 착수 ${text(row.not_before)}${row.item_id ? ` (${text(row.item_id)})` : ""}`).join(" · ")}</small>}</div>}
       {Array.isArray(data.verification_required) && data.verification_required.length > 0 && <p className="event-question">추가 확인: {(data.verification_required as string[]).join(" · ")}</p>}
       {Array.isArray(data.missing_fields) && data.missing_fields.length > 0 && !confirmed && <p className="event-question">확인 질문: {(data.missing_fields as string[]).join(" · ")}</p>}
-      {candidates.length > 0 && <div className="event-interpretation"><b>에이전트가 찾은 작업 후보</b><ul>{candidates.map((candidate, index) => <li key={`${text(candidate.task_id)}-${index}`}><span>{text(candidate.task_id)}</span> {taskNames[text(candidate.task_id)] || ""}{candidate.quote ? <q>{text(candidate.quote)}</q> : null}{candidate.reason ? <small> {text(candidate.reason)}</small> : null}</li>)}</ul></div>}
+      {candidates.length > 0 && <details className="event-interpretation candidate-summary"><summary>연결 작업 후보 {candidates.length}개 · 상세 보기</summary><ul className="candidate-list-scroll">{candidates.map((candidate, index) => <li key={`${text(candidate.task_id)}-${index}`}><span>{text(candidate.task_id)}</span> {taskNames[text(candidate.task_id)] || ""}{candidate.quote ? <q>{text(candidate.quote)}</q> : null}{candidate.reason ? <small> {text(candidate.reason)}</small> : null}</li>)}</ul></details>}
       {isDocumentCandidateReview && <section className="document-candidate-gate" aria-label="문서 리스크 후보 선택">
         <div><span className="eyebrow">DOCUMENT TRIAGE</span><b>문서에서 찾은 후보를 고르세요</b><p>원문 인용과 연결된 작업만 보입니다. 선택한 후보에만 다음 AI 조사가 진행되며, 선택 전에는 일정이 바뀌지 않습니다.</p></div>
         <div className="document-candidate-list">{candidates.map((candidate, index) => {
@@ -1393,9 +1316,8 @@ function usageLine(usage: Dict | undefined, llmMode: string) {
   const row = usage || {};
   const calls = Number(row.llm_calls || 0);
   if (!calls) return "";
-  const cost = typeof row.cost_usd === "number" ? `$${(row.cost_usd as number).toFixed(3)}` : "비용 미기록";
   const tokens = `토큰 입력 ${Number(row.prompt_tokens || 0).toLocaleString()} · 출력 ${Number(row.completion_tokens || 0).toLocaleString()}`;
-  return `LLM 호출 ${calls}회 · ${tokens} · ${llmMode === "replay" ? `녹화 당시 비용 ${cost} (재생이라 이번 실행 비용 0)` : `비용 ${cost}`}`;
+  return `AI 검토 ${calls}회 · ${tokens}${llmMode === "replay" ? " · 검증용 응답 재생" : ""}`;
 }
 
 /** External notices tied to this supplier notice plus stored real cases of the same risk type. */
@@ -1476,7 +1398,6 @@ function InvestigationPanel({ variant, external, inactive, signals, runs, agentE
   const record = (agent.investigation || {}) as Dict;
   const log = (Array.isArray(agent.tool_log) ? agent.tool_log : []) as Dict[];
   const link = record.cause_link as Dict | undefined;
-  const email = agent.email_draft as Dict | undefined;
   const basis = (Array.isArray(data.real_case_basis) ? data.real_case_basis : []) as Dict[];
   const found = (Array.isArray(data.agent_found_cases) ? data.agent_found_cases : []) as Dict[];
   const notices = (Array.isArray(data.linked_notices) ? data.linked_notices : []) as Dict[];
@@ -1529,7 +1450,7 @@ function InvestigationPanel({ variant, external, inactive, signals, runs, agentE
   const usage = usageLine(agent.usage as Dict | undefined, llmMode);
   return <div className="investigation" aria-label="에이전트 숨은 위험 조사">
     <b>에이전트 숨은 위험 조사</b>
-    {!latest && signalsText && <p>통보와 연결될 수 있는 외부 공지 {signals.length}건이 있습니다. 에이전트가 통보에 빠진 품목까지 확인합니다.</p>}
+    {!latest && signalsText && <p>안내 내용과 연결될 수 있는 외부 공지 {signals.length}건이 있습니다. AI가 관련 품목까지 확인합니다.</p>}
     {!latest && (!agentEnabled
       ? <p className="muted">AI 조사가 아직 연결되지 않았습니다. 원문 인용과 일정 계산 결과는 확인할 수 있지만, 추가 조사는 실행하지 않습니다.</p>
       : !inactive && <button className={startPrimary ? "" : "secondary"} onClick={onStart} disabled={busy}>{external ? "에이전트로 조사" : "에이전트로 숨은 위험 조사"}</button>)}
@@ -1540,7 +1461,7 @@ function InvestigationPanel({ variant, external, inactive, signals, runs, agentE
       <RiskLinkNote link={riskLink} compact />
       {(rules.finish_date !== undefined || worst) && <div className="discovery-chain" aria-label="에이전트 발견과 계산기 결과">
         <div><span className="eyebrow">01 · 통보만 계산</span><strong>{text(rules.finish_shift_days, "—")}일</strong><p>통보에 적힌 작업의 완료일 영향</p><small>{text(rules.finish_date, "날짜 확인 필요")}</small></div>
-        <div><span className="eyebrow">02 · 에이전트가 추가 확인</span><strong>{ids || "관련성 확인"}</strong><p>외부 공지와 품목 정보를 연결</p><small>{agentDetail || text(data.summary, "")}</small></div>
+        <div><span className="eyebrow">02 · AI 추가 확인</span><strong>{ids || "관련성 확인"}</strong><p>외부 공지와 품목 정보를 연결</p><small>{agentDetail || text(data.summary, "")}</small></div>
         <div><span className="eyebrow">03 · 계산기가 영향 계산</span><strong>{worst ? `+${text(worst.added_shift_days_vs_reported_change)}일` : STOP_LABEL[stop]}</strong><p>{worst ? "해당 조건이 적용될 때의 추가 위험" : "확인된 범위의 계산 결과"}</p><small>{worst ? `완료 ${text(worst.finish_date)}` : ""}</small></div>
       </div>}
       {llmMode === "replay" && <p className="muted">에이전트 판단과 일정 계산 결과를 확인할 수 있습니다.</p>}
@@ -1550,12 +1471,11 @@ function InvestigationPanel({ variant, external, inactive, signals, runs, agentE
         <summary>근거 문장 · 실제 기사</summary>
         <p><small>{external ? "외부 공지" : "협력사 통보"}</small><Highlighted body={content} marks={[link?.supplier_quote, ...(external ? [...factQuotes, ...candidateQuotes] : [])]} /></p>
         {notices.map((notice) => <p key={text(notice.event_id)}><small>연결된 외부 공지 · {text(notice.title)} · 발행 {text(notice.published_at).slice(0, 10)}</small><Highlighted body={text(notice.content, "")} marks={[link?.signal_quote, ...factQuotes]} /></p>)}
-        {found.length > 0 && <p className="real-basis">에이전트가 찾은 실제 사례: {found.map((row, index) => <span key={text(row.risk_id)}>{index ? " · " : ""}<CaseLink row={row} />{row.cited ? " · 근거로 인용" : ""}</span>)}</p>}
+        {found.length > 0 && <p className="real-basis">AI가 찾은 실제 사례: {found.map((row, index) => <span key={text(row.risk_id)}>{index ? " · " : ""}<CaseLink row={row} />{row.cited ? " · 근거로 인용" : ""}</span>)}</p>}
         {basis.filter((row) => !found.some((item) => item.risk_id === row.risk_id)).length > 0 && <p className="real-basis">시나리오 설계 근거 실제 사례: {basis.map((row, index) => <span key={text(row.risk_id)}>{index ? " · " : ""}<CaseLink row={row} /></span>)}</p>}
         {(found.length > 0 || basis.length > 0) && <small>일정·날짜는 기준 일정으로 계산하며, 기사 속 지연 기간은 계산에 쓰지 않습니다.</small>}
       </details>
-      {email && email.body ? <details className="agent-note email-draft"><summary>협력사 메일 초안 · 발송 전</summary><p><b>{text(email.to, "")}{email.to ? " · " : ""}{text(email.subject, "확인 요청")}</b></p><p className="draft-body">{text(email.body)}</p></details> : null}
-      {reasoning && <details className="investigation-log"><summary>판단 기록 · 에이전트가 고른 확인 {log.length}단계</summary>{usage && <p className="usage-line">{usage}</p>}{reasoning}</details>}
+      {reasoning && <details className="investigation-log"><summary>AI가 확인한 근거 {log.length}단계</summary>{usage && <p className="usage-line">{usage}</p>}{reasoning}</details>}
     </div>}
   </div>;
 }
@@ -1564,8 +1484,7 @@ function recommendation(scenarios: Row[]) {
   const none = scenarios.find((row) => !((row.data?.option_ids || []) as unknown[]).length);
   if (!none || none.data?.target_met) return "";
   const best = scenarios.filter((row) => Number(row.data?.recovery_days_vs_no_response || 0) > 0)
-    .sort((a, b) => Number(b.data?.recovery_days_vs_no_response || 0) - Number(a.data?.recovery_days_vs_no_response || 0)
-      || Number(a.data?.extra_cost_krw || 0) - Number(b.data?.extra_cost_krw || 0))[0];
+    .sort((a, b) => Number(b.data?.recovery_days_vs_no_response || 0) - Number(a.data?.recovery_days_vs_no_response || 0))[0];
   return text(best?.id, "");
 }
 
@@ -1613,7 +1532,7 @@ function toolResultSummary(entry: Dict) {
   if (tool === "get_project_context") return `프로젝트 작업 ${Array.isArray(result.tasks) ? result.tasks.length : 0}개를 확인했습니다.`;
   if (tool === "find_task_candidates") return `관련 작업 후보: ${Array.isArray(result.task_ids) ? result.task_ids.join(", ") : text(result.status)}`;
   if (tool === "list_response_options") return `등록된 대응안 ${Array.isArray(result.options) ? result.options.length : 0}개를 확인했습니다.`;
-  if (tool === "simulate_schedule") return `계산 완료일 ${text(result.finish_date)} · 추가 비용 ${money(result.extra_cost_krw)}`;
+  if (tool === "simulate_schedule") return `계산 완료일 ${text(result.finish_date)}`;
   if (tool === "recheck_shifted_schedule") {
     const constraints = (Array.isArray(result.external_constraints) ? result.external_constraints : []) as Dict[];
     const holidays = constraints.filter((item) => item.kind === "public_holiday").map((item) => `${text(item.date)} (${text(item.task_id)})`);
@@ -1650,10 +1569,9 @@ function AgentDecisionPanel({ agent, eventContent, llmMode }: { agent?: Dict; ev
   const log = (Array.isArray(agent.tool_log) ? agent.tool_log : []) as Dict[];
   const regulation = agent.regulatory_assessment as Dict | undefined;
   const conditional = agent.conditional_scenario as Dict | undefined;
-  const email = agent.email_draft as Dict | undefined;
   const explanations = (Array.isArray(agent.option_explanations) ? agent.option_explanations : []) as unknown[];
   return <details className="agent-decision" aria-label="에이전트 판단 과정">
-    <summary><span className="eyebrow">{interpretation ? "에이전트 해석" : "에이전트 설명과 협의 초안"}</span> <b>{interpretation ? "에이전트 해석 보기" : "계산된 대응안에 대한 에이전트 설명 보기"}</b></summary>
+    <summary><span className="eyebrow">{interpretation ? "에이전트 해석" : "에이전트 설명"}</span> <b>{interpretation ? "에이전트 해석 보기" : "계산된 대응안에 대한 에이전트 설명 보기"}</b></summary>
     <p>{agentSummary(agent)}</p>
     {usageLine(agent.usage as Dict | undefined, llmMode) && <p className="usage-line">{usageLine(agent.usage as Dict | undefined, llmMode)}</p>}
     {agent.stop_reason ? (["needs_input", "needs_review", "completed"].includes(text(agent.status))
@@ -1663,14 +1581,13 @@ function AgentDecisionPanel({ agent, eventContent, llmMode }: { agent?: Dict; ev
     {regulation && /(규제|인허가|허가|법령|법규|규정|regulation|regulatory|permit|license)/i.test(eventContent) ? <div className="agent-note"><h4>규제·인허가 적용 가능성: {text(regulation.likelihood, "불확실")}</h4>{regulation.reason ? <p>{text(regulation.reason)}</p> : null}{regulation.human_check ? <p>사람 확인: {text(regulation.human_check)}</p> : null}{Array.isArray(regulation.evidence_risk_ids) && regulation.evidence_risk_ids.length ? <small>당시 이용 가능한 L2 근거: {(regulation.evidence_risk_ids as unknown[]).join(", ")}</small> : null}{Array.isArray(regulation.reference_only_risk_ids) && regulation.reference_only_risk_ids.length ? <small>통보 이후 발행된 참고 사례: {(regulation.reference_only_risk_ids as unknown[]).join(", ")}</small> : null}</div> : null}
     {conditional ? <div className="agent-note"><h4>규제 적용 시 조건부 일정 · 계산 도구</h4><p>{conditional.finish_date ? `계산된 완료 예정일 ${text(conditional.finish_date)}` : text(conditional.reason, "추가 일정 입력이 필요합니다.")}</p><small>적용 확인 전에는 확정 일정에 반영되지 않습니다.</small></div> : null}
     {explanations.length ? <div className="agent-note"><h4>대응안별 설명</h4>{explanations.map((item, index) => <p key={index}>{explanationText(item)}</p>)}</div> : null}
-    {email ? <div className="agent-note email-draft"><h4>협력사 협의 메일 · 발송 전 초안</h4><p><b>{text(email.subject, "협의 요청")}</b></p><p className="draft-body">{text(email.body)}</p></div> : null}
     {log.length > 0 && <details><summary>도구 호출 기록 {log.length}건</summary><ol className="agent-tool-list">{log.map((entry, index) => <li key={`${text(entry.tool)}-${index}`}><b>{text(entry.tool)}</b> · {text(entry.status)}<p className="agent-tool-result">{toolResultSummary(entry)}</p><details><summary>전체 도구 응답 보기</summary><pre>{JSON.stringify(entry.result ?? entry.error ?? {}, null, 2)}</pre></details></li>)}</ol></details>}
   </details>;
 }
 
 function OptionCatalog({ options }: { options: Dict[] }) {
   if (!options.length) return null;
-  return <details className="focus-card option-catalog fold"><summary>등록된 대응안 카탈로그 {options.length}개</summary><p>가정한 단축 일수는 보장된 회복 일수가 아닙니다. 실제 회복 일수는 위 계산 결과로 비교하세요.</p><div className="option-catalog-grid">{options.map((option) => <article key={text(option.option_id)}><b>{text(option.name)}</b><small>적용 작업 {(option.target_ids as string[] || []).join(", ")} · 최대 가정 {text(option.reduction_workdays)}작업일 단축 · 추가 비용 {money(option.extra_cost_krw)} ({text(option.currency, "KRW")})</small><p>{text(option.conditions)}</p><small>결정 기한 {text(option.decision_deadline)} · {text(option.approval_state)} · {text(option.data_origin)}</small></article>)}</div></details>;
+  return <details className="focus-card option-catalog fold"><summary>등록된 대응안 카탈로그 {options.length}개</summary><p>가정한 단축 일수는 보장된 회복 일수가 아닙니다. 실제 회복 일수는 위 계산 결과로 비교하세요.</p><div className="option-catalog-grid">{options.map((option) => <article key={text(option.option_id)}><b>{text(option.name)}</b><small>적용 작업 {(option.target_ids as string[] || []).join(", ")} · 최대 가정 {text(option.reduction_workdays)}작업일 단축</small><p>{text(option.conditions)}</p><small>결정 기한 {text(option.decision_deadline)} · {text(option.approval_state)} · {text(option.data_origin)}</small></article>)}</div></details>;
 }
 
 function ScenarioList({ scenarios, selected, approvedId, recommendedId = "", onSelect }: { scenarios: Row[]; selected: string; approvedId: string; recommendedId?: string; onSelect: (id: string) => void }) {
@@ -1685,7 +1602,7 @@ function ScenarioList({ scenarios, selected, approvedId, recommendedId = "", onS
           <button key={text(scenario.id)} className={selected === scenario.id ? "scenario active" : "scenario"} onClick={() => onSelect(text(scenario.id))} aria-pressed={selected === scenario.id}>
             <span>{scenario.id === recommendedId ? <em className="recommended">추천</em> : null}{text(data.label)}{scenario.id === approvedId ? " · 승인됨" : ""}</span>
             <b>{text(data.finish_date)}</b>
-            <small>{scenarioScore(data)} · 무대응 대비 회복 {text(data.recovery_days_vs_no_response, "-")}일 · {costLabel(data)}</small>
+            <small>{scenarioScore(data)} · 무대응 대비 회복 {text(data.recovery_days_vs_no_response, "-")}일</small>
           </button>
         );
       })}

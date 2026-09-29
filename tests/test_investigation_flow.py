@@ -21,16 +21,19 @@ def client(tmp_path, monkeypatch):
     from app.adapters import sources
 
     monkeypatch.setenv("REPLAN_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("REPLAN_DEMO_TOKEN", "test-token")
+    monkeypatch.setenv("REPLAN_DEMO_TOKEN", "demo-token")
     monkeypatch.delenv("REPLAN_LLM_MODE", raising=False)
     for key in ("API_KEY", "LLM_MODEL", "LLM_BASE_URL"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(sources, "fetch_holidays", lambda *_a, **_k: pytest.fail("no network in hero demo"))
-    return TestClient(app)
+    result = TestClient(app)
+    registered = result.post("/api/auth/register", json={"username": "investigation_user", "password": "StrongPass123!"})
+    assert registered.status_code == 200, registered.text
+    return result
 
 
 def call(client, method, path, **kwargs):
-    response = getattr(client, method)(path, headers={"Authorization": "Bearer test-token"}, **kwargs)
+    response = getattr(client, method)(path, **kwargs)
     assert response.status_code < 400, response.text
     return response.json()
 
@@ -91,8 +94,7 @@ def test_x2_investigation_finds_c_and_leaves_one_request(client, monkeypatch):
                                       "latest_action_date": "2027-02-08", "worst_case_finish": "2028-02-11"}],
                            "question": "P-C 선적에도 별도 수출 허가가 필요합니까?",
                            "checks": ["P-B·P-C를 찾음", "T058 여유 245일, T051 여유 0일", "P-C 지연 시 2028-02-11"]},
-         "email_draft": {"to": "Equipment Vendor A", "subject": "P-B·P-C 수입 서류 확인 요청",
-                         "body": "P-C 수출 허가 신청 일정을 알려 주세요."}},
+         },
     ])
     queued = call(client, "post", f"/api/projects/{project_id}/events/{event_id}/investigations")
     assert run_once(Store())
@@ -117,10 +119,8 @@ def test_x2_investigation_finds_c_and_leaves_one_request(client, monkeypatch):
     basis = run["data"]["real_case_basis"]
     assert [row["risk_id"] for row in basis] == ["RS-019"] and basis[0]["source_url"].startswith("https://")
     assert basis[0]["published_date"] == "2025-10-15"
-    assert "서류 제출 기한: P-C 2027-02-08" in run["data"]["agent"]["email_draft"]["body"]
     assert run["data"]["rules_only"]["finish_date"] == "2027-12-21" and run["data"]["rules_only"]["finish_shift_days"] == 0
     assert "Licence review may take up to 60 days" in run["data"]["linked_notices"][0]["content"]
-    assert run["data"]["agent"]["email_draft"]["to"] == "Equipment Vendor A"
     project = call(client, "get", f"/api/projects/{project_id}")
     assert any(row["data"]["event_type"] == "investigation_ready" for row in project["notifications"])
 
@@ -142,8 +142,7 @@ def test_x2_control_stops_without_request_or_notification(client, monkeypatch):
 
 def test_investigation_needs_the_agent_on(client):
     project_id, event_id = load(client, "X2")
-    response = client.post(f"/api/projects/{project_id}/events/{event_id}/investigations",
-                           headers={"Authorization": "Bearer test-token"})
+    response = client.post(f"/api/projects/{project_id}/events/{event_id}/investigations")
     assert response.status_code == 409
 
 
@@ -192,8 +191,7 @@ def test_x1a_narrows_checks_facts_and_computes_the_deadline(client, monkeypatch)
          "investigation": {"stop": "M4", "applicable_task_ids": ["T046", "T053"],
                            "excluded": [{"task_id": "T047", "reason": "독일(EU 역내) 협력사"}],
                            "question": "Vendor A 기술자의 취업 허가 확인을 신청할 수 있는지 확인해 주세요.", "checks": []},
-         "email_draft": {"to": "Equipment Vendor A", "subject": "설비 서류 제출 일정 확인",
-                         "body": "2026-11-05까지 제출 가능한지 알려 주세요."}},
+         },
     ])
     queued = call(client, "post", f"/api/projects/{project_id}/events/{event_id}/investigations")
     assert run_once(Store())
@@ -218,11 +216,10 @@ def run_x2_investigation(client, monkeypatch):
         tool("simulate_conditional", reason="P-C 최악 조건", changes=[
             {"kind": "hold_after_arrival", "item_id": "P-C", "value": 60, "fact_quote": QUOTE}]),
         {"summary": "P-C가 늦으면 2028-02-11", "status": "needs_input", "stop_reason": "P-C 확인",
-         "investigation": {"stop": "M4", "question": "P-C도 허가가 필요합니까?", "checks": []},
-         "email_draft": {"to": "Equipment Vendor A", "subject": "P-C 확인", "body": "P-C 허가 여부를 알려 주세요."}},
+         "investigation": {"stop": "M4", "question": "P-C도 허가가 필요합니까?", "checks": []}},
         # The explanation after recalculation.
         {"summary": "P-C 지연을 반영하면 2028-02-11이며 HOPT-05와 HOPT-06 조합이 가장 많이 회복합니다.",
-         "status": "needs_review", "stop_reason": "", "option_explanations": [], "email_draft": None, "unresolved_items": []},
+         "status": "needs_review", "stop_reason": "", "option_explanations": [], "unresolved_items": []},
     ])
     queued = call(client, "post", f"/api/projects/{project_id}/events/{event_id}/investigations")
     assert run_once(Store())
@@ -246,7 +243,7 @@ def test_confirming_the_hidden_item_recalculates_and_recommends_the_best_pair(cl
     action = Store().get_json("actions", investigation["data"]["action_ids"][0], project_id)["data"]
     assert action["state"] == "DONE" and action["decision"] == "applies"
     again = client.post(f"/api/projects/{project_id}/investigations/{investigation['id']}/resolve",
-                        headers={"Authorization": "Bearer test-token"}, json={"decision": "not_applicable"})
+                        json={"decision": "not_applicable"})
     assert again.status_code == 409
 
 
@@ -282,11 +279,11 @@ def test_hidden_risk_comparison_survives_commit_reload_and_excel(client, monkeyp
     committed = call(client, 'post', f'/api/scenarios/{best["id"]}/commit')
     again = call(client, 'post', f'/api/scenarios/{best["id"]}/commit')
     assert again['version_id'] == committed['version_id']
-    after = call(client, 'get', url)
+    after = call(client, 'get', url + '?version_id=' + committed['version_id'])
     assert after['committed'] and after['rows'] == before['rows']
     assert after['baseline_version_id'] == before['baseline_version_id']
     assert (after['risk_days'], after['recovered_days'], after['remaining_days']) == (52,17,35)
-    exported = client.get(f'/api/projects/{project_id}/export?version_id={committed["version_id"]}', headers={'Authorization':'Bearer test-token'})
+    exported = client.get(f'/api/projects/{project_id}/export?version_id={committed["version_id"]}')
     assert exported.status_code == 200
     wb = load_workbook(io.BytesIO(exported.content))
     assert wb['일정 변화 요약']['C3'].value == 52 and wb['일정 변화 요약']['C4'].value == 35 and wb['일정 변화 요약']['C5'].value == 17
@@ -296,5 +293,5 @@ def test_hidden_risk_comparison_survives_commit_reload_and_excel(client, monkeyp
     old = call(client, 'get', url + '?version_id=' + before['baseline_version_id'])
     assert old['remaining_days'] == 0 and not old['committed']
     other = call(client, 'post', '/api/projects', json={'mode':'REPLAY'})['project_id']
-    cross_project = client.get(f'/api/projects/{other}/schedule-comparison?version_id={committed["version_id"]}',headers={'Authorization':'Bearer test-token'})
+    cross_project = client.get(f'/api/projects/{other}/schedule-comparison?version_id={committed["version_id"]}')
     assert cross_project.status_code == 404

@@ -157,11 +157,10 @@ def _initial_messages(
         "context.scenario_summaries, [] for no response), "
         'regulatory_assessment (null unless the notice mentions a regulation or permit, else {"likelihood": '
         '"높음|중간|낮음|불확실", "reason": string, "human_check": string, "evidence_risk_ids": [...]}), '
-        'email_draft ({"to", "subject", "body"} in Korean, or null), unresolved_items (array of concrete '
-        "questions for a person). Do not add other keys and do not restate task lists or schedules. "
+        'unresolved_items (array of concrete questions for a person). Do not add other keys and do not restate task lists or schedules. '
         "When context.scenario_summaries is present, deterministic calculators have already produced those "
         "scenarios: compare and explain them, cite them by option_ids, and never say they were not calculated. "
-        "Use calculator values exclusively for all dates, durations and costs; do not alter them. "
+        "Use calculator values exclusively for all dates and durations; do not alter them. "
         "Tools are optional; call one only when it adds evidence, one at a time, using native tool calls or "
         '{"action":"tool","tool":"name","args":{...}}. Pass {} to tools that declare no arguments. '
         "If the task or changed date is ambiguous, ask a concrete question and stop before schedule tools. "
@@ -441,8 +440,6 @@ def _normalize_result(value: Dict[str, Any]) -> Dict[str, Any]:
                                 if _option_explanation(item)["text"]],
         "regulatory_assessment": value.get("regulatory_assessment") if isinstance(value.get("regulatory_assessment"), dict) else None,
         "conditional_scenario": value.get("conditional_scenario") if isinstance(value.get("conditional_scenario"), dict) else None,
-        "email_draft": ({key: str(value["email_draft"].get(key) or "") for key in ("to", "subject", "body")}
-                        if isinstance(value.get("email_draft"), dict) else None),
         "stop_reason": str(value.get("stop_reason") or ""),
         "required_actions": _list(value.get("required_actions")),
         "unresolved_items": [_text(item) for item in _list(value.get("unresolved_items")) if _text(item)],
@@ -620,7 +617,7 @@ def _ground_final(value: Dict[str, Any], event: Dict[str, Any], tool_log: List[D
             return {key: clean(child) for key, child in item.items()}
         return item
 
-    for key in ("email_draft", "option_explanations", "investigation", "briefing"):
+    for key in ("option_explanations", "investigation", "briefing"):
         if key in value:
             value[key] = clean(value[key])
 

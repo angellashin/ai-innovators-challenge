@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ProjectRecords, deriveProgress, stageSummary } from "../stages";
+import { authToken, withAuth } from "../auth-client";
 
 type Dict = Record<string, unknown>;
 
@@ -43,8 +44,7 @@ export default function WorkspacesPage() {
   const [actionProjectId, setActionProjectId] = useState("");
 
   async function api<T>(path: string, init: RequestInit = {}) {
-    const headers = new Headers(init.headers);
-    const response = await fetch(`${apiBase}${path}`, { ...init, headers });
+    const response = await fetch(`${apiBase}${path}`, withAuth(init));
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<T>;
   }
@@ -67,9 +67,13 @@ export default function WorkspacesPage() {
   }
 
   useEffect(() => {
+    if (!authToken()) {
+      router.replace(`/auth?next=${encodeURIComponent("/workspaces")}`);
+      return;
+    }
     setHighlightedProjectId(new URLSearchParams(window.location.search).get("highlight") || "");
     void loadProjects();
-  }, [includeArchived]);
+  }, [includeArchived, router]);
 
   async function toggleArchive(project: Dict) {
     const id = text(project.id);
@@ -148,7 +152,6 @@ export default function WorkspacesPage() {
             <p className="eyebrow">NEW PROJECT</p>
             <h2>새 프로젝트</h2>
             <p>프로젝트 이름만 정하고, 다음 단계에서 기준 일정을 연결합니다.</p>
-            <p className="form-note">대응 비용과 실행 조건은 실제 리스크 영향을 확인한 뒤 대응안을 비교할 때 입력합니다.</p>
             <Link className="workspace-primary-action" href="/workspaces/new">프로젝트 만들기 <span aria-hidden="true">→</span></Link>
           </div>
         </aside>

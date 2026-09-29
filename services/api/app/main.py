@@ -7,28 +7,34 @@ import hashlib
 import json
 import os
 import math
+import secrets
+import base64
+import sqlite3
+from contextvars import ContextVar
 from datetime import date, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from openpyxl import Workbook
 from pydantic import BaseModel, Field
 
 from .adapters.llm import agent_enabled, llm_mode
 from .events import normalize_event
+from .hero_demo import HERO_PROJECT_ID
 from .risk_register import list_risks
 from .storage import Store, digest, identifier, utcnow
 
 
 app = FastAPI(title="RE:PLAN API", version="0.1.0")
+CURRENT_PRINCIPAL: ContextVar[dict[str, str] | None] = ContextVar("replan_principal", default=None)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in os.environ.get("REPLAN_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")],
     allow_methods=["GET", "POST", "PUT", "PATCH"],
-    allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+    allow_headers=["Authorization", "X-Replan-Session", "Content-Type", "Idempotency-Key"],
 )
 
 
@@ -36,17 +42,77 @@ def store() -> Store:
     return Store()
 
 
-def authorize(authorization: str | None = Header(default=None)) -> None:
+def _hash_password(password: str, salt: bytes | None = None) -> str:
+    salt = salt or secrets.token_bytes(16)
+    digest_value = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 240_000)
+    return "pbkdf2_sha256$240000$%s$%s" % (
+        base64.urlsafe_b64encode(salt).decode(), base64.urlsafe_b64encode(digest_value).decode())
+
+
+def _check_password(password: str, encoded: str) -> bool:
+    try:
+        algorithm, rounds, salt_value, digest_value = encoded.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        salt = base64.urlsafe_b64decode(salt_value.encode())
+        expected = base64.urlsafe_b64decode(digest_value.encode())
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, int(rounds))
+        return secrets.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _principal() -> dict[str, str] | None:
+    return CURRENT_PRINCIPAL.get()
+
+
+async def authorize(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    x_replan_session: str | None = Header(default=None, alias="X-Replan-Session"),
+    replan_session: str | None = Cookie(default=None, alias="replan_session"),
+) -> dict[str, str]:
     expected = os.environ.get("REPLAN_DEMO_TOKEN")
     if not expected:
         raise HTTPException(503, "REPLAN_DEMO_TOKEN must be configured")
-    if authorization != f"Bearer {expected}":
-        raise HTTPException(401, "invalid bearer token")
+    if authorization == f"Bearer {expected}":
+        principal = {"kind": "demo", "id": "demo"}
+        CURRENT_PRINCIPAL.set(principal)
+        return principal
+    token = x_replan_session or replan_session or (
+        authorization.removeprefix("Bearer ").strip()
+        if authorization and authorization.startswith("Bearer ")
+        else ""
+    )
+    if not token:
+        raise HTTPException(401, "login required")
+    with store().connection() as conn:
+        row = conn.execute(
+            "SELECT sessions.user_id, users.username FROM sessions JOIN users ON users.id=sessions.user_id "
+            "WHERE sessions.token_hash=? AND sessions.revoked_at IS NULL", (_token_hash(token),)).fetchone()
+    if not row:
+        raise HTTPException(401, "invalid session")
+    principal = {"kind": "user", "id": row["user_id"], "username": row["username"]}
+    CURRENT_PRINCIPAL.set(principal)
+    return principal
 
 
 def project_or_404(db: Store, project_id: str) -> dict[str, Any]:
     project = db.get_json("projects", project_id)
     if project is None:
+        raise HTTPException(404, "project not found")
+    principal = _principal()
+    if principal and principal["kind"] == "demo" and project_id != HERO_PROJECT_ID:
+        raise HTTPException(404, "project not found")
+    if (
+        principal
+        and principal["kind"] == "user"
+        and project_id != HERO_PROJECT_ID
+        and project["data"].get("owner_user_id") != principal["id"]
+    ):
         raise HTTPException(404, "project not found")
     return project
 
@@ -184,9 +250,13 @@ class ProjectInput(BaseModel):
     region: str | None = None
     timezone: str = "Asia/Seoul"
     target_finish: date | None = None
-    extra_budget_krw: int | None = Field(default=None, ge=0)
     mode: str = "LIVE"
     data_origin: str = "USER"
+
+
+class CredentialsInput(BaseModel):
+    username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9_.-]+$")
+    password: str = Field(min_length=8, max_length=128)
 
 
 class ProjectArchiveInput(BaseModel):
@@ -261,7 +331,6 @@ class EventReviewInput(BaseModel):
 class AnalysisInput(BaseModel):
     event_id: str
     version_id: str | None = None
-    budget_krw: int | None = Field(default=None, ge=0)
     preview_only: bool = False
 
 
@@ -284,11 +353,6 @@ class CandidateSelectionInput(BaseModel):
 class RiskStatusInput(BaseModel):
     status: str = Field(pattern="^(EXPECTED|SIGNAL_DETECTED|OCCURRED|RESPONDING|CLOSED)$")
     note: str = Field(default="", max_length=500)
-
-
-class ReplanInput(BaseModel):
-    budget_krw: int = Field(ge=0)
-    unavailable_option_ids: list[str] = Field(default_factory=list)
 
 
 class ApprovalInput(BaseModel):
@@ -341,9 +405,77 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/api/auth/register")
+def register(value: CredentialsInput) -> dict[str, Any]:
+    db = store()
+    user_id = identifier()
+    try:
+        with db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)",
+                (user_id, value.username, _hash_password(value.password), utcnow()),
+            )
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, "이미 사용 중인 아이디입니다.") from exc
+    session = _issue_session(db, user_id, value.username)
+    return JSONResponse(
+        content=session,
+        headers={"Set-Cookie": f"replan_session={session['token']}; HttpOnly; Path=/; SameSite=Lax"},
+    )
+
+
+@app.post("/api/auth/login")
+def login(value: CredentialsInput) -> dict[str, Any]:
+    db = store()
+    with db.connection() as conn:
+        row = conn.execute("SELECT id, username, password_hash FROM users WHERE username=?", (value.username,)).fetchone()
+    if not row or not _check_password(value.password, row["password_hash"]):
+        raise HTTPException(401, "아이디 또는 비밀번호를 확인해주세요.")
+    session = _issue_session(db, row["id"], row["username"])
+    return JSONResponse(
+        content=session,
+        headers={"Set-Cookie": f"replan_session={session['token']}; HttpOnly; Path=/; SameSite=Lax"},
+    )
+
+
+def _issue_session(db: Store, user_id: str, username: str) -> dict[str, Any]:
+    token = secrets.token_urlsafe(32)
+    db_id = identifier()
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO sessions (id, user_id, token_hash, created_at, revoked_at) VALUES (?, ?, ?, ?, NULL)",
+            (db_id, user_id, _token_hash(token), utcnow()),
+        )
+    return {"token": token, "user": {"id": user_id, "username": username}}
+
+
+@app.get("/api/auth/me", dependencies=[Depends(authorize)])
+def current_user() -> dict[str, Any]:
+    principal = _principal()
+    if not principal or principal["kind"] != "user":
+        raise HTTPException(401, "login required")
+    return {"user": principal}
+
+
+@app.post("/api/auth/logout", dependencies=[Depends(authorize)])
+def logout(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    x_replan_session: str | None = Header(default=None, alias="X-Replan-Session"),
+    replan_session: str | None = Cookie(default=None, alias="replan_session"),
+) -> dict[str, bool]:
+    token = x_replan_session or replan_session or (authorization or "").removeprefix("Bearer ").strip()
+    if token:
+        with store().transaction() as conn:
+            conn.execute("UPDATE sessions SET revoked_at=? WHERE token_hash=?", (utcnow(), _token_hash(token)))
+    return {"ok": True}
+
+
 @app.post("/api/projects", dependencies=[Depends(authorize)])
 def create_project(value: ProjectInput) -> dict[str, Any]:
     db = store()
+    principal = _principal()
+    if not principal or principal["kind"] != "user":
+        raise HTTPException(401, "새 프로젝트를 만들려면 로그인해주세요.")
     data = value.model_dump(mode="json")
     if data["mode"] not in {"LIVE", "REPLAY"}:
         raise HTTPException(422, "mode must be LIVE or REPLAY")
@@ -351,6 +483,8 @@ def create_project(value: ProjectInput) -> dict[str, Any]:
     if db.get_json("projects", project_id):
         raise HTTPException(409, "project already exists")
     data["project_id"] = project_id
+    data["owner_user_id"] = principal["id"]
+    data["owner_username"] = principal["username"]
     db.put_json("projects", project_id, data)
     return {"project_id": project_id, "project": data}
 
@@ -363,6 +497,16 @@ def list_projects(include_archived: bool = False) -> dict[str, Any]:
     projects = []
     for row in rows:
         data = json.loads(row["data"])
+        principal = _principal()
+        if principal and principal["kind"] == "demo" and row["id"] != HERO_PROJECT_ID:
+            continue
+        if (
+            principal
+            and principal["kind"] == "user"
+            and row["id"] != HERO_PROJECT_ID
+            and data.get("owner_user_id") != principal["id"]
+        ):
+            continue
         if data.get("archived_at") and not include_archived:
             continue
         projects.append({"id": row["id"], **data})
@@ -1217,7 +1361,7 @@ def resolve_investigation(project_id: str, run_id: str, value: ResolveInput) -> 
                        f"사람이 조사 결과를 확인함: {note}", run_id=run_id)
         analysis_run = db.create_run(project_id, "analysis", record["id"], version["id"],
                                      digest({"resolved": run_id, "patch": event["patch"]}),
-                                     {"budget_krw": None, "preview_only": False, "resolved_from": run_id,
+                                     {"preview_only": False, "resolved_from": run_id,
                                       "project_context_snapshot": db.project_context_snapshot(project_id)})
     notify_project(db, project_id, "investigation_resolved", "조사 확인 결과 기록",
                    "추가 영향을 반영해 일정을 다시 계산합니다." if applies else "해당 없음으로 기록했습니다. 기존 분석을 유지합니다.",
@@ -1288,7 +1432,7 @@ def create_analysis(project_id: str, value: AnalysisInput, idempotency_key: str 
         raise HTTPException(409, "event rejected or superseded")
     if event_data.get("version_id") and event_data["version_id"] != version["id"]:
         raise HTTPException(409, "source interpretation belongs to an older schedule; scan again")
-    key = idempotency_key or digest({"event_id": value.event_id, "event_hash": digest(event_data), "version_id": version["id"], "budget": value.budget_krw})
+    key = idempotency_key or digest({"event_id": value.event_id, "event_hash": digest(event_data), "version_id": version["id"]})
     run = db.create_run(
         project_id,
         "analysis",
@@ -1296,7 +1440,6 @@ def create_analysis(project_id: str, value: AnalysisInput, idempotency_key: str 
         version["id"],
         key,
         {
-            "budget_krw": value.budget_krw,
             "preview_only": value.preview_only,
             "project_context_snapshot": db.project_context_snapshot(project_id),
         },
@@ -1315,20 +1458,6 @@ def get_run(run_id: str) -> dict[str, Any]:
     scenarios.sort(key=lambda item: (len(item["data"].get("option_ids") or []),
                                      tuple(item["data"].get("option_ids") or [])))
     return {"run": run, "scenarios": scenarios}
-
-
-@app.post("/api/runs/{run_id}/replan", status_code=202, dependencies=[Depends(authorize)])
-def replan(run_id: str, value: ReplanInput) -> dict[str, Any]:
-    db = store()
-    prior = db.get_json("runs", run_id)
-    if not prior or prior["kind"] != "analysis":
-        raise HTTPException(404, "analysis run not found")
-    project_or_404(db, prior["project_id"])
-    key = digest({"prior": run_id, "budget": value.budget_krw, "unavailable": sorted(value.unavailable_option_ids)})
-    run_data = value.model_dump()
-    run_data["project_context_snapshot"] = db.project_context_snapshot(prior["project_id"])
-    run = db.create_run(prior["project_id"], "analysis", prior["event_id"], prior["version_id"], key, run_data)
-    return {"run_id": run["id"], "status": run["status"]}
 
 
 @app.get("/api/projects/{project_id}/scenarios", dependencies=[Depends(authorize)])
@@ -1433,7 +1562,7 @@ def approve_scenario(scenario_id: str, value: ApprovalInput) -> dict[str, Any]:
     if value.decision != "APPROVED":
         raise HTTPException(422, "only APPROVED is supported by this endpoint")
     data = scenario["data"]
-    if not data.get("budget_met", False) or data.get("violations"):
+    if data.get("violations"):
         raise HTTPException(409, "scenario violates hard constraints")
     required = set(data.get("required_confirmations", []))
     if not required.issubset(value.confirmed_conditions):

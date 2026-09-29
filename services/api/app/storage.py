@@ -90,6 +90,14 @@ class Store:
                 CREATE TABLE IF NOT EXISTS projects (
                     id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL, revoked_at TEXT
+                );
                 CREATE TABLE IF NOT EXISTS imports (
                     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, filename TEXT NOT NULL,
                     data TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL

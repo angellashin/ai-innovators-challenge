@@ -25,7 +25,7 @@ TRUTH = json.loads((ROOT / "data/hero_demo/supplier_message_ground_truth.json").
 
 
 def request(client, method, path, **kwargs):
-    response = getattr(client, method)(path, headers={"Authorization": "Bearer test-token"}, **kwargs)
+    response = getattr(client, method)(path, **kwargs)
     assert response.status_code < 400, response.text
     return response.json()
 
@@ -38,10 +38,13 @@ def client(tmp_path, monkeypatch):
         raise AssertionError("hero demo attempted an external holiday request")
 
     monkeypatch.setenv("REPLAN_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("REPLAN_DEMO_TOKEN", "test-token")
+    monkeypatch.setenv("REPLAN_DEMO_TOKEN", "demo-token")
     monkeypatch.delenv("API_KEY", raising=False)
     monkeypatch.setattr(sources, "fetch_holidays", network_forbidden)
-    return TestClient(app)
+    result = TestClient(app)
+    registered = result.post("/api/auth/register", json={"username": "hero_user", "password": "StrongPass123!"})
+    assert registered.status_code == 200, registered.text
+    return result
 
 
 def hero_baseline(client):
@@ -98,8 +101,7 @@ def test_bundled_hero_demo_uses_the_upload_baseline_path(client):
     assert result["project"]["data_origin"] == "SYNTHETIC"
     assert result["version"]["data"]["import_id"]
     assert result["demo_events"][0]["event_id"] == "H01"
-    repeat = client.post(f"/api/projects/{project_id}/demo/hero-baseline",
-                         headers={"Authorization": "Bearer test-token"})
+    repeat = client.post(f"/api/projects/{project_id}/demo/hero-baseline")
     assert repeat.status_code == 409
 
 
@@ -131,9 +133,9 @@ def test_hero_response_catalog_is_synthetic_and_h04_recovery_is_calculated(clien
     project_id, baseline = hero_baseline(client)
     options = baseline["version"]["data"]["options"]
     assert len(options) == 6
-    assert all(option["data_origin"] == "SYNTHETIC" and option["currency"] == "KRW"
+    assert all(option["data_origin"] == "SYNTHETIC"
                and option["target_ids"] and option["reduction_workdays"] > 0
-               and option["extra_cost_krw"] > 0 and option["conditions"]
+               and option["conditions"]
                and option["decision_deadline"] for option in options)
     selected = next(item for item in baseline["demo_events"] if item["event_id"] == "H04")
     event = request(client, "post", f"/api/projects/{project_id}/events", json=selected)
@@ -143,10 +145,8 @@ def test_hero_response_catalog_is_synthetic_and_h04_recovery_is_calculated(clien
     scenarios = request(client, "get", f"/api/runs/{queued['run_id']}")["scenarios"]
     by_option = {tuple(row["data"]["option_ids"]): row["data"] for row in scenarios}
     assert by_option[()]["finish_date"] == "2028-01-25"
-    assert by_option[()]["extra_cost_krw"] == 0
     assert by_option[()]["recovery_days_vs_no_response"] == 0
     assert by_option[("HOPT-05",)]["finish_date"] == "2028-01-11"
-    assert by_option[("HOPT-05",)]["extra_cost_krw"] == 13_000_000
     assert by_option[("HOPT-05",)]["recovery_days_vs_no_response"] == 14
     assert all(row["data"]["mode"] == "REPLAY" for row in scenarios)
 
@@ -279,7 +279,7 @@ def test_h08_retraction_supersedes_h04(client):
     correction = request(client, "post", f"/api/projects/{project_id}/events", json=baseline["demo_events"][8])
     assert correction["event"]["patch"] == {"estimated_finish": {"T045": "2026-12-05"}}
     assert Store().get_json("events", old["event_id"])["data"]["review_status"] == "SUPERSEDED"
-    denied = client.post(f"/api/projects/{project_id}/analyses", headers={"Authorization": "Bearer test-token"},
+    denied = client.post(f"/api/projects/{project_id}/analyses",
                          json={"event_id": old["event_id"], "preview_only": True})
     assert denied.status_code == 409
     queued = request(client, "post", f"/api/projects/{project_id}/analyses",
@@ -308,11 +308,11 @@ def test_hero_upload_message_preview_analysis_result_and_review_gate(client):
     assert {task["task_id"] for task in proposed["data"]["changed_tasks"]} == {
         "T036", "T038", "T040", "T042", "T044"}
     approval = client.post(f"/api/scenarios/{proposed['id']}/approve",
-                           headers={"Authorization": "Bearer test-token"}, json={"actor": "operator"})
+                           json={"actor": "operator"})
     assert approval.status_code == 409
     request(client, "patch", f"/api/projects/{project_id}/events/{event['event_id']}/review", json={"confirmed": True})
     still_preview = client.post(f"/api/scenarios/{proposed['id']}/approve",
-                                headers={"Authorization": "Bearer test-token"}, json={"actor": "operator"})
+                                json={"actor": "operator"})
     assert still_preview.status_code == 409
     reviewed = request(client, "post", f"/api/projects/{project_id}/analyses", json={"event_id": event["event_id"]})
     assert reviewed["run_id"] != queued["run_id"]
@@ -335,7 +335,7 @@ def test_hero_ambiguous_no_impact_duplicate_and_past_task_guard(client):
     first = request(client, "post", f"/api/projects/{project_id}/events", json=input_event(baseline["demo_events"][0]))
     repeated = request(client, "post", f"/api/projects/{project_id}/events", json=input_event(baseline["demo_events"][7]))
     assert repeated["duplicate"] and repeated["event_id"] == first["event_id"]
-    past = client.post(f"/api/projects/{project_id}/events", headers={"Authorization": "Bearer test-token"},
+    past = client.post(f"/api/projects/{project_id}/events",
                        json={"content": "T001 작업 완료일이 2025-02-05에서 2025-08-30로 변경됩니다.",
                              "published_at": "2025-08-21T09:00:00+02:00", "mode": "REPLAY"})
     assert past.status_code == 422
@@ -358,7 +358,7 @@ def test_h04_agent_reviews_calculated_scenarios_once(client, monkeypatch):
             "summary": "T045 반입 지연으로 무대응 완료일이 늦어지고, 설치팀 추가 투입안이 가장 많이 회복합니다.",
             "status": "needs_review", "stop_reason": "새 기간 공휴일의 현장 적용 확인",
             "option_explanations": [{"option_ids": ["HOPT-01"], "text": "HOPT-01은 2028-01-11로 14일 회복합니다."}],
-            "regulatory_assessment": None, "email_draft": None, "unresolved_items": []}, ensure_ascii=False),
+            "regulatory_assessment": None, "unresolved_items": []}, ensure_ascii=False),
             usage={"prompt_tokens": 100, "completion_tokens": 20})
 
     for key, value in {"API_KEY": "k", "LLM_MODEL": "m", "LLM_BASE_URL": "https://gateway.invalid/v1",

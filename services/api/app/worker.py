@@ -199,8 +199,7 @@ def _scenario_brief(item: dict[str, Any]) -> dict[str, Any]:
         "recovery_days_vs_no_response": item.get("recovery_days_vs_no_response"),
         "supplier_finish_shift_days": item.get("supplier_finish_shift_days"),
         "external_additional_shift_days": item.get("external_additional_shift_days"),
-        "extra_cost_krw": item.get("extra_cost_krw"), "target_met": item.get("target_met"),
-        "budget_met": item.get("budget_met"), "violations": item.get("violations") or [],
+        "target_met": item.get("target_met"), "violations": item.get("violations") or [],
         "changed_task_count": len(item.get("changed_tasks") or []),
         "new_calendar_constraint_count": len(constraints),
         "new_calendar_constraints": [{key: row.get(key) for key in ("task_id", "date", "name", "kind")}
@@ -290,7 +289,7 @@ def _run_review_agent(db: Store, run: dict[str, Any], project: dict[str, Any], t
         "changed_tasks_without_response": (no_response.get("changed_tasks") or [])[:12],
         "scenario_summaries": [_scenario_brief(item) for item in scenario_results],
         "response_options": [{key: option.get(key) for key in ("option_id", "name", "target_ids", "reduction_workdays",
-                                                               "extra_cost_krw", "conditions", "approval_state")}
+                                                               "conditions", "approval_state")}
                              for option in options],
         "risk_signal_evidence": [{key: row.get(key) for key in ("risk_id", "title", "published_date", "risk_type",
                                                                 "country", "temporal_status")}
@@ -346,10 +345,9 @@ INVESTIGATION_PROMPT = (
     '"items": [{"item_id", "task_id", "absorbs", "latest_action_date", "worst_case_finish"}], '
     '"applicable_task_ids": [], "excluded": [{"task_id", "reason"}], '
     '"question": one Korean question for a person or "", "checks": [one short Korean line per tool call: what it showed]}, '
-    '"email_draft": {"to", "subject", "body"} in Korean or null, "unresolved_items": []}. '
+    '"unresolved_items": []}. '
     "Quotes must be exact substrings of the given texts. Use tool values exactly for dates and days. Never name items "
-    "or tasks that no tool returned. Ask at most one question; when you ask, also draft a supplier email that asks "
-    "the same thing. A draft never sends. Never request commit or send actions."
+    "or tasks that no tool returned. Ask at most one concrete question. Never request commit or send actions."
 )
 
 
@@ -479,13 +477,13 @@ def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
             # The supplier never said these items need the documents; a person confirms before responses are compared.
             return {"status": "rejected", "inferred_items": inferred,
                     "reason": f"통보에 없는 품목({', '.join(inferred)})은 서류가 필요한지 사람이 확인하기 전까지 대응안을 비교하지 않습니다. "
-                              "확인 요청 1개와 같은 내용의 협력사 메일 초안을 남기고 M4로 멈추세요."}
+                              "확인 요청을 남기고 M4로 멈추세요."}
         briefs = []
         for label, selected in _candidate_options(options, set()):
             chosen = [item for item in options if item.get("option_id") in selected]
             result = recheck(state["conditional"], chosen)
             briefs.append({"label": label, "option_ids": selected, "finish_date": result.get("finish_date"),
-                           "extra_cost_krw": result.get("extra_cost_krw"), "target_met": result.get("target_met")})
+                           "target_met": result.get("target_met")})
         return {"scenarios": briefs, "conditional": True}
 
     def search_risk_signals(reason: str, query: str) -> dict[str, Any]:
@@ -581,12 +579,6 @@ def _run_investigation(db: Store, run: dict[str, Any]) -> dict[str, Any]:
     if record.get("question") and deadlines and not any(row["latest_action_date"] in record["question"] for row in deadlines):
         due = ", ".join(f"{row.get('item_id') or row.get('task_id')} {row['latest_action_date']}" for row in deadlines)
         record["question"] = f"{record['question'].rstrip()} (서류 제출 기한: {due})"
-    email = output.get("email_draft")
-    if isinstance(email, dict) and email.get("body") and deadlines and not any(
-            row["latest_action_date"] in email["body"] for row in deadlines):
-        due = ", ".join(f"{row.get('item_id') or row.get('task_id')} {row['latest_action_date']}" for row in deadlines)
-        email["body"] = (f"{email['body'].rstrip()}\n\n서류 제출 기한: {due}. "
-                         "이 날짜까지 제출해야 해당 작업 착수 전에 검토를 마칠 수 있습니다.")
     found_cases = _agent_found_cases(output)
     if supplier:
         rules_only = {"finish_date": reported.get("finish_date"),
@@ -650,7 +642,7 @@ def _agent_found_cases(output: dict[str, Any]) -> list[dict[str, Any]]:
     from .risk_signals import _records
 
     records = {row["risk_id"]: row for row in _records()}
-    answer = json.dumps({key: output.get(key) for key in ("summary", "stop_reason", "investigation", "email_draft")},
+    answer = json.dumps({key: output.get(key) for key in ("summary", "stop_reason", "investigation")},
                         ensure_ascii=False)
     found: dict[str, dict[str, Any]] = {}
     for entry in output.get("tool_log") or []:
@@ -997,14 +989,12 @@ def _run_analysis(db: Store, run: dict[str, Any]) -> dict[str, Any]:
             agent_output = {"status": "paid_limit", "mode": "rules_only",
                             "summary": "유료 호출 한도 또는 중복 실행 방지로 계산 결과만 제공합니다."}
 
-    meeting = [item for item in scenario_results if item.get("target_met") and item.get("budget_met") and not item.get("violations")]
+    meeting = [item for item in scenario_results if item.get("target_met") and not item.get("violations")]
     if not meeting:
         summary = "현재 등록된 선택지 범위에서는 목표일을 만족하는 안을 찾지 못했습니다."
-    elif budget is None:
-        summary = "목표일을 만족하는 계산안을 찾았습니다. 비용은 아직 미정이므로 대응안 비교에서 확인하세요."
     else:
-        summary = "등록된 선택지에서 목표일과 비용 한도를 만족하는 계산안을 찾았습니다. 실행 조건을 확인하세요."
-    return {"status": "succeeded", "summary": summary, "scenario_ids": scenario_ids, "agent_status": agent_output.get("status"), "agent": agent_output, "budget_krw": budget}
+        summary = "목표일을 만족하는 계산안을 찾았습니다. 실행 조건을 확인하세요."
+    return {"status": "succeeded", "summary": summary, "scenario_ids": scenario_ids, "agent_status": agent_output.get("status"), "agent": agent_output}
 
 
 def _run_document_ingest(db: Store, run: dict[str, Any]) -> dict[str, Any]:

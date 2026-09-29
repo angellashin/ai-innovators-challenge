@@ -24,7 +24,6 @@ PROJECT = {
     "baseline_start": "2026-09-14",
     "baseline_finish": "2026-10-27",
     "target_finish": "2026-10-28",
-    "extra_budget_krw": 3_000_000,
     "weekend_days": [5, 6],
     "nonworking_dates": ["2026-10-23"],
 }
@@ -59,7 +58,6 @@ OPTIONS = [
         "option_id": "OPT-01",
         "target_ids": ["T07", "T08", "T09", "T10"],
         "operation": "SHIFT_EARLIER",
-        "extra_cost_krw": 0,
         "approval_state": "conditional",
         "conditions": "respect FS",
     },
@@ -68,7 +66,6 @@ OPTIONS = [
         "target_ids": ["T12"],
         "operation": "SET_DURATION_WORKDAYS",
         "new_value": 2,
-        "extra_cost_krw": 2_000_000,
         "approval_state": "conditional",
     },
     {
@@ -76,7 +73,6 @@ OPTIONS = [
         "target_ids": ["T06"],
         "operation": "SET_DURATION_WORKDAYS",
         "new_value": 2,
-        "extra_cost_krw": 6_000_000,
         "approval_state": "conditional",
     },
 ]
@@ -119,42 +115,38 @@ class SchedulingTests(unittest.TestCase):
         self.assertEqual(result["violations"], [])
         self.assertEqual(result["finish_date"], "2026-10-27")
         self.assertIs(result["target_met"], True)
-        self.assertIs(result["budget_met"], True)
         self.assertEqual(_by_id(result, "T19")["planned_start"], "2026-10-26")
 
-    def test_e01_reference_table_under_three_million_budget(self):
+    def test_e01_reference_table_preserves_schedule_only_decisions(self):
         cases = [
-            ([], "2026-10-30", 0, False, True),
-            (["OPT-01"], "2026-10-30", 0, False, True),
-            (["OPT-02"], "2026-10-29", 2_000_000, False, True),
-            (["OPT-03"], "2026-10-28", 6_000_000, True, False),
-            (["OPT-02", "OPT-03"], "2026-10-27", 8_000_000, True, False),
+            ([], "2026-10-30", False),
+            (["OPT-01"], "2026-10-30", False),
+            (["OPT-02"], "2026-10-29", False),
+            (["OPT-03"], "2026-10-28", True),
+            (["OPT-02", "OPT-03"], "2026-10-27", True),
         ]
 
-        for option_ids, finish, cost, target_met, budget_met in cases:
+        for option_ids, finish, target_met in cases:
             with self.subTest(option_ids=option_ids):
-                result = simulate(PROJECT, TASKS, event=E01, options=_option(*option_ids), budget_krw=3_000_000)
+                result = simulate(PROJECT, TASKS, event=E01, options=_option(*option_ids))
                 self.assertEqual(result["finish_date"], finish)
-                self.assertEqual(result["extra_cost_krw"], cost)
                 self.assertIs(result["target_met"], target_met)
-                self.assertIs(result["budget_met"], budget_met)
 
     def test_typed_e01_patch_reproduces_reference_result(self):
-        result = simulate(PROJECT, TASKS, event=E01_TYPED, options=_option("OPT-02"), budget_krw=3_000_000)
+        result = simulate(PROJECT, TASKS, event=E01_TYPED, options=_option("OPT-02"))
 
         self.assertEqual(result["finish_date"], "2026-10-29")
-        self.assertEqual(result["extra_cost_krw"], 2_000_000)
         self.assertEqual(_by_id(result, "T03")["planned_finish"], "2026-09-30")
         self.assertEqual(_by_id(result, "T04")["planned_start"], "2026-10-01")
 
-    def test_e01_does_not_claim_budget_feasible_target_solution(self):
-        viable_under_budget = []
+    def test_e01_identifies_target_recovery_options_without_cost_gate(self):
+        target_recovery_options = []
         for option_ids in ([], ["OPT-01"], ["OPT-02"], ["OPT-03"], ["OPT-02", "OPT-03"]):
-            result = simulate(PROJECT, TASKS, event=E01, options=_option(*option_ids), budget_krw=3_000_000)
-            if result["target_met"] and result["budget_met"]:
-                viable_under_budget.append(option_ids)
+            result = simulate(PROJECT, TASKS, event=E01, options=_option(*option_ids))
+            if result["target_met"]:
+                target_recovery_options.append(option_ids)
 
-        self.assertEqual(viable_under_budget, [])
+        self.assertEqual(target_recovery_options, [["OPT-03"], ["OPT-02", "OPT-03"]])
 
     def test_resource_unavailable_delays_only_matching_scope(self):
         event = {

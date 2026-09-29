@@ -34,7 +34,7 @@ export default function DemoEntryPage() {
       const demo = await post<{ project_id: string }>("/api/demo/hero-project");
       setProjectId(demo.project_id);
       sessionStorage.setItem("replan.projectId", demo.project_id);
-      router.push(`/workspaces?highlight=${demo.project_id}`);
+      router.push(`/projects/${demo.project_id}#overview`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "데모를 준비하지 못했습니다.");
       setBusy(false);
